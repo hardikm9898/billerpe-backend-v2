@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bill PRINT</title>
+  <!-- <link rel="stylesheet" href="./css/newstyle.css"> -->
+  <!-- <link rel="stylesheet" href="./css/responsive.css"> -->
+</head>
+<style>
+  @import url('https://fonts.cdnfonts.com/css/verdana');
+
+  .invoice {
+    width: 270px;
+
+    font-family: 'Verdana', sans-serif;
+  }
+
+  .hotel-name {
+    margin-bottom: 5px;
+    margin-top: 0;
+    font-weight: 600 !important;
+    font-size: 15px !important;
+  }
+
+  .hotel-address {
+    margin: 0 auto;
+    max-width: 180px;
+    text-align: center;
+  }
+
+  .invoice p {
+    margin-bottom: 3px;
+    margin-top: 0;
+    font-weight: 500;
+    font-size: 12px;
+  }
+
+  .custom-table-header-name {
+    padding: 4px 0 4px 0;
+    border-top: 1px solid #000;
+    border-bottom: 1px solid #000;
+  }
+
+  .custom-table-header-name p {
+    margin: 0;
+  }
+
+  .custom-table-header {
+    display: flex;
+    margin-top: 4px;
+    width: 100%;
+  }
+
+  .custom-table-header-details {
+    width: 55%;
+  }
+
+  .custom-table-header-details-right {
+    width: 45%;
+  }
+
+  .invoice-header {
+    text-align: center;
+  }
+
+  .invoice-details {
+    margin-top: 20px;
+    margin-bottom: 20px;
+  }
+
+  .invoice-items tr {
+    border: none;
+  }
+
+  .invoice-items {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 4px;
+  }
+
+  .invoice-items thead tr {
+    border-top: 1px solid #000;
+    border-bottom: 1px solid #000;
+  }
+
+  .custom-teble-title {
+    padding-top: 7px;
+    text-align: center;
+  }
+
+  .invoice-items th {
+    padding: 4px 0 4px 0 !important;
+  }
+
+  .invoice-items th,
+  .invoice-items td {
+    padding: 2px;
+    text-align: left;
+    border: none;
+    color: #000;
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  .invoice-items th:nth-child(2),
+  .invoice-items th:nth-child(3),
+  .invoice-items td:nth-child(3),
+  .invoice-items td:nth-child(2) {
+    width: 15%;
+  }
+
+  .invoice-items th:nth-child(4) {
+    text-align: center;
+  }
+
+  .invoice-items td:first-child {
+
+    text-align: left;
+  }
+
+  .invoice-items th {
+    font-size: 14px !important;
+    font-weight: 400;
+  }
+
+  .invoice-total {
+    display: flex;
+    margin-top: 3px;
+    text-align: right;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: 0%;
+    border-top: 1px solid #000;
+    padding: 3px 0 3px 0;
+  }
+
+  .invoice-total-one {
+    display: flex;
+    text-align: right;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: 10%;
+    border-top: 1px solid #000;
+    padding: 5px 0 5px 0;
+  }
+
+  .invoice-grand-total {
+    text-align: right;
+    font-size: 22px;
+    font-weight: 500;
+
+  }
+
+  .invoice-grand-total {
+    text-align: center;
+    border-top: 2px solid #000;
+    padding-bottom: 5px;
+  }
+
+  .invoice-footer {
+    padding-top: 4px;
+  }
+</style>
+
+<body>
+
+  <div class="invoice">
+    <div class="invoice-header">
+      <p class="hotel-name">ZAIKA GARDEN RESTAURANT</p>
+      <p class="hotel-address">Jodanapura Deesa Highway Palanpur</p>
+      <p>Phone No : 1234567899</p>
+      <p>Retail Invoice</p>
+    </div>
+
+    <div class="custom-table-header-name">
+      <p><b>Table : 6</b></p>
+    </div>
+    <div class="custom-table-header">
+      <div class="custom-table-header-details">
+        <p><b>Dine In</b></p>
+
+      </div>
+      <div class="custom-table-header-details-right">
+        <p>Date : 17/02/24</p>
+        <p>Bill No:16165</p>
+      </div>
+    </div>
+
+    <table class="invoice-items">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Qty.</th>
+          <th>Price</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+        <tr>
+          <td>Noodles/Fried Rice</td>
+          <td>1</td>
+          <td>240</td>
+          <td>1</td>
+        </tr>
+        <tr>
+          <td>Veg Triple </td>
+          <td>1</td>
+          <td>300</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>100</td>
+        </tr>
+        <tr>
+          <td>Chicken Triple </td>
+          <td>3</td>
+          <td>350</td>
+          <td>1000</td>
+        </tr>
+
+      </tbody>
+    </table>
+
+    <div class="invoice-total-one">
+      <div>
+        <p>Total Qty:5</p>
+        <p>CGST</p>
+      </div>
+      <div>
+        <p>sub Total 1590</p>
+        <p>75.72</p>
+      </div>
+    </div>
+    <div class="invoice-total">
+      <div>
+        <p>Round off</p>
+        <p><b>Grand Total</b></p>
+      </div>
+      <div>
+        <p>-0.26</p>
+        <p><b>₹ 1542</b></p>
+      </div>
+    </div>
+
+    <div class="invoice-footer invoice-grand-total">
+      <p class><b>THANK YOU! Please Visit
+          Again</b></p>
+      <p>GSC NO:24AAAF26409Q1ZN</p>
+      <p>Composition Taxable Person,</p>
+      <p>FSSAI NO: 10720005000215</p>
+      <p>Subject To Palanpur Jurisdiction</p>
+
+    </div>
+
+
+
+  </div>
+
+</body>
+
+</html>

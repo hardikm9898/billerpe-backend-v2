@@ -1,0 +1,20 @@
+module.exports = {
+  testEnvironment: "node",
+  testMatch: ["**/tests/**/*.test.js"],
+  setupFiles: ["dotenv/config"],
+  setupFilesAfterEnv: ["./tests/setup/globalMocks.js"],
+  testTimeout: 30000,
+  collectCoverageFrom: [
+    "controller/**/*.js",
+    "routes/**/*.js",
+    "middleware/**/*.js",
+    "!**/node_modules/**",
+  ],
+  coverageReporters: ["text", "lcov", "html"],
+  coverageDirectory: "tests/coverage",
+  verbose: true,
+  forceExit: true,
+  clearMocks: true,
+  restoreMocks: true,
+  testSequencer: "./tests/setup/testSequencer.js",
+};

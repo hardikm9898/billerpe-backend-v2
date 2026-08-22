@@ -1,0 +1,57 @@
+
+const { DataTypes } = require("sequelize")
+const sequelize = require("../connection/connect");
+const HotelUser = require("./hotelUser");
+const ExpenseHead = require("./expenseHead");
+const moment = require("moment");
+
+
+
+const ExpenseEntry = sequelize.define("hms_expense_entry_mst", {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
+    },
+    amount: {
+        type: DataTypes.STRING,
+        require: true,
+    },
+    reason: {
+        type: DataTypes.STRING,
+        require: true
+    },
+    paymentMode: {
+        type: DataTypes.STRING,
+        require: true
+    },
+    addExpense: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: true
+    },
+    active: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: true
+    },
+    business_date: {
+        type: DataTypes.DATEONLY,
+        defaultValue: () => moment().format("YYYY-MM-DD"),
+        index: true
+    },
+    deleted: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false
+    }
+})
+// ExpenseEntry.belongsTo(ExpenseHead, { foreignKey: 'expense_head_id' })
+// ExpenseHead.hasMany(ExpenseEntry, {
+//     foreignKey: 'expense_head_id', onDelete: 'SET NULL',
+
+// })
+
+
+// HotelUser.hasMany(ExpenseEntry, {
+//     foreignKey: 'user_id',
+// });
+module.exports = ExpenseEntry
+

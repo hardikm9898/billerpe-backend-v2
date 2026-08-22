@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+</head>
+
+<body>
+    <div style="text-align:center">
+        <h1>Print HTML Card from Javascript</h1>
+        <p>This card is 300px x 400px ⇔ 3.125in x 4.17in (300/96 and 400/96 respectivelly)</p>
+        <div id="card" style="width: 300px; height:400px; ">
+
+            <div style="padding: 2px 16px;">
+                <h3 style="font:bold 20px Arial">John Doe</h3>
+                <p style="font:normal 14px Arial">Architect & Engineer</p>
+            </div>
+        </div>
+        <hr />
+        <label class="checkbox">
+            <input type="checkbox" id="useDefaultPrinter" /> <strong>Print to Default printer</strong>
+        </label>
+        <p>or...</p>
+        <div id="installedPrinters">
+            <label for="installedPrinterName">Select an installed Printer:</label>
+            <select name="installedPrinterName" id="installedPrinterName"></select>
+        </div>
+        <br /><br />
+        <button type="button" onclick="print();">Print Now...</button>
+    </div>
+    <script src="./test.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bluebird/3.3.5/bluebird.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.2.1.slim.min.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <script>
+
+        //WebSocket settings
+
+        console.log(JSPM)
+        JSPM.JSPrintManager.auto_reconnect = true;
+        JSPM.JSPrintManager.start();
+        JSPM.JSPrintManager.WS.onStatusChanged = function () {
+            if (jspmWSStatus()) {
+                //get client installed printers
+                JSPM.JSPrintManager.getPrinters().then(function (myPrinters) {
+                    var options = '';
+                    for (var i = 0; i < myPrinters.length; i++) {
+                        options += '<option>' + myPrinters[i] + '</option>';
+                    }
+                    $('#installedPrinterName').html(options);
+                });
+            }
+        };
+
+        //Check JSPM WebSocket status
+        function jspmWSStatus() {
+            if (JSPM.JSPrintManager.websocket_status == JSPM.WSStatus.Open)
+                return true;
+            else if (JSPM.JSPrintManager.websocket_status == JSPM.WSStatus.Closed) {
+                alert('JSPrintManager (JSPM) is not installed or not running! Download JSPM Client App from https://neodynamic.com/downloads/jspm');
+                return false;
+            }
+            else if (JSPM.JSPrintManager.websocket_status == JSPM.WSStatus.Blocked) {
+                alert('JSPM has blocked this website!');
+                return false;
+            }
+        }
+
+        //Do printing...
+        function print(o) {
+            if (jspmWSStatus()) {
+                //generate an image of HTML content through html2canvas utility
+                html2canvas(document.getElementById('card'), { scale: 3 }).then(function (canvas) {
+
+                    //Create a ClientPrintJob
+                    var cpj = new JSPM.ClientPrintJob();
+                    //Set Printer type (Refer to the help, there many of them!)
+                    if ($('#useDefaultPrinter').prop('checked')) {
+                        cpj.clientPrinter = new JSPM.DefaultPrinter();
+                    } else {
+                        cpj.clientPrinter = new JSPM.InstalledPrinter($('#installedPrinterName').val());
+                    }
+                    //Set content to print... 
+                    var b64Prefix = "data:image/png;base64,";
+                    var imgBase64DataUri = canvas.toDataURL("image/png");
+                    var imgBase64Content = imgBase64DataUri.substring(b64Prefix.length, imgBase64DataUri.length);
+
+                    var myImageFile = new JSPM.PrintFile(imgBase64Content, JSPM.FileSourceType.Base64, 'myFileToPrint.png', 1);
+                    //add file to print job
+                    cpj.files.push(myImageFile);
+
+                    //Send print job to printer!
+                    cpj.sendToClient();
+
+
+                });
+            }
+        }
+
+    </script>
+
+</body>
+
+</html>

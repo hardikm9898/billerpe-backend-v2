@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> Bill PRINT </title>
+
+</head>
+<style>
+    @import url('https://fonts.cdnfonts.com/css/verdana');
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans&display=swap');
+
+    html,
+    body {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    .invoice {
+        /* margin: 0px 10px 10px 10px; */
+        width: 650px;
+        font-family: 'Noto Sans', sans-serif;
+        font-size: large;
+    }
+
+    .hotel-name {
+        margin-bottom: 5px;
+        margin-top: 0;
+        font-weight: 600 !important;
+        font-size: 35px !important;
+    }
+
+    .invoice p {
+        margin-bottom: 5px;
+        margin-top: 0;
+        font-weight: 400;
+        font-size: 38px;
+    }
+
+    .invoice strong {
+        margin-bottom: 5px;
+        margin-top: 0;
+        font-weight: 600;
+        font-size: 38px;
+        letter-spacing: 0.5px;
+    }
+
+    .custom-table-header-name {
+        padding: 7px 0 7px 0;
+        border-top: 4px solid #000;
+        border-bottom: 4px solid #000;
+    }
+
+    .custom-table-header-name p {
+        margin: 0;
+    }
+
+    .custom-table-header {
+        display: flex;
+
+        margin-top: 5px;
+        width: 100%;
+
+    }
+
+    .custom-table-header-details {
+        width: 55%;
+    }
+
+    .custom-table-header-details-right {
+        width: 45%;
+    }
+
+    .invoice-header {
+        text-align: center;
+
+    }
+
+    .invoice-details {
+        margin-top: 35px;
+        margin-bottom: 20px;
+    }
+
+    .invoice-items tr {
+        border: none;
+    }
+
+    .invoice-items {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 5px;
+    }
+
+    .invoice-items thead tr {
+        border-top: 4px solid #000;
+        border-bottom: 4px solid #000;
+    }
+
+    .custom-teble-title {
+        padding-top: 7px;
+        text-align: center;
+    }
+
+    .invoice-items th {
+        padding: 7px 0 7px 0 !important;
+    }
+
+    .invoice-items th,
+    .invoice-items td {
+        padding: 2px;
+        text-align: center;
+        border: none;
+        color: #000;
+        font-size: 33px;
+        font-weight: 400;
+    }
+
+    .invoice-items th:first-child,
+    .invoice-items td:first-child {
+        text-align: left;
+
+    }
+
+    .invoice-items th:nth-child(2),
+    .invoice-items td:nth-child(2) {
+        width: 15%;
+    }
+
+    .invoice-items th:nth-child(3),
+    .invoice-items td:nth-child(3) {
+        width: 15%;
+    }
+
+    .invoice-items th:nth-child(4) {
+        text-align: center;
+    }
+
+
+    .invoice-items th {
+        font-size: 35px !important;
+        font-weight: 600;
+
+    }
+
+    .invoice-total {
+        display: flex;
+        margin-top: 5px;
+        text-align: right;
+        align-items: flex-end;
+        justify-content: flex-end;
+        gap: 0%;
+        border-top: 4px solid #000;
+        padding: 5px 0 5px 0;
+        margin-right: 15px;
+        font-size: 38px;
+    }
+
+    .invoice-total p {
+        font-size: 38px;
+    }
+
+    .invoice-total-one p {
+        font-size: 38px;
+    }
+
+    .invoice-total-one {
+        display: flex;
+        margin-top: 5px;
+        text-align: right;
+        align-items: flex-end;
+        justify-content: flex-end;
+        gap: 10%;
+        border-top: 4px solid #000;
+        margin-right: 15px;
+        font-size: 38px;
+        padding: 5px 0 5px 0;
+    }
+
+
+    .invoice-grand-total {
+
+        text-align: left;
+        border-top: 4px solid #000;
+        padding-bottom: 5px;
+    }
+</style>
+
+<body>
+
+    <div class="invoice">
+
+        <div class="invoice-header">
+
+            <p class="hotel-name">Taj</p>
+            <p> hello sdc </p>
+            <p>Phone No : 1234567891</p>
+            <p>Retail Invoice </p>
+        </div>
+
+        <div class="custom-table-header-name">
+            <p><strong>Table:5</strong></p>
+        </div>
+        <div class="custom-table-header">
+
+            <div class="custom-table-header-details">
+
+                <p>Date : 20/04/2024</p>
+
+            </div>
+            <div class="custom-table-header-details-right">
+                <p><strong>Dine-In</strong></p>
+                <p>Bill No: 2984</p>
+            </div>
+
+
+        </div>
+
+
+        <table class="invoice-items">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Qty.</th>
+                    <th>Price</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+
+                    <td>ગુજરાતી ભાષા</td>
+                    <td>1</td>
+                    <td>20</td>
+                    <td>20</td>
+                </tr>
+
+                <tr>
+
+                    <td>pyaaz kachori</td>
+                    <td>1</td>
+                    <td>10</td>
+                    <td>10</td>
+                </tr>
+
+                <tr>
+
+                    <td>ब्रेकिंग न्यूज़ समाचार, ताजा खबर - BBC News हिंदी</td>
+                    <td>1</td>
+                    <td>10</td>
+                    <td>10</td>
+                </tr>
+
+
+
+
+
+
+
+            </tbody>
+        </table>
+
+        <div class="invoice-total-one">
+            <div>
+                <p>Total Qty:2</p>
+                <p> CGST </p>
+                <p> SGST</p>
+            </div>
+            <div>
+                <p>sub Total ₹ 30</p>
+                <p>0.75</p>
+                <p>0.75</p>
+            </div>
+        </div>
+        <div class="invoice-total">
+            <div>
+
+                <p><strong>Grand Total</strong></p>
+            </div>
+            <div>
+
+                <p><strong>₹31</strong></p>
+            </div>
+        </div>
+
+        <p class="invoice-grand-total">GST NO: 24AAAF26409Q1ZN composition taxable person FSSAI NO: 10720005000215
+            SUBJECT TO PALANPUR JURISDICTION</p>
+    </div>
+
+</body>
+
+</html>
