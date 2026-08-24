@@ -12,7 +12,12 @@ const Role = sequelize.define("role_mst", {
     },
     role_name: {
         type: DataTypes.ENUM,
-        values: ['S', 'C', 'A', 'U', 'B'],      // TODO C=Captain A=Admin B=Biller U=Normal User
+        // S/C/A/U/B: legacy short codes (see constant/const.js USER_ROLE) -
+        // C=Captain A=Admin B=Biller U=Normal User S=Super. The 7 named
+        // values are billerpe-pos-pro's role model (see migrations/
+        // 20260824062338-extend-role-name-enum.js) - both sets coexist,
+        // neither replaces the other.
+        values: ['S', 'C', 'A', 'U', 'B', 'Owner', 'Manager', 'Cashier', 'Captain', 'Kitchen Staff', 'Inventory Manager', 'Accountant'],
         defaultValue: "U"
     },
     enter_by: {
