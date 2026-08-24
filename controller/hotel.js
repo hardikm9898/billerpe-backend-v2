@@ -256,8 +256,8 @@ const updateInvoiceFormate = async (req, res) => {
         const hotel = await Hotel.findOne({ where: { id: req.user } })
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
         // console.log(req.body)
-        const { gst_no, fssai_no, invoiceFormateIncGst, multiLanguage, bill_with_kot, is_token_on, bill_with_token, service_charge, saveBehave } = req.body.hotel
-        await Hotel.update({ gst_no, fssai_no, multiLanguage, saveBehave, service_charge, invoiceFormateIncGst, bill_with_kot, is_token_on, bill_with_token }, { where: { id: hotel.id } })
+        const { gst_no, fssai_no, invoiceFormateIncGst, multiLanguage, bill_with_kot, is_token_on, bill_with_token, service_charge, saveBehave, upiId } = req.body.hotel
+        await Hotel.update({ gst_no, fssai_no, multiLanguage, saveBehave, service_charge, invoiceFormateIncGst, bill_with_kot, is_token_on, bill_with_token, upiId }, { where: { id: hotel.id } })
         // setImmediate(() => {
 
         await updatedRestaurantToRadis(hotel.id)
