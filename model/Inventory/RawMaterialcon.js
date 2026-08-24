@@ -28,9 +28,14 @@ const RawMaterialConsumption = sequelize.define("hms_raw_material_consumption", 
         defaultValue: () => require('moment')().format("YYYY-MM-DD")
     },
 
+    // Nullable to match the RawMaterial -> RawMaterialConsumption
+    // association's onDelete: "SET NULL" (model/index.js) - NOT NULL here
+    // conflicted with that FK action and made MySQL refuse to create this
+    // table at all (errno 150), so consumption history survives a raw
+    // material being deleted rather than blocking or cascading it away.
     raw_material_id: {
         type: DataTypes.INTEGER,
-        allowNull: false
+        allowNull: true
     },
 
     // 🔥 ORDER CONTEXT
