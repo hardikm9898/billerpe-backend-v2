@@ -3079,6 +3079,16 @@ const test = async (req, res) => {
 
 
 const settleBills = async (req, res) => {
+    // Wraps the payment/table/order-details writes in a transaction and
+    // runs the stock check BEFORE committing, rolling back on failure.
+    // Previously there was no transaction at all: a stock-check failure
+    // after the writes above it (e.g. a data/schema issue on the recipe
+    // tables) left the order permanently stuck mid-settlement - payment
+    // already recorded as "success" and the table already freed, but stock
+    // never deducted, and no longer reachable by this same function's own
+    // `payment: "pending"` lookup to retry. Confirmed live: a settlement
+    // that failed at the stock-check step left exactly that state.
+    const t = await sequelize.transaction();
     try {
         let { id, cash, upi, card, amount, due = 0, mobile } = req.body;
 
@@ -3089,15 +3099,18 @@ const settleBills = async (req, res) => {
 
         // ✅ PAYMENT VALIDATION
         if (amount > 0 && !(cash || upi || card || due)) {
+            await t.rollback();
             return res.json(error(MESSAGE.PAYMENT_MODE_NOT_SELECTED, STATUSCODE.BAD_REQUEST));
         }
 
         if (+cash + +upi + +card + +due !== amount) {
+            await t.rollback();
             return res.json(error(MESSAGE.A_M_S_P_A, STATUSCODE.INTERNAL_SERVER_ERROR));
         }
 
-        const hotel = await Hotel.findOne({ where: { id: req.user } });
+        const hotel = await Hotel.findOne({ where: { id: req.user }, transaction: t });
         if (!hotel) {
+            await t.rollback();
             return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST));
         }
 
@@ -3108,10 +3121,12 @@ const settleBills = async (req, res) => {
                 order_type: ORDER_TYPE.DININ,
                 payment: "pending",
                 deleted: false
-            }
+            },
+            transaction: t
         });
 
         if (!order) {
+            await t.rollback();
             return res.json(error("Refresh And Try Again", STATUSCODE.BAD_REQUEST));
         }
 
@@ -3146,6 +3161,7 @@ const settleBills = async (req, res) => {
 
             // ✅ Mobile REQUIRED for due
             if (!mobile || `${mobile}`.length !== 10) {
+                await t.rollback();
                 return res.json(
                     error("Valid mobile number is required for due payment", STATUSCODE.BAD_REQUEST)
                 );
@@ -3155,10 +3171,12 @@ const settleBills = async (req, res) => {
                 where: {
                     id: order.UserId,
                     hotel_id: req.user
-                }
+                },
+                transaction: t
             });
 
             if (!orderUser) {
+                await t.rollback();
                 return res.json(
                     error("Order user not found", STATUSCODE.INTERNAL_SERVER_ERROR)
                 );
@@ -3172,7 +3190,8 @@ const settleBills = async (req, res) => {
                         number: mobile,
                         hotel_id: req.user,
                         isPlaceholder: false
-                    }
+                    },
+                    transaction: t
                 });
 
                 // ✅ CREATE real user if not exists
@@ -3181,13 +3200,13 @@ const settleBills = async (req, res) => {
                         number: mobile,
                         hotel_id: req.user,
                         isPlaceholder: false
-                    });
+                    }, { transaction: t });
                 }
 
                 // ✅ REASSIGN ORDER TO REAL USER
                 await Order.update(
                     { UserId: realUser.id },
-                    { where: { id: order.id } }
+                    { where: { id: order.id }, transaction: t }
                 );
             }
 
@@ -3195,7 +3214,7 @@ const settleBills = async (req, res) => {
             else {
                 await User.update(
                     { number: mobile },
-                    { where: { id: orderUser.id } }
+                    { where: { id: orderUser.id }, transaction: t }
                 );
             }
         }
@@ -3207,33 +3226,36 @@ const settleBills = async (req, res) => {
         if (order.order_type === ORDER_TYPE.DININ) {
             await Table.update(
                 { table_status: "F" },
-                { where: { id: order.TableId, hotel_id: req.user } }
+                { where: { id: order.TableId, hotel_id: req.user }, transaction: t }
             );
-            await updateTableToRadis(order.TableId, req.user);
         }
 
         // ✅ UPDATE ORDER PAYMENT
         await Order.update(
             { cash, upi, card, due, payment: STATUS.SUCCESS },
-            { where: { hotel_id: req.user, id } }
+            { where: { hotel_id: req.user, id }, transaction: t }
         );
 
         // ✅ UPDATE ORDER DETAILS
         const orderDetails = await OrderDetails.findAll({
-            where: { orderId: id, hotel_id: req.user }
+            where: { orderId: id, hotel_id: req.user },
+            transaction: t
         });
 
         for (const item of orderDetails) {
             await OrderDetails.update(
                 { payment_status: STATUS.SUCCESS },
-                { where: { id: item.id } }
+                { where: { id: item.id }, transaction: t }
             );
         }
 
-        await deleteOrderToRedis(id, req.user);
-        await addToTimeLine(id, ACTION.SETTLE, req.userId);
-        await webChange(req.user, io, id);
-
+        // Stock check BEFORE commit - checkRawMaterialAvailableOrNot manages
+        // its own separate transaction for the stock writes themselves, but
+        // its read (OrderDetails where status:"delivered") only depends on
+        // AdminOrder's already-committed status change, not on anything
+        // written above in `t` - safe to call pre-commit. If it fails, roll
+        // back everything above so the order stays in "payment: pending"
+        // and this same function can be retried cleanly.
         const stockCheck = await checkRawMaterialAvailableOrNot(
             id,
             req.user,
@@ -3241,14 +3263,29 @@ const settleBills = async (req, res) => {
         );
         console.log(stockCheck, "Stock Check After Settlement")
         if (stockCheck.error) {
-            throw new Error("Error From Stock Update");
+            await t.rollback();
+            return res.json(error("Error From Stock Update", STATUSCODE.INTERNAL_SERVER_ERROR));
         }
+
+        await t.commit();
+
+        // Non-transactional side effects (Redis cache, audit timeline,
+        // socket broadcast) - deliberately run only after the commit
+        // succeeds, so nothing announces a change that could still have
+        // been rolled back.
+        if (order.order_type === ORDER_TYPE.DININ) {
+            await updateTableToRadis(order.TableId, req.user);
+        }
+        await deleteOrderToRedis(id, req.user);
+        await addToTimeLine(id, ACTION.SETTLE, req.userId);
+        await webChange(req.user, io, id);
 
         return res.status(STATUSCODE.SUCCESS).json(
             success(MESSAGE.SUCCESS, { message: MESSAGE.ORDER_SETTLE }, STATUSCODE.SUCCESS)
         );
 
     } catch (err) {
+        await t.rollback().catch(() => {});
         console.log(err);
         return res.json(
             error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR)
