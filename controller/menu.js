@@ -558,6 +558,36 @@ const MenuShow = async (req, res) => {
         return res.status(STATUSCODE.INTERNAL_SERVER_ERROR).json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
     }
 }
+
+// Every existing menu-list endpoint (MenuShow, MenuShowByCatagories, etc.)
+// only ever includes Menu_categ - none of them surface a menu item's
+// variant/addon-group associations (MenuVariants/MenuAddon, written by
+// createMenu/editMenu) at all. The only place those associations are
+// ever read back is offlineMenu (controller/offline/offline.js), and
+// that response is AES-encrypted plus Redis-cached for 48h - not
+// something worth taking on as a new frontend dependency just to read
+// back what an admin just saved. This mirrors offlineMenu's own include
+// (Variants as "variantData", AddonDepartment as "addonDepartmentData")
+// but unencrypted and uncached, purely for the item-editor/ordering UI
+// to know what's actually attached to each item.
+const getMenuItemsWithVariants = async (req, res) => {
+    try {
+        const hotel = await Hotel.findOne({ where: { id: req.user } })
+        if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
+        const menu = await Menu.findAll({
+            where: { hotel_id: req.user, active: true },
+            include: [
+                { model: Menu_categ },
+                { model: Variants, as: "variantData", where: { active: true }, required: false },
+                { model: AddonDepartment, as: "addonDepartmentData", include: { model: Addons } }
+            ]
+        })
+        return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { menu }, STATUSCODE.SUCCESS))
+    } catch (err) {
+        console.log(err, "=====>error")
+        return res.status(STATUSCODE.INTERNAL_SERVER_ERROR).json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
+    }
+}
 const searchByShortCode = async (req, res) => {
     try {
 
@@ -987,4 +1017,4 @@ const menuByCategory = async (req, res) => {
 }
 
 
-module.exports = { uploadMenuFromExcel, menuByCategory, searchBySubCatagories, editCatagories, searchByShortCode, createMenu, removeCatagories, removeMenu, createCatagories, editMenu, showCatagories, showMenu, MenuShow, checkTableAvailable, searchByCatagories, MenuShowByCatagories }
+module.exports = { uploadMenuFromExcel, menuByCategory, searchBySubCatagories, editCatagories, searchByShortCode, createMenu, removeCatagories, removeMenu, createCatagories, editMenu, showCatagories, showMenu, MenuShow, checkTableAvailable, searchByCatagories, MenuShowByCatagories, getMenuItemsWithVariants }
