@@ -3249,17 +3249,24 @@ const settleBills = async (req, res) => {
             );
         }
 
-        // Stock check BEFORE commit - checkRawMaterialAvailableOrNot manages
-        // its own separate transaction for the stock writes themselves, but
-        // its read (OrderDetails where status:"delivered") only depends on
-        // AdminOrder's already-committed status change, not on anything
-        // written above in `t` - safe to call pre-commit. If it fails, roll
-        // back everything above so the order stays in "payment: pending"
-        // and this same function can be retried cleanly.
+        // Stock check BEFORE commit, on this same transaction `t` - passing
+        // `t` through is required, not optional: checkRawMaterialAvailableOrNot's
+        // RawMaterialConsumption insert has a real FK constraint against
+        // Order (model/index.js), and the Order.update a few lines above
+        // already holds an exclusive lock on this same Order row inside
+        // `t`. Letting checkRawMaterialAvailableOrNot open its own separate
+        // transaction (its default when no transaction is passed in) made
+        // that insert block waiting on a shared lock this same request was
+        // already holding via `t` - a guaranteed self-deadlock, confirmed
+        // live as a consistent ~50s lock-wait timeout on every settle of an
+        // order with a recipe-linked item, not a timing fluke. If the
+        // check fails, roll back everything above so the order stays in
+        // "payment: pending" and this same function can be retried cleanly.
         const stockCheck = await checkRawMaterialAvailableOrNot(
             id,
             req.user,
-            req.userId
+            req.userId,
+            t
         );
         console.log(stockCheck, "Stock Check After Settlement")
         if (stockCheck.error) {

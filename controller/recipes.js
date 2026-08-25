@@ -683,8 +683,24 @@ const deleteRecipe = async (req, res) => {
 //     }
 // }
 
-const checkRawMaterialAvailableOrNot = async (orderId, hotel_id, user_id) => {
-    const transaction = await sequelize.transaction();
+// externalTransaction: when the caller (e.g. settleBills) already has its
+// own open transaction that has written to the same Order row this
+// function's RawMaterialConsumption insert has a real FK constraint
+// against (model/index.js: RawMaterialConsumption.belongsTo(Order, ...)),
+// opening a SECOND, independent transaction here deadlocks against the
+// caller's - the caller's transaction holds an exclusive lock on the
+// Order row (e.g. settleBills's own `Order.update(..., {transaction: t})`
+// a few lines before calling this), and this function's own transaction
+// then blocks trying to acquire a shared lock on that same row for the
+// FK check, while the caller is meanwhile blocked awaiting this call to
+// return - a guaranteed lock-wait timeout (50s, confirmed live), not a
+// timing fluke. Reusing the caller's transaction when one is passed in
+// keeps everything on one transaction, so there's nothing to contend
+// with. Standalone callers that don't pass one keep the original
+// behavior (this function owns and finalizes its own transaction).
+const checkRawMaterialAvailableOrNot = async (orderId, hotel_id, user_id, externalTransaction = null) => {
+    const transaction = externalTransaction || await sequelize.transaction();
+    const ownsTransaction = !externalTransaction;
     try {
         // 1️⃣ Fetch order items
         const cart = await OrderDetails.findAll({
@@ -694,7 +710,7 @@ const checkRawMaterialAvailableOrNot = async (orderId, hotel_id, user_id) => {
         });
 
         if (!cart.length) {
-            await transaction.commit();
+            if (ownsTransaction) await transaction.commit();
             return { error: false, message: "No items to process" };
         }
         // console.log(cart, "Order Items")
@@ -794,7 +810,7 @@ const checkRawMaterialAvailableOrNot = async (orderId, hotel_id, user_id) => {
         const hasSFIStock = Object.keys(requiredSFI).length > 0;
 
         if (!hasRawStock && !hasSFIStock) {
-            await transaction.commit();
+            if (ownsTransaction) await transaction.commit();
             return { error: false, message: "No stock deduction required" };
         }
 
@@ -852,12 +868,12 @@ const checkRawMaterialAvailableOrNot = async (orderId, hotel_id, user_id) => {
             }
         }
 
-        await transaction.commit();
+        if (ownsTransaction) await transaction.commit();
         return { error: false, message: "Stock deducted successfully" };
 
     } catch (err) {
         console.error("Error in stock deduction:", err);
-        await transaction.rollback();
+        if (ownsTransaction) await transaction.rollback();
         console.error("Stock deduction error:", err.message);
         return { error: true, message: err.message };
     }
