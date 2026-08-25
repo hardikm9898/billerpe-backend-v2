@@ -189,15 +189,13 @@ const orderStatusChangeFromZomato = async (req, res) => {
 
 const generateZomatoInvoicePDF = async (data, outputPath) => {
     try {
-        let browser = ""
-        if (data.origin !== "http://localhost:3000") {
-            browser = await puppeteer.launch({
-                executablePath: "/usr/bin/google-chrome-stable",
-                args: ['--no-sandbox'], headless: true
-            });
-        } else {
-            browser = await puppeteer.launch();     // !local
-        }
+        // See controller/kto.js's generateKotPdf comment - CHROME_PATH
+        // replaces the old origin-header sniffing.
+        const browser = await puppeteer.launch({
+            executablePath: process.env.CHROME_PATH || undefined,
+            args: ['--no-sandbox'],
+            headless: true,
+        });
 
         const page = await browser.newPage();
 
@@ -467,15 +465,13 @@ padding-top: 4px;
 const generateKotPdf = async (data) => {
     // console.log(data.items)
 
-    let browser = ""
-    if (data.origin !== "http://localhost:3000") {
-        browser = await puppeteer.launch({
-            executablePath: "/usr/bin/google-chrome-stable",
-            args: ['--no-sandbox'], headless: true
-        });
-    } else {
-        browser = await puppeteer.launch();     // !local
-    }
+    // See controller/kto.js's generateKotPdf comment - CHROME_PATH
+    // replaces the old origin-header sniffing.
+    const browser = await puppeteer.launch({
+        executablePath: process.env.CHROME_PATH || undefined,
+        args: ['--no-sandbox'],
+        headless: true,
+    });
     const page = await browser.newPage();
     // Construct HTML content dynamically
     const htmlContent = `

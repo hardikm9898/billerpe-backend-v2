@@ -14,13 +14,10 @@ const EBillCreditDebit = sequelize.define("hms_ebillCreditDebit_mst", {
         primaryKey: true,
     },
 
-    // orderId: {
-    //     type: DataTypes.INTEGER,
-    //     references: {
-    //         model: Order,
-    //         key: 'id'
-    //     }
-    // },
+    orderId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
     mobile: {
         type: DataTypes.DOUBLE,
         defaultValue: 0

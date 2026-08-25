@@ -391,7 +391,7 @@ const getSingleOrderForAdminCart = async (req, res) => {
         const hotel = await Hotel.findOne({ where: { id: req.user } })
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST,))
 
-        const order = await Order.findOne({ where: { id: parseInt(id) } })
+        const order = await Order.findOne({ where: { id: parseInt(id), hotel_id: hotel.id } })
         if (!order) {
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }

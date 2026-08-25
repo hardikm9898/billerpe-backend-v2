@@ -49,9 +49,11 @@ const editExpenseHead = async (req, res) => {
         if (!/^[A-Za-z0-9\s&.,'()\-\[\]]+$/.test(expense_head_name)) {
             return res.json(error("Please Enter  Valid Expense Head Name", STATUSCODE.BAD_REQUEST));
         }
-        const expenseHead = await ExpenseHead.findOne({ where: { id } })
+        const expenseHead = await ExpenseHead.findOne({ where: { id, hotel_id: req.user } })
         if (!expenseHead) return res.json(error("Expense Head Not Found", STATUSCODE.BAD_REQUEST))
-        await ExpenseHead.update({ expense_head_name }, { where: { id } })
+        const duplicate = await ExpenseHead.findOne({ where: { expense_head_name, hotel_id: req.user, id: { [Op.ne]: id } } })
+        if (duplicate) return res.json(error("ExpenseHead Name Has Already Taken", STATUSCODE.BAD_REQUEST))
+        await ExpenseHead.update({ expense_head_name }, { where: { id, hotel_id: req.user } })
         const expenseHeads = await ExpenseHead.findAll({ where: { hotel_id: req.user } })
         return res.status(STATUSCODE.SUCCESS).json(success("ExpenseHead Updated Successfully", { expenseHeads }, STATUSCODE.SUCCESS))
     } catch (err) {

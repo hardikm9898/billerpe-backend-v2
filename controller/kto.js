@@ -852,15 +852,16 @@ const AdminOrder = async (req, res) => {
 }
 
 const generateKotPdf = async (data, outputPath) => {
-    let browser = ""
-    if (data.origin !== "http://localhost:3000") {
-        browser = await puppeteer.launch({
-            executablePath: "/usr/bin/google-chrome-stable",
-            args: ['--no-sandbox'], headless: true
-        });
-    } else {
-        browser = await puppeteer.launch({ headless: true });     // !local
-    }
+    // CHROME_PATH lets a real deploy point at its installed Chrome (e.g.
+    // /usr/bin/google-chrome-stable on Linux) - unset, Puppeteer falls back
+    // to its own bundled Chromium, which works for local/Windows dev too.
+    // Previously branched on the request Origin header instead, which broke
+    // for any real origin other than exactly "http://localhost:3000".
+    const browser = await puppeteer.launch({
+        executablePath: process.env.CHROME_PATH || undefined,
+        args: ['--no-sandbox'],
+        headless: true,
+    });
     const page = await browser.newPage();
     // Construct HTML content dynamically
     const htmlContent = `
@@ -1003,15 +1004,13 @@ font-weight: 600;
 }
 
 const generateTokenPdf = async (data) => {
-    let browser = ""
-    if (data.origin !== "http://localhost:3000") {
-        browser = await puppeteer.launch({
-            executablePath: "/usr/bin/google-chrome-stable",
-            args: ['--no-sandbox'], headless: true
-        });
-    } else {
-        browser = await puppeteer.launch();     // !local
-    }
+    // See generateKotPdf's comment - CHROME_PATH replaces the old
+    // origin-header sniffing.
+    const browser = await puppeteer.launch({
+        executablePath: process.env.CHROME_PATH || undefined,
+        args: ['--no-sandbox'],
+        headless: true,
+    });
     const page = await browser.newPage();
     // Construct HTML content dynamically
     const htmlContent = `
@@ -1058,15 +1057,13 @@ font-size:"25px";
 //! changes required base on requirement both kotOrder and Hold Order
 const generateInvoicePDF = async (data, outputPath) => {
     try {
-        let browser = ""
-        if (data.origin !== "http://localhost:3000") {
-            browser = await puppeteer.launch({
-                executablePath: "/usr/bin/google-chrome-stable",
-                args: ['--no-sandbox'], headless: true
-            });
-        } else {
-            browser = await puppeteer.launch();     // !local
-        }
+        // See generateKotPdf's comment - CHROME_PATH replaces the old
+        // origin-header sniffing.
+        const browser = await puppeteer.launch({
+            executablePath: process.env.CHROME_PATH || undefined,
+            args: ['--no-sandbox'],
+            headless: true,
+        });
 
         const page = await browser.newPage();
 
@@ -3308,7 +3305,7 @@ const editOrderClick = async (req, res) => {
         //! paymentMode cash Upi Card added require in Edit mode
         const { orderId } = req.body
         // console.log(req.body)
-        const order = await Order.findOne({ where: { id: orderId }, include: [{ model: User }, { model: Table, include: { model: TableCatagories } }] })
+        const order = await Order.findOne({ where: { id: orderId, hotel_id: req.user }, include: [{ model: User }, { model: Table, include: { model: TableCatagories } }] })
         if (!order) {
             // await t.rollback()
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE.NOT_FOUND))
