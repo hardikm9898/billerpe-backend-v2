@@ -1014,7 +1014,24 @@ const getTimeLineByOrderId = async (req, res) => {
             const plainTimeline = timeline.get({ plain: true });
             const updatedItems = [];
 
-            for (const item of plainTimeline.items) {
+            // The model declares `items` as DataTypes.JSON, but the real
+            // column is `longtext` (hms_timeline_msts is frozen off
+            // auto-alter in server.js's TABLES_TO_SKIP_ALTER, so that type
+            // was never actually applied to the DB) - Sequelize doesn't
+            // auto-parse it, so this comes back as a raw JSON string, not
+            // an array. Iterating a string with `for...of` + `in` throws
+            // (confirmed live: every timeline fetch 500'd on this).
+            let rawItems = plainTimeline.items;
+            if (typeof rawItems === 'string') {
+                try {
+                    rawItems = JSON.parse(rawItems);
+                } catch {
+                    rawItems = [];
+                }
+            }
+            if (!Array.isArray(rawItems)) rawItems = [];
+
+            for (const item of rawItems) {
                 if ('delete' in item && 'updated' in item) {
                     updatedItems.push(item);
                 } else {
