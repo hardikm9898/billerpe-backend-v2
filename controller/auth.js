@@ -14,6 +14,17 @@ const bcrypt = require("bcrypt")
 const Merchant = require("../model/merchant")
 const { UserSession } = require("../model")
 
+// A `Secure` cookie is silently dropped by the browser on any non-HTTPS
+// origin that isn't localhost itself (Chrome only treats localhost as a
+// trusted context over plain HTTP) - restaurantLogin/pinLogin's cookies
+// were hardcoded `secure: true`, so login worked over http://localhost but
+// silently failed (no cookie ever got set, no visible error) from any LAN
+// address like http://192.168.1.33:8080, which this POS is routinely
+// accessed at on a restaurant's own network. Standard convention: secure
+// only when actually deployed (NODE_ENV=production), so it's still
+// enforced for a real HTTPS deployment.
+const SECURE_COOKIES = process.env.NODE_ENV === "production"
+
 require("dotenv").config()
 
 
@@ -131,14 +142,14 @@ const restaurantLogin = async (req, res) => {
         }
         res.cookie("token", accessToken, {
             httpOnly: true,
-            secure: true,
+            secure: SECURE_COOKIES,
             sameSite: "strict",
             maxAge: 24 * 60 * 60 * 1000
         });
 
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: true,
+            secure: SECURE_COOKIES,
             sameSite: "strict",
             maxAge: 7 * 24 * 60 * 60 * 1000
         });
@@ -185,13 +196,13 @@ const pinLogin = async (req, res) => {
 
         res.cookie("token", accessToken, {
             httpOnly: true,
-            secure: true,
+            secure: SECURE_COOKIES,
             sameSite: "strict",
             maxAge: 24 * 60 * 60 * 1000
         });
         res.cookie("refreshToken", refreshToken, {
             httpOnly: true,
-            secure: true,
+            secure: SECURE_COOKIES,
             sameSite: "strict",
             maxAge: 7 * 24 * 60 * 60 * 1000
         });
