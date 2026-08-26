@@ -6,7 +6,7 @@ const { validator } = require("../middleware/validator")
 
 const { expenseReportsSchema } = require("../validation/report")
 const { expenseEntryReports, expenseByReports } = require("../controller/reports/expenseRelated")
-const { dayWiseGrowthReport, posCollectionReport, ExecutiveSalesReportSummary, DiscountedOrdersReport, AllOrderTypeWise, userWiseOrderGet } = require("../controller/reports/orderRelated")
+const { dayWiseGrowthReport, posCollectionReport, ExecutiveSalesReportSummary, DiscountedOrdersReport, AllOrderTypeWise, userWiseOrderGet, kotReport } = require("../controller/reports/orderRelated")
 const { itemTextReports, itemReportDayWise, HighestSellingReports } = require("../controller/reports/itemRelated")
 const { duePaymentReceiveReports } = require("../controller/reports/other")
 const { consumptionReport, itemWiseConsiompsion } = require("../controller/reports/inventoryRelated")
@@ -18,6 +18,7 @@ router.get("/posCollection", adminAuth, posCollectionReport)
 router.get("/executiveReport", adminAuth, ExecutiveSalesReportSummary)
 router.get("/discountedReports", adminAuth, DiscountedOrdersReport)
 router.get("/userWiseOrder", adminAuth, userWiseOrderGet)
+router.get("/kotReport", adminAuth, kotReport)
 
 //item related Reports 
 router.get("/itemTextReports", adminAuth, itemTextReports)

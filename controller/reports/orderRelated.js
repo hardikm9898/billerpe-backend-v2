@@ -11,6 +11,7 @@ const User = require("../../model/user");
 const HotelUser = require("../../model/hotelUser");
 const OrderTax = require("../../model/orderTax");
 const TaxType = require("../../model/taxType");
+const TimeLine = require("../../model/timeline");
 
 
 const getPaginatedData = async (model, page, limit, whereClause = {}, include = [], attributes = null, orderBy = [['createdAt', 'DESC']]) => {
@@ -947,4 +948,50 @@ const userWiseOrderGet = async (req, res) => {
     }
 }
 
-module.exports = { getPaginatedData, AllOrderTypeWise, DiscountedOrdersReport, dayWiseGrowthReport, posCollectionReport, ExecutiveSalesReportSummary, userWiseOrderGet }
+// Day-wise count of real KOT tickets fired (hms_timeline_mst rows with
+// action "kot" - written once per KOT round by kto.js's own
+// addToFroRemoveTimeLine/its sibling, so this is a true event log, not a
+// derived guess). TimeLine has no business_date column of its own, so this
+// groups by DATE(created_Date) in the hotel's own timezone-shifted window
+// instead, unlike Order-based reports which group by business_date.
+const kotReport = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        const { startD, endD } = await getShiftedDateRange(startDate, endDate, req.user);
+
+        const periodColumn = sequelize.literal("DATE(created_Date)");
+        const rows = await TimeLine.findAll({
+            where: {
+                hotel_id: req.user,
+                action: 'kot',
+                deleted: false,
+                created_Date: { [Op.between]: [startD, endD] },
+            },
+            attributes: [
+                [periodColumn, 'period'],
+                [sequelize.fn('COUNT', sequelize.col('id')), 'totalTickets'],
+                [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('order_id'))), 'totalOrders'],
+            ],
+            group: [periodColumn],
+            order: [[sequelize.literal('period'), 'ASC']],
+            raw: true,
+        });
+
+        const periodData = rows.map(r => ({
+            period: moment(r.period).format('YYYY-MM-DD'),
+            totalTickets: parseInt(r.totalTickets) || 0,
+            totalOrders: parseInt(r.totalOrders) || 0,
+        }));
+        const totalTickets = periodData.reduce((s, r) => s + r.totalTickets, 0);
+
+        return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, {
+            periodData,
+            totalTickets,
+        }, STATUSCODE.SUCCESS));
+    } catch (err) {
+        console.log(err, 'kotReport error');
+        return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR));
+    }
+};
+
+module.exports = { getPaginatedData, AllOrderTypeWise, DiscountedOrdersReport, dayWiseGrowthReport, posCollectionReport, ExecutiveSalesReportSummary, userWiseOrderGet, kotReport }
