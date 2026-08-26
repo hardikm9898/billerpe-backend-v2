@@ -269,6 +269,25 @@ const updateInvoiceFormate = async (req, res) => {
         return res.status(STATUSCODE.INTERNAL_SERVER_ERROR).json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
     }
 }
+// RestaurantSetting has always had a create-on-hotel-creation path
+// (insertDefaultRestaurantSettings / the addHotelDetails create call) but
+// no update path at all anywhere in the codebase - every field on it
+// (qr_code_open_on_settle, order_sequence_opention, business day settings,
+// etc.) was readable via getSingleHotel but never writable. Scoped to just
+// the one field the frontend actually needs right now rather than opening
+// every column on this table to write.
+const updateRestaurantSetting = async (req, res) => {
+    try {
+        const hotel = await Hotel.findOne({ where: { id: req.user } })
+        if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
+        const { qr_code_open_on_settle } = req.body
+        await RestaurantSetting.update({ qr_code_open_on_settle: !!qr_code_open_on_settle }, { where: { hotel_id: hotel.id } })
+        return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Restaurant setting updated" }, STATUSCODE.SUCCESS))
+    } catch (err) {
+        console.log(err.message, "=====>error")
+        return res.status(STATUSCODE.INTERNAL_SERVER_ERROR).json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
+    }
+}
 const getSingleHotel = async (req, res) => {
     try {
         let syncRecord = await SyncIndexDB.findOne({
@@ -969,4 +988,4 @@ async function insertDefaultRestaurantSettings() {
 
     }
 }
-module.exports = { insertDefaultRestaurantSettings, setMenuShow, editHotelDetails, addEditServiceCharge, setDisplay, getTableCatagoriesWise, getHotelId, jsPrintManager, liveTable, tableWiseRetrieveOrder, searchByTableCatagories, removeTableCatagories, editTableCatagories, addTableCategory, updateInvoiceFormate, getSingleHotel, getTableCatagories, getTableForCaptain, addHotelDetails, getHotel, addTable, getTable, reservedTable, removeTable, editTable }
+module.exports = { insertDefaultRestaurantSettings, setMenuShow, editHotelDetails, addEditServiceCharge, setDisplay, getTableCatagoriesWise, getHotelId, jsPrintManager, liveTable, tableWiseRetrieveOrder, searchByTableCatagories, removeTableCatagories, editTableCatagories, addTableCategory, updateInvoiceFormate, updateRestaurantSetting, getSingleHotel, getTableCatagories, getTableForCaptain, addHotelDetails, getHotel, addTable, getTable, reservedTable, removeTable, editTable }
