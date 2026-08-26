@@ -67,6 +67,8 @@ const ExpenseEntry = require("./expenseEnty");
 const ExpenseHead = require("./expenseHead");
 const TaxType = require("./taxType");
 const ServiceCharge = require("./serviceCharge");
+const CashSession = require("./cashSession");
+const CashMovement = require("./cashMovement");
 
 // ---------- Subscription & Payment ----------
 const Plan = require("./subscription/plan");
@@ -637,6 +639,22 @@ ExpenseEntry.belongsTo(ExpenseHead, { foreignKey: 'expense_head_id' });
 // HotelUser -> ExpenseEntry
 HotelUser.hasMany(ExpenseEntry, { foreignKey: 'user_id' });
 
+// Hotel -> CashSession
+Hotel.hasMany(CashSession, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+CashSession.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// HotelUser -> CashSession (who opened/closed it)
+HotelUser.hasMany(CashSession, { foreignKey: 'hotelUserId', onDelete: 'SET NULL' });
+CashSession.belongsTo(HotelUser, { foreignKey: 'hotelUserId' });
+
+// CashSession -> CashMovement
+CashSession.hasMany(CashMovement, { foreignKey: 'cashSessionId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+CashMovement.belongsTo(CashSession, { foreignKey: 'cashSessionId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// HotelUser -> CashMovement (who recorded it)
+HotelUser.hasMany(CashMovement, { foreignKey: 'hotelUserId', onDelete: 'SET NULL' });
+CashMovement.belongsTo(HotelUser, { foreignKey: 'hotelUserId' });
+
 // Hotel -> TaxType
 Hotel.hasMany(TaxType, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 TaxType.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
@@ -870,6 +888,8 @@ module.exports = {
     ExpenseHead,
     TaxType,
     ServiceCharge,
+    CashSession,
+    CashMovement,
 
     // Subscription & Payment
     Plan,
