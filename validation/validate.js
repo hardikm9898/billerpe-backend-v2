@@ -69,7 +69,7 @@ const userSchemaUpdate = joi.object({
     email: joi.string().lowercase().email().required(),
     number: joi.string().regex(/^[0-9]{10}$/).messages({ 'string.pattern.base': `Phone number must have 10 digits.` }).required(),
     role: joi.string().required(),
-    password: joi.string().min(6).messages({ 'string.pattern.base': `PassWord must have 6 character.` }).required(),
+    password: joi.string().min(6).messages({ 'string.pattern.base': `PassWord must have 6 character.` }).optional(),
     pin: joi.string().pattern(/^[0-9]{4,6}$/).messages({ 'string.pattern.base': `PIN must be 4-6 digits.` }).optional(),
 
 })
