@@ -13,6 +13,8 @@ const PurchaseOrder = sequelize.define("hms_purchase_order", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
     business_date: {
         type: DataTypes.DATEONLY,
         defaultValue: () => require('moment')().format("YYYY-MM-DD")

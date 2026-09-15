@@ -19,6 +19,9 @@ const Recipes = sequelize.define(
             allowNull: false
         },
 
+        // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+        local_id: { type: DataTypes.INTEGER, allowNull: true },
+
         menu_id: {
             type: DataTypes.INTEGER,
             allowNull: false

@@ -12,7 +12,7 @@ const { error, success } = require("../../responce/res")
 const createAddonDepartment = async (req, res) => {
     const t = await sequelize.transaction()
     try {
-        const { department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection, addons } = req.body
+        const { department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection, addons, menu_catalog_id } = req.body
         const findVariantAvailable = await AddonDepartment.findOne({ where: { department_name, hotel_id: req.user }, attributes: ['id'], transaction: t },)
 
         if (!findVariantAvailable) {
@@ -26,7 +26,7 @@ const createAddonDepartment = async (req, res) => {
                 return res.json(error("Minimum value should not be greater than Maximum value", STATUSCODE.BAD_REQUEST))
             }
 
-            const department = await AddonDepartment.create({ department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection, hotel_id: req.user }, { transaction: t })
+            const department = await AddonDepartment.create({ department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection, hotel_id: req.user, ...(menu_catalog_id ? { menu_catalog_id } : {}) }, { transaction: t })
             const addonData = []
             for (const cur of addons) {
                 const { addon_name, price, attributes = 'veg' } = cur
@@ -39,7 +39,7 @@ const createAddonDepartment = async (req, res) => {
                 await t.rollback()
                 return res.json(error("Please Add Some Addons Items", STATUSCODE.BAD_REQUEST))
             }
-            const findAvailableAddons = await AddonDepartment.findAll({ where: { hotel_id: req.user }, attributes: ['id', 'department_name', "maximum_allowed_addon", "singleSelection", "minimum_allowed_addon"], include: { model: Addons, attributes: ['id', 'addon_name', 'price', 'attributes'] }, transaction: t })
+            const findAvailableAddons = await AddonDepartment.findAll({ where: { hotel_id: req.user }, attributes: ['id', 'department_name', "maximum_allowed_addon", "singleSelection", "minimum_allowed_addon", "menu_catalog_id"], include: { model: Addons, attributes: ['id', 'addon_name', 'price', 'attributes'] }, transaction: t })
             await t.commit()
             return res.status(STATUSCODE.CREATED).json(success(MESSAGE.SUCCESS, { message: "Addon Created Created Succssefully", addons: findAvailableAddons }, STATUSCODE.CREATED))
         } else {
@@ -57,13 +57,13 @@ const createAddonDepartment = async (req, res) => {
 const updatedAddons = async (req, res) => {
     const t = await sequelize.transaction()
     try {
-        const { department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection, addons, id } = req.body
+        const { department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection, addons, id, menu_catalog_id } = req.body
         const findAddonDepartmentAvailable = await AddonDepartment.findByPk(id, { transaction: t })
         if (!findAddonDepartmentAvailable) {
             await t.rollback()
             return res.json(error("Addon Department Not Found", STATUSCODE.BAD_REQUEST))
         }
-        await AddonDepartment.update({ department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection }, { where: { id, hotel_id: req.user }, transaction: t })
+        await AddonDepartment.update({ department_name, maximum_allowed_addon, minimum_allowed_addon, singleSelection, ...(menu_catalog_id ? { menu_catalog_id } : {}) }, { where: { id, hotel_id: req.user }, transaction: t })
         await Addons.destroy({ where: { department_id: id, hotel_id: req.user }, transaction: t })
         if (addons.length < maximum_allowed_addon) {
             await t.rollback()
@@ -85,7 +85,7 @@ const updatedAddons = async (req, res) => {
             await t.rollback()
             return res.json(error("Please Add Some Addons Items", STATUSCODE.BAD_REQUEST))
         }
-        const findAvailableAddons = await AddonDepartment.findAll({ where: { hotel_id: req.user }, attributes: ['id', 'department_name', "maximum_allowed_addon", "singleSelection", "minimum_allowed_addon"], include: { model: Addons, attributes: ['id', 'addon_name', 'price', 'attributes'] }, transaction: t })
+        const findAvailableAddons = await AddonDepartment.findAll({ where: { hotel_id: req.user }, attributes: ['id', 'department_name', "maximum_allowed_addon", "singleSelection", "minimum_allowed_addon", "menu_catalog_id"], include: { model: Addons, attributes: ['id', 'addon_name', 'price', 'attributes'] }, transaction: t })
         await t.commit()
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Addons Updated Succssefully", addons: findAvailableAddons }, STATUSCODE.SUCCESS))
@@ -101,7 +101,7 @@ const getAllAddons = async (req, res) => {
     try {
         const hotel = await Hotel.findByPk(req.user, { attributes: ['id'] })
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
-        const findAvailableAddons = await AddonDepartment.findAll({ where: { hotel_id: req.user }, attributes: ['id', 'department_name', "maximum_allowed_addon", "singleSelection", "minimum_allowed_addon"], include: { model: Addons, attributes: ['id', 'addon_name', 'price', 'attributes'] } })
+        const findAvailableAddons = await AddonDepartment.findAll({ where: { hotel_id: req.user }, attributes: ['id', 'department_name', "maximum_allowed_addon", "singleSelection", "minimum_allowed_addon", "menu_catalog_id"], include: { model: Addons, attributes: ['id', 'addon_name', 'price', 'attributes'] } })
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { addons: findAvailableAddons }, STATUSCODE.SUCCESS))
     } catch (err) {
 

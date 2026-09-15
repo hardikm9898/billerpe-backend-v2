@@ -19,7 +19,7 @@ const { UserSession } = require("../model")
 // trusted context over plain HTTP) - restaurantLogin/pinLogin's cookies
 // were hardcoded `secure: true`, so login worked over http://localhost but
 // silently failed (no cookie ever got set, no visible error) from any LAN
-// address like http://192.168.1.33:8080, which this POS is routinely
+// address like http://192.168.1.12:8080, which this POS is routinely
 // accessed at on a restaurant's own network. Standard convention: secure
 // only when actually deployed (NODE_ENV=production), so it's still
 // enforced for a real HTTPS deployment.

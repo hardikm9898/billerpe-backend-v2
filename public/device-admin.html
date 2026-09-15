@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>BillerPe — Local Server Registrations</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #262b35;
+    --text: #e8eaed;
+    --muted: #9aa2af;
+    --green: #3ecf8e;
+    --red: #ef5c5c;
+    --accent: #6c8dff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  button { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  button.danger { background: var(--red); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input { background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); font-style: italic; padding: 20px; text-align: center; }
+  #loginForm { max-width: 340px; display: flex; flex-direction: column; gap: 10px; margin: 60px auto; }
+  #err { color: var(--red); font-size: 13px; min-height: 18px; }
+  #toast { position: fixed; bottom: 20px; right: 20px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 13px; display: none; }
+</style>
+</head>
+<body>
+<div id="loginForm" style="display:none">
+  <h1>BillerPe SuperAdmin</h1>
+  <p class="sub">Sign in to manage restaurants' local server registrations.</p>
+  <input id="mobile" placeholder="Mobile number" autocomplete="username" />
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+  <button onclick="login()">Sign in</button>
+  <div id="err"></div>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <div>
+      <h1>Local Server Registrations</h1>
+      <div class="sub">Every restaurant with an active BillerPe EXE registered as its local server. Releasing one lets a different PC register in its place.</div>
+    </div>
+    <button onclick="load()">Refresh</button>
+  </header>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Restaurant</th><th>Hotel ID</th><th>Device</th><th>Registered</th><th>Last seen</th><th></th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="empty" style="display:none">No restaurant currently has an active local server registered.</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.style.display = "block";
+    setTimeout(() => (t.style.display = "none"), 3000);
+  }
+
+  async function login() {
+    const mobile = document.getElementById("mobile").value.trim();
+    const password = document.getElementById("password").value;
+    const err = document.getElementById("err");
+    err.textContent = "";
+    try {
+      const res = await fetch("/superAdmin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ mobile, password }),
+      }).then((r) => r.json());
+      if (res.error) {
+        err.textContent = res.results?.message || "Login failed";
+        return;
+      }
+      document.getElementById("loginForm").style.display = "none";
+      document.getElementById("app").style.display = "block";
+      load();
+    } catch {
+      err.textContent = "Could not reach the server";
+    }
+  }
+
+  function fmt(iso) {
+    return iso ? new Date(iso).toLocaleString() : "—";
+  }
+
+  async function load() {
+    const res = await fetch("/superAdmin/device/list", { credentials: "include" }).then((r) => r.json());
+    if (res.error) {
+      // Not authenticated (or session expired) - fall back to the login form
+      // rather than showing a raw error, same as landing here cold would.
+      document.getElementById("app").style.display = "none";
+      document.getElementById("loginForm").style.display = "flex";
+      return;
+    }
+    const rows = document.getElementById("rows");
+    const registrations = res.results.registrations || [];
+    document.getElementById("empty").style.display = registrations.length ? "none" : "block";
+    rows.innerHTML = registrations
+      .map(
+        (r) => `
+      <tr>
+        <td>${(r.hotel_registration?.hotel_name) || "—"}</td>
+        <td class="mono">${r.hotel_id}</td>
+        <td class="mono">${r.device_id}<br><span style="color:var(--muted)">${r.hostname || ""}</span></td>
+        <td>${fmt(r.registered_at)}</td>
+        <td>${fmt(r.last_seen_at)}</td>
+        <td><button class="danger" onclick="release(${r.hotel_id}, '${(r.hotel_registration?.hotel_name || "this restaurant").replace(/'/g, "")}')">Release</button></td>
+      </tr>`
+      )
+      .join("");
+  }
+
+  async function release(hotelId, hotelName) {
+    if (!confirm(`Release the active local server for "${hotelName}"? A new PC will be able to register in its place immediately.`)) return;
+    const res = await fetch("/superAdmin/device/release", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ hotel_id: hotelId }),
+    }).then((r) => r.json());
+    if (res.error) {
+      toast(res.results?.message || "Release failed");
+      return;
+    }
+    toast(`Released — ${hotelName} can now register a new local server.`);
+    load();
+  }
+
+  load();
+</script>
+</body>
+</html>

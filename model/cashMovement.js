@@ -7,6 +7,10 @@ const CashMovement = sequelize.define("hms_cashMovement_mst", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id
+    // comment. Scoped by cashSessionId here, not hotel_id (this table has
+    // no hotel_id of its own).
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
     type: {
         type: DataTypes.STRING,
         allowNull: false

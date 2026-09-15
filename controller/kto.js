@@ -477,6 +477,8 @@ const AdminOrder = async (req, res) => {
             const totalAmount = modifiedCart.myAmount
             const grandAmount = modifiedCart.grandAmount
             const service_charge = cart.service_charger
+            const delivery_charge = cart.delivery_charge
+            const packaging_charge = cart.packaging_charge
             const taxes = cart.taxes
 
             const orderWithoutupdated = await Order.findOne({ where: { id: order_id, hotel_id: req.user }, attributes: ['order_type', 'id', 'TableId'] })
@@ -515,7 +517,7 @@ const AdminOrder = async (req, res) => {
 
             //createLogFile(req.user, `ADMIN ORDER/${order_id} Order updated`, JSON.stringify({ totalDiscount, status: STATUS.SUCCESS, payment: orderWithoutupdated.order_type == "pickup" ? STATUS.SUCCESS : STATUS.PENDING, cash, card, upi, due, totalAmount, gst, grandAmount, where: { id: order_id, hotel_id: req.user } }))
             const business_date = getBusinessDate(timeZone, businessStartTime)
-            const order = await Order.update({ service_charge, UserId: user.id, totalDiscount, discount_reason, discount_type, discount_value, status: STATUS.SUCCESS, payment: orderWithoutupdated.order_type == "pickup" ? STATUS.SUCCESS : STATUS.PENDING, cash, card, upi, due, totalAmount, gst, grandAmount, createdAt: new Date(), business_date }, { where: { id: order_id, hotel_id: req.user } })
+            const order = await Order.update({ service_charge, delivery_charge, packaging_charge, UserId: user.id, totalDiscount, discount_reason, discount_type, discount_value, status: STATUS.SUCCESS, payment: orderWithoutupdated.order_type == "pickup" ? STATUS.SUCCESS : STATUS.PENDING, cash, card, upi, due, totalAmount, gst, grandAmount, createdAt: new Date(), business_date }, { where: { id: order_id, hotel_id: req.user } })
 
             await updateOrderTax(taxes, order_id, req.user)
 
@@ -639,6 +641,8 @@ const AdminOrder = async (req, res) => {
                     const totalAmount = modifiedCart.myAmount
                     const grandAmount = modifiedCart.grandAmount
                     const service_charge = cart.service_charger
+                    const delivery_charge = cart.delivery_charge
+                    const packaging_charge = cart.packaging_charge
                     // const latestOrder = await Order.findOne({
                     //     where: {
                     //         hotel_id: req.user,
@@ -662,7 +666,7 @@ const AdminOrder = async (req, res) => {
                         }
                     }
                     const business_date = getBusinessDate(timeZone, businessStartTime)
-                    const order = await Order.create({ business_date, service_charge, token, hotelUserId: req.userId, bill_no: maxOnlineBillNo, hotel_id: req.user, UserId: user?.id, status: STATUS.SUCCESS, payment: STATUS.SUCCESS, cash, upi, card, due, order_type, totalAmount, gst, discount_reason, discount_type, discount_value, totalDiscount, grandAmount })
+                    const order = await Order.create({ business_date, service_charge, delivery_charge, packaging_charge, token, hotelUserId: req.userId, bill_no: maxOnlineBillNo, hotel_id: req.user, UserId: user?.id, status: STATUS.SUCCESS, payment: STATUS.SUCCESS, cash, upi, card, due, order_type, totalAmount, gst, discount_reason, discount_type, discount_value, totalDiscount, grandAmount })
                     user = await findAndUpdateUser({ name: userName, number: mobile, gstin, hotel_id: req.user, address }, order.id)
 
                     await addOrderTax(cart.taxes, order.id, req.user)
@@ -759,6 +763,8 @@ const AdminOrder = async (req, res) => {
                     const totalAmount = modifiedCart.myAmount
                     const grandAmount = modifiedCart.grandAmount
                     const service_charge = cart.service_charger
+                    const delivery_charge = cart.delivery_charge
+                    const packaging_charge = cart.packaging_charge
                     const totalDiscount = modifiedCart.totalDiscount
                     const { discount_reason, discount_type, discount_value } = modifiedCart
                     // const latestOrder = await Order.findOne({
@@ -784,7 +790,7 @@ const AdminOrder = async (req, res) => {
                     }
                     //createLogFile(req.user, `ADMIN ORDER/order_id Not Avaialbe DinIn Order Created`, { bill_no: `${maxOnlineBillNo + 1}`, hotel_id: req.user, UserId: user?.dataValues?.id, TableId: table?.id, status: STATUS.SUCCESS, order_type, discount_reason, discount_type, totalDiscount, totalAmount, gst, grandAmount })
                     const business_date = getBusinessDate(timeZone, businessStartTime)
-                    const order = await Order.create({ business_date, service_charge, hotelUserId: req.userId, token, bill_no: maxOnlineBillNo, hotel_id: req.user, UserId: user?.dataValues?.id, TableId: table?.id, status: STATUS.SUCCESS, order_type, discount_reason, discount_type, discount_value, totalDiscount, totalAmount, gst, grandAmount })
+                    const order = await Order.create({ business_date, service_charge, delivery_charge, packaging_charge, hotelUserId: req.userId, token, bill_no: maxOnlineBillNo, hotel_id: req.user, UserId: user?.dataValues?.id, TableId: table?.id, status: STATUS.SUCCESS, order_type, discount_reason, discount_type, discount_value, totalDiscount, totalAmount, gst, grandAmount })
                     user = await findAndUpdateUser({ name: userName, number: mobile, gstin, hotel_id: req.user, address }, order.id)
 
                     await addOrderTax(cart.taxes, order.id, req.user)
@@ -948,18 +954,20 @@ font-weight: 600;
             <body>
                 <div class="invoice">
                     <div class="invoice-header">
+                        ${data.headerText && data.headerText.length ? data.headerText.join('') : `
                         <p class="hotel-name">${data.restaurantName}</p>
-                        <p>${data.timeAndDate}</p>
                          <p>KOT - ${data.order_id}</p>
                         <p><strong>${data.order_type}</strong></p>
                         <p><strong>${data.userOrTableNo}</strong></p>
                         ${data.token > 0 ? `
                             <p class='token'><strong>Token No.:${data.token}</strong></p>
-                            `: ""}
+                            `: ""}`}
+                        <p>${data.timeAndDate}</p>
                     </div>
                     <div class="custom-table-header">
+                        ${data.footerText && data.footerText.length ? data.footerText.join('') : `
                         <p>Biller : biller </p>
-                        <p> status: ${data?.kotNumber === 1 ? "Running" : "New"}
+                        <p> status: ${data?.kotNumber === 1 ? "Running" : "New"}`}
                     </div>
                     <table class="invoice-items">
                         <thead>
@@ -1270,7 +1278,7 @@ text-align: center;
                         </div>
                         <div class="custom-table-header-details-right">
                             <p><strong>${data.type === 'dinin' ? 'Dine In' : 'Pick Up'}</strong></p>
-                            <p>Bill No: ${data.orderId}</p>
+                            <p>Bill No: ${data.billNo ?? data.orderId}</p>
                         </div>
                         ${data.token > 0 ? `<div class="custom-table-header-details">
                                 <p><strong>Token No. : ${data.token} </strong></p>
@@ -1319,12 +1327,15 @@ text-align: center;
                             <p> Total Qty:${data.totalQty} sub Total: ${(+data.subtotal + data.totalDiscount).toFixed(2)}</p>
                             <p>${data.totalDiscount > 0 ? "Discount:" + " " + data.currency + data.totalDiscount : ""}</p>
                             <p>${data.service_charge > 0 ? "Service Charge :" + data.service_charge : ""} </p>
+                            <p>${data.delivery_charge > 0 ? "Delivery Charge :" + data.delivery_charge : ""} </p>
+                            <p>${data.packaging_charge > 0 ? "Packaging Charge :" + data.packaging_charge : ""} </p>
                             ${data.orderTax.map((tax, index) => `
    <p> ${`${tax?.hms_tax_type_mst?.tax_name} @${tax.amount}${tax.tax_type === 'pr' ? "%" : ""} : ${(+tax.tax_value).toFixed(2)}`}</p>
-  
-`)?.join('')}
 
-                            
+`)?.join('')}
+                            <p>${data.tip > 0 ? "Tip :" + data.tip : ""} </p>
+
+
                         </div>
                     </div>
                     <div class="invoice-total">
@@ -1396,10 +1407,17 @@ const kotOrder = async (req, res) => {
         const businessStartTime = hotel?.hms_res_setting?.business_day_start_time || "00:01:00"
 
         hotel = hotel.get({ plain: true })
+        // Printing and order/KOT creation are separate concerns client-side
+        // (billerpe-pos-pro-v2's doPrintKot already falls back gracefully -
+        // PDF preview, then just a toast - when no printer is configured or
+        // reachable) - this used to hard-block the ENTIRE order from being
+        // created at all until a KOT printer existed, which is what task 31
+        // reported as "order stays stuck in draft with no printer set."
+        // defaultKotPrinter itself is never read again below (confirmed by
+        // grepping every remaining reference) - it's still computed and
+        // threaded through to createNewOrder/createUpdatedOrder unchanged,
+        // in case something downstream comes to depend on it later.
         const defaultKotPrinter = hotel?.hms_printer_settings?.find(el => el.print_type == "K");
-
-
-        if (!defaultKotPrinter) return res.json(error("Printer Not Set", STATUSCODE.BAD_REQUEST));
 
         if (!order_type) return res.json(error(MESSAGE.PLEASE_SELECT_ORDER_TYPE, STATUSCODE.BAD_REQUEST));
         if (!cart.items.length) return res.json(error(MESSAGE.CART_NOT_FOUND, STATUSCODE.NOT_FOUND));
@@ -1570,12 +1588,14 @@ const createUpdatedOrder = async (order_id, res, req, cart, cartData, order_type
     const grandAmount = modifiedCart.grandAmount;
     const totalAmount = modifiedCart.myAmount;
     const service_charge = cart.service_charger;
+    const delivery_charge = cart.delivery_charge;
+    const packaging_charge = cart.packaging_charge;
 
     //createLogFile(req.user, `KOT/${order_id} Order Updated`, { discount_reason, discount_type, UserId: user?.id, status: ORDER_TYPE.IN_PROGRESS, order_type, totalAmount, gst, totalDiscount, grandAmount, where: { id: order_id, hotel_id: req.user, deleted: false } });
     let table_time_sated1 = tableTime ? true : false
     let tableTime1 = tableTime ? tableTime : new Date()
     // await Order.findByPk(order_id)
-    await Order.update({ tableTime: tableTime1, table_time_sated: table_time_sated1, discount_reason, discount_type, discount_value, service_charge, UserId: user?.id, status: ORDER_TYPE.IN_PROGRESS, order_type, totalAmount, gst, totalDiscount, grandAmount }, { where: { id: order_id, hotel_id: req.user, deleted: false } });
+    await Order.update({ tableTime: tableTime1, table_time_sated: table_time_sated1, discount_reason, discount_type, discount_value, service_charge, delivery_charge, packaging_charge, UserId: user?.id, status: ORDER_TYPE.IN_PROGRESS, order_type, totalAmount, gst, totalDiscount, grandAmount }, { where: { id: order_id, hotel_id: req.user, deleted: false } });
     await updateOrderTax(cart.taxes, order_id, req.user)
     const orderInformation = await Order.findOne({ where: { id: order_id, hotel_id: req.user, deleted: false }, attributes: ['id', 'TableId', 'UserId', 'bill_no', 'token'] });
     if (!orderInformation) return { status: 500, message: MESSAGE.ORDER_NOT_FOUND }
@@ -1683,7 +1703,7 @@ const createNewOrder = async (cart, req, res, cartData, order_type, user, table,
     const {
         gst,
         totalDiscount,
-        grandAmount, myAmount, service_charger, discount_reason, discount_type, discount_value, taxes } = cart
+        grandAmount, myAmount, service_charger, delivery_charge, packaging_charge, discount_reason, discount_type, discount_value, taxes } = cart
     let newOrder
     let token = 0
     if (hotel.is_token_on !== "3") {
@@ -1698,7 +1718,7 @@ const createNewOrder = async (cart, req, res, cartData, order_type, user, table,
 
         let table_time_sated1 = tableTime ? true : false
         const business_date = getBusinessDate(timeZone, businessStartTime)
-        newOrder = await Order.create({ business_date, table_time_sated: table_time_sated1, tableTime: tableTime || new Date(), service_charge: service_charger, hotelUserId: req.userId, token, bill_no: maxOnlineBillNo, hotel_id: req.user, TableId: table?.id, UserId: user?.id, totalDiscount, status: ORDER_TYPE.IN_PROGRESS, order_type, totalAmount: myAmount, gst, grandAmount })
+        newOrder = await Order.create({ business_date, table_time_sated: table_time_sated1, tableTime: tableTime || new Date(), service_charge: service_charger, delivery_charge, packaging_charge, hotelUserId: req.userId, token, bill_no: maxOnlineBillNo, hotel_id: req.user, TableId: table?.id, UserId: user?.id, totalDiscount, status: ORDER_TYPE.IN_PROGRESS, order_type, totalAmount: myAmount, gst, grandAmount })
 
         await Table.update({ table_status: "R" }, { where: { id: table?.id, hotel_id: req.user, active: true } });
         // setImmediate(() => {
@@ -1709,7 +1729,7 @@ const createNewOrder = async (cart, req, res, cartData, order_type, user, table,
     else {
         const business_date = getBusinessDate(timeZone, businessStartTime)
 
-        newOrder = await Order.create({ business_date, service_charge: service_charger, token, bill_no: maxOnlineBillNo, discount_reason, discount_value, discount_type, hotel_id: req.user, UserId: user?.id, totalDiscount, status: ORDER_TYPE.IN_PROGRESS, order_type, totalAmount: myAmount, gst, grandAmount })
+        newOrder = await Order.create({ business_date, service_charge: service_charger, delivery_charge, packaging_charge, token, bill_no: maxOnlineBillNo, discount_reason, discount_value, discount_type, hotel_id: req.user, UserId: user?.id, totalDiscount, status: ORDER_TYPE.IN_PROGRESS, order_type, totalAmount: myAmount, gst, grandAmount })
     }
     await addOrderTax(taxes, newOrder.id, req.user)
     //     createLogFile(req.user, `KOT/${newOrder.id} Order Created`, {
@@ -1860,10 +1880,10 @@ const holdOrder = async (req, res) => {
                 return res.json(error(MESSAGE.CART_NOT_FOUND, STATUSCODE.NOT_FOUND));
             }
 
-            const { gst, totalDiscount, grandAmount, myAmount: totalAmount, service_charger, discount_reason, discount_type, discount_value } = cart;
+            const { gst, totalDiscount, grandAmount, myAmount: totalAmount, service_charger, delivery_charge, packaging_charge, discount_reason, discount_type, discount_value } = cart;
             //createLogFile(req.user, `Hold/${order_id} Order Updated`, { status: ORDER_TYPE.HOLD, order_type, totalDiscount, totalAmount, gst, grandAmount, discount_reason, discount_type, });
 
-            await Order.update({ service_charge: service_charger, status: ORDER_TYPE.HOLD, order_type, totalDiscount, discount_reason, discount_type, discount_value, totalAmount, gst, grandAmount }, { where: { id: order_id, hotel_id: req.user, deleted: false } });
+            await Order.update({ service_charge: service_charger, delivery_charge, packaging_charge, status: ORDER_TYPE.HOLD, order_type, totalDiscount, discount_reason, discount_type, discount_value, totalAmount, gst, grandAmount }, { where: { id: order_id, hotel_id: req.user, deleted: false } });
             user = await findAndUpdateUser({ name: userName, number: mobile, gstin, hotel_id: req.user, address }, order_id)
             await updateOrderTax(cart.taxes, order_id, req.user)
             const orderInformation = await Order.findOne({ where: { id: order_id, hotel_id: req.user, deleted: false } });
@@ -1988,7 +2008,7 @@ const holdOrder = async (req, res) => {
         }
 
         if (cartData) {
-            const { gst, totalDiscount, grandAmount, myAmount: totalAmount, service_charger, discount_reason, discount_type, discount_value } = cart;
+            const { gst, totalDiscount, grandAmount, myAmount: totalAmount, service_charger, delivery_charge, packaging_charge, discount_reason, discount_type, discount_value } = cart;
             // const latestOrder = await Order.findOne({
             //     where: {
             //         hotel_id: req.user,
@@ -2010,7 +2030,7 @@ const holdOrder = async (req, res) => {
                 }
             }
             const business_date = getBusinessDate(timeZone, businessStartTime)
-            const order = await Order.create({ business_date, service_charge: service_charger, hotelUserId: req.userId, token, bill_no: maxOnlineBillNo, hotel_id: req.user, TableId: table?.id, discount_reason, discount_type, discount_value, totalDiscount, UserId: user?.id, status: ORDER_TYPE.HOLD, order_type, totalAmount, gst, grandAmount });
+            const order = await Order.create({ business_date, service_charge: service_charger, delivery_charge, packaging_charge, hotelUserId: req.userId, token, bill_no: maxOnlineBillNo, hotel_id: req.user, TableId: table?.id, discount_reason, discount_type, discount_value, totalDiscount, UserId: user?.id, status: ORDER_TYPE.HOLD, order_type, totalAmount, gst, grandAmount });
             user = await findAndUpdateUser({ name: userName, number: mobile, gstin, hotel_id: req.user, address }, order.id)
             await addOrderTax(cart.taxes, order.id, req.user)
             const menuItems = cart.items.find(el => {
@@ -3087,12 +3107,13 @@ const settleBills = async (req, res) => {
     // that failed at the stock-check step left exactly that state.
     const t = await sequelize.transaction();
     try {
-        let { id, cash, upi, card, amount, due = 0, mobile } = req.body;
+        let { id, cash, upi, card, amount, due = 0, mobile, tip = 0 } = req.body;
 
         // ✅ DEFAULT VALUES
         cash = cash || 0;
         upi = upi || 0;
         card = card || 0;
+        tip = tip || 0;
 
         // ✅ PAYMENT VALIDATION
         if (amount > 0 && !(cash || upi || card || due)) {
@@ -3229,7 +3250,7 @@ const settleBills = async (req, res) => {
 
         // ✅ UPDATE ORDER PAYMENT
         await Order.update(
-            { cash, upi, card, due, payment: STATUS.SUCCESS },
+            { cash, upi, card, due, tip, payment: STATUS.SUCCESS },
             { where: { hotel_id: req.user, id }, transaction: t }
         );
 
@@ -3580,7 +3601,7 @@ const kotGeneratePdf = async (req, res) => {
             order_id,
             restaurantName,
             userOrTableNo,
-            timeAndDate, items, printerSize, kotNumber, printer, token } = req.body
+            timeAndDate, items, printerSize, kotNumber, printer, token, headerText, footerText } = req.body
 
         // console.log(req.body, "Body Data--<")
         const hotel = await Hotel.findOne({ where: { id: req.user } })
@@ -3596,7 +3617,13 @@ const kotGeneratePdf = async (req, res) => {
             userOrTableNo,
             timeAndDate,
             kotNumber,
-            token
+            token,
+            // Dynamic KOT format (Task 1) - client-rendered HTML fragments
+            // from store.kotFormat, same headerText/footerText convention as
+            // the invoice PDF path. Falls back to the hardcoded layout above
+            // when the hotel hasn't configured a format yet.
+            headerText,
+            footerText
             // status: kotNumber === 1 ? "New" : "Running"
         }
 
@@ -3654,7 +3681,7 @@ const getBillViewData = async (req, res) => {
         if (!hotel) {
             return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }
-        const order = await Order.findOne({ where: { hotel_id: id, id: orderId }, attributes: ['id', 'totalAmount', 'UserId', 'TableId', 'bill_no', 'gst', 'grandAmount', 'totalDiscount', 'order_type', 'createdAt', "token", "service_charge", "isOffline"] })
+        const order = await Order.findOne({ where: { hotel_id: id, id: orderId }, attributes: ['id', 'totalAmount', 'UserId', 'TableId', 'bill_no', 'gst', 'grandAmount', 'totalDiscount', 'order_type', 'createdAt', "token", "service_charge", "delivery_charge", "packaging_charge", "tip", "isOffline"] })
         if (!order) {
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }
@@ -3728,6 +3755,9 @@ const getBillViewData = async (req, res) => {
             totalBill: parseFloat(order.grandAmount || 0).toFixed(2),
             token: tokenPrint,
             service_charge: order.service_charge,
+            delivery_charge: order.delivery_charge,
+            packaging_charge: order.packaging_charge,
+            tip: order.tip,
             totalQty,
             totalDiscount: order.totalDiscount,
             orderTax,
@@ -3757,13 +3787,32 @@ const sentEbill = async (req, res) => {
             return res.json(error("Order Not Found", STATUSCODE.BAD_REQUEST))
         }
 
-        const order = await Order.findByPk(orderId)
+        // The frontend only ever talks to its hotel's local exe, never this
+        // cloud directly (billerpe-local-exe/controller/cloudRelay.js's
+        // sentEbill is a pure body-forwarding relay), so `orderId` here is
+        // the EXE's own local Order.id - a completely different number
+        // space from this cloud's own auto-increment id once the two have
+        // diverged (confirmed live: e-bills showing the wrong order/bill
+        // number, e.g. an old unrelated "bill no: 3" instead of the just-
+        // billed order). Same local_id reconciliation key as
+        // offline.js#syncOrderDataWithDataBase, with the same legacy
+        // fallback to a direct id match for rows synced before that column
+        // existed. `Order.findByPk` alone (no hotel_id scope) was also a
+        // cross-tenant leak - any hotel's raw numeric id could resolve to
+        // ANY OTHER hotel's order and text that hotel's bill details out.
+        let order = await Order.findOne({ where: { local_id: orderId, hotel_id: req.user } })
+        if (!order) {
+            order = await Order.findOne({ where: { id: orderId, hotel_id: req.user } })
+        }
         if (!order) {
             return res.json(error("Order Not Found", STATUSCODE.BAD_REQUEST))
         }
-        const bill_no = generateHashId(orderId)
+        const bill_no = generateHashId(order.id)
         const hotelId = generateHashId(req.user)
-        const link = `${process.env.SOCKET_URL}/#/billview?bill_no=${bill_no}&id=${hotelId}`
+        // No `#/` prefix - that was the old CRA app's HashRouter
+        // (POS/uat-frontend). billerpe-pos-pro-v2's /billview (TanStack
+        // Router, plain path-based) is what SOCKET_URL now points at.
+        const link = `${process.env.SOCKET_URL}/billview?bill_no=${bill_no}&id=${hotelId}`
 
         const url = `https://graph.facebook.com/v22.0/${process.env.WHATSAPPPHONEID}/messages`;
         const headers = {
@@ -3801,24 +3850,32 @@ const sentEbill = async (req, res) => {
         if (checkUserHaveCredit && checkUserHaveCredit.credit <= 0) {
             return res.json(error("You Don't Have Enough Credit For Send E-bill, Please Contact Customer Care.", STATUSCODE.BAD_REQUEST))
         }
-        axios.post(url, body, { headers })
-            .then(async (response) => {
-                //createLogFile(req.user, `${mobile} - ${response}`, "E-bill")
-                // console.log("responce::", response);
-                const checkFirstTime = await EBillCredit.findOne({ where: { hotel_id: req.user } })
-                if (!checkFirstTime) {
-                    await EBillCredit.create({ hotel_id: req.user, credit: 49 })
-                    await EBillCreditDebit.create({ hotel_id: req.user, credit: true, amount: 50, mobile })
-                    await EBillCreditDebit.create({ orderId, hotel_id: req.user, debit: true, amount: 1, mobile })
-                } else {
-                    await EBillCredit.update({ credit: checkFirstTime.credit - 1 }, { where: { hotel_id: req.user } })
-                    await EBillCreditDebit.create({ orderId, hotel_id: req.user, debit: true, amount: 1, mobile })
-                }
-            })
-            .catch(error => {
-                console.error(error, "Error in sending message");
-            });
 
+        // Used to fire-and-forget this call (no await) and respond success
+        // immediately regardless of what WhatsApp's API actually did with
+        // it - confirmed live as the cause of "shows sent but never
+        // arrives": a template/token/rate-limit rejection from Meta only
+        // ever reached a console.error, never the caller. Awaiting it here
+        // means a real rejection now surfaces as a real error response
+        // instead of a false "Invoice send to User Whatsapp" success - and
+        // since credit is only ever debited AFTER this succeeds (below),
+        // a failed send no longer needs a separate no-op branch to avoid
+        // charging for it, unlike the old .then()/.catch() split did.
+        try {
+            await axios.post(url, body, { headers })
+        } catch (whatsappErr) {
+            console.error(whatsappErr?.response?.data || whatsappErr, "Error in sending message");
+            return res.json(error("Could not send the e-bill on WhatsApp. Please try again.", STATUSCODE.BAD_REQUEST))
+        }
+
+        if (!checkUserHaveCredit) {
+            await EBillCredit.create({ hotel_id: req.user, credit: 49 })
+            await EBillCreditDebit.create({ hotel_id: req.user, credit: true, amount: 50, mobile })
+            await EBillCreditDebit.create({ orderId: order.id, hotel_id: req.user, debit: true, amount: 1, mobile })
+        } else {
+            await EBillCredit.update({ credit: checkUserHaveCredit.credit - 1 }, { where: { hotel_id: req.user } })
+            await EBillCreditDebit.create({ orderId: order.id, hotel_id: req.user, debit: true, amount: 1, mobile })
+        }
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Invoice send to User Whatsapp" }, STATUSCODE.SUCCESS))
     } catch (err) {

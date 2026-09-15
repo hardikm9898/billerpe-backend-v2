@@ -2,6 +2,8 @@ const express = require("express")
 const router = express.Router()
 const { addEbillCreditBySuperAdmin, getEbillCreditHistory, uploadMenuFromExcelBySuperAdmin, restaurantDetails, singleHotelSP, AllInquiry, superAdminLogin, checkSuperAdmin, superAdminDashBoardData, gettingupcomingRenuale, superAdminNewClientGraph, superAdminLogOut, saveAndNext, gettingPeddingAddRestoDetails, makePayment, deleteAddAdminResto, menuUploadedAndTrainingStatus, gettingPrinterRollOrders, updateOrderStatus, addProduct, editProduct, addImage, updateInqueryStatus, gettingSuperAdminUserList } = require("../controller/superAdmin")
 const superAdminAuth = require("../middleware/superAdminAuth")
+const { releaseLocalServer, listActiveLocalServers } = require("../controller/localServerRegistration")
+const path = require("path")
 const loginLimiter = require("../middleware/loginLimiter")
 const upload = require("../middleware/upload")
 const { uploadMultipleTest, uploadSingleTest, uploadWhatsAppTemplateImage } = require("../services/upload")
@@ -11,6 +13,22 @@ const { generateTicketFromSuperAdmin } = require("../controller/TicketManagemnt/
 const { sendWhatsappMessage, createWhatsAppTemplate, updateWhatsAppTemplate, sendBulkWhatsappMessage, getAllWhatsappTemplates, downloadSampleExcel } = require("../controller/smsService")
 
 //! Expense Routes
+
+// Architecture memo §7: only a SuperAdmin can release a restaurant's
+// registered local server - restaurant users have no route to this at all.
+router.post("/device/release", superAdminAuth, releaseLocalServer)
+router.get("/device/list", superAdminAuth, listActiveLocalServers)
+
+// Standalone utility page - no dedicated SuperAdmin frontend exists in this
+// workspace (same situation as the Captain App), so this small
+// self-contained page IS the actual release control for now. NOT gated by
+// superAdminAuth itself (a static page load can't carry a useful error back
+// to the browser the way an API call can) - the page's own JS calls the
+// gated APIs above and shows a login form first if those calls come back
+// unauthenticated, exactly like visiting it cold would require anyway.
+router.get("/deviceAdmin", (_req, res) => {
+    res.sendFile(path.join(__dirname, "..", "public", "device-admin.html"))
+})
 
 router.post("/superAdmin", superAdminAuth, restaurantDetails)
 router.post("/gettingPrinterRollOrders", superAdminAuth, gettingPrinterRollOrders)

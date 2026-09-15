@@ -23,6 +23,12 @@ const Plan = require("../model/subscription/plan")
 const SubscriptionPayment = require("../model/subscription/subscriptionPayment")
 const moment = require('moment')
 const { superAdminModel, SuperAdminUser, RestaurantSetting, SyncIndexDB } = require("../model")
+const MenuCatalog = require("../model/menuCatalog")
+const PaymentMode = require("../model/paymentMode")
+const BillChargeRule = require("../model/billChargeRule")
+const NotificationSetting = require("../model/notificationSetting")
+const RolePermissionDefault = require("../model/rolePermissionDefault")
+const { ROLES, ROLE_PERMISSION_DEFAULTS, ROLE_SPECIAL_DEFAULTS } = require("../constant/rolePermissionDefaults")
 const saltRounds = 10
 
 const addHotelDetails = async (req, res) => {
@@ -50,6 +56,48 @@ const addHotelDetails = async (req, res) => {
         }
         const create = await Hotel.create(hotelData)
         await RestaurantSetting.create({ hotel_id: create.id })
+        // Every hotel needs exactly one default menu catalogue to exist -
+        // same seeding point as the default Role right below, and the same
+        // backfill migration 20260901120200 gives every pre-existing hotel.
+        await MenuCatalog.create({ name: "Main Menu", hotel_id: create.id, is_default: true, enter_by: create.hotel_name })
+        // Same 4 defaults billerpe-pos-pro-v2's own mock/ops-seed.ts starts
+        // with (Cash/Due protected, UPI/Card removable) - matches migration
+        // 20260902090000's backfill for every pre-existing hotel.
+        await PaymentMode.bulkCreate([
+            { name: "Cash", hotel_id: create.id, active: true, deletable: false, enter_by: create.hotel_name },
+            { name: "UPI", hotel_id: create.id, active: true, deletable: true, enter_by: create.hotel_name },
+            { name: "Card", hotel_id: create.id, active: true, deletable: true, enter_by: create.hotel_name },
+            { name: "Due", hotel_id: create.id, active: true, deletable: false, enter_by: create.hotel_name },
+        ])
+        // Same defaults as mock/ops-seed.ts's deliveryChargeRule/
+        // packagingChargeRule - matches migration 20260902100000's backfill
+        // for every pre-existing hotel.
+        await BillChargeRule.bulkCreate([
+            { rule_for: "delivery", hotel_id: create.id, active: false, charge_type: "fixed", charge_value: 40, calculation_on: "core", charge_automatic: [], calculation_on_tax: false, greater_less: "3", greater_less_amount: 0, enter_by: create.hotel_name },
+            { rule_for: "packaging", hotel_id: create.id, active: true, charge_type: "fixed", charge_value: 15, calculation_on: "core", charge_automatic: ["pickup"], calculation_on_tax: false, greater_less: "3", greater_less_amount: 0, enter_by: create.hotel_name },
+        ])
+        // Same 6 triggers/defaults as mock/data.ts's notificationSettings -
+        // matches migration 20260902110000's backfill for every
+        // pre-existing hotel.
+        await NotificationSetting.bulkCreate([
+            { trigger: "Order settled", hotel_id: create.id, whatsapp: true, sms: false, in_app: true },
+            { trigger: "KOT ready", hotel_id: create.id, whatsapp: false, sms: false, in_app: true },
+            { trigger: "Low stock", hotel_id: create.id, whatsapp: true, sms: true, in_app: true },
+            { trigger: "Sync failure", hotel_id: create.id, whatsapp: false, sms: false, in_app: true },
+            { trigger: "Cash variance", hotel_id: create.id, whatsapp: true, sms: false, in_app: true },
+            { trigger: "Reservation reminder", hotel_id: create.id, whatsapp: true, sms: true, in_app: true },
+        ])
+        // Same role-level permission template as mock/data.ts's
+        // ROLE_PERMISSION_DEFAULTS/ROLE_SPECIAL_DEFAULTS - matches migration
+        // 20260903120000's backfill for every pre-existing hotel.
+        await RolePermissionDefault.bulkCreate(
+            ROLES.map((roleName) => ({
+                hotel_id: create.id,
+                role: roleName,
+                permissions: ROLE_PERMISSION_DEFAULTS[roleName],
+                special_permissions: ROLE_SPECIAL_DEFAULTS[roleName],
+            })),
+        )
         const role = await Role.create({ role_name: USER_ROLE.ADMIN, hotel_id: create.id })
         const hashedOwnerPassword = await bcrypt.hash(JSON.parse(req.body.documents).password, 10)
         const user = await HotelUser.create({ created_by: req.user, role_cd: role.role_cd, hotel_id: create.id, email: JSON.parse(req.body.documents).owner_email_id, number: JSON.parse(req.body.documents).owner_number, name: JSON.parse(req.body.documents).owner_name, active: true, password: hashedOwnerPassword })
@@ -256,8 +304,8 @@ const updateInvoiceFormate = async (req, res) => {
         const hotel = await Hotel.findOne({ where: { id: req.user } })
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
         // console.log(req.body)
-        const { gst_no, fssai_no, invoiceFormateIncGst, multiLanguage, bill_with_kot, is_token_on, bill_with_token, service_charge, saveBehave, upiId } = req.body.hotel
-        await Hotel.update({ gst_no, fssai_no, multiLanguage, saveBehave, service_charge, invoiceFormateIncGst, bill_with_kot, is_token_on, bill_with_token, upiId }, { where: { id: hotel.id } })
+        const { gst_no, fssai_no, invoiceFormateIncGst, multiLanguage, bill_with_kot, is_token_on, bill_with_token, service_charge, saveBehave, upiId, invoiceFormateHeaderText, invoiceFormateBottomText } = req.body.hotel
+        await Hotel.update({ gst_no, fssai_no, multiLanguage, saveBehave, service_charge, invoiceFormateIncGst, bill_with_kot, is_token_on, bill_with_token, upiId, invoiceFormateHeaderText, invoiceFormateBottomText }, { where: { id: hotel.id } })
         // setImmediate(() => {
 
         await updatedRestaurantToRadis(hotel.id)
@@ -269,6 +317,29 @@ const updateInvoiceFormate = async (req, res) => {
         return res.status(STATUSCODE.INTERNAL_SERVER_ERROR).json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
     }
 }
+// New, deliberately minimal - editHotelDetails already accepts a
+// hotel_logo file, but that endpoint also rewrites the owner's email/
+// password and runs cross-hotel duplicate-owner checks, which is real
+// superAdmin territory, not something a hotel's own adminAuth session
+// should be able to trigger just to change its logo. This does exactly
+// one thing: save the uploaded file (middleware/upload.js's existing
+// multer config - public/images, served statically by server.js's
+// express.static("public")) and point this hotel's own hotel_logo at it.
+const uploadHotelLogo = async (req, res) => {
+    try {
+        const hotel = await Hotel.findOne({ where: { id: req.user } })
+        if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
+        if (!req.file) return res.json(error("Logo file is required", STATUSCODE.BAD_REQUEST))
+
+        const hotel_logo = req.file.fieldname + '-' + req.file.originalname
+        await Hotel.update({ hotel_logo }, { where: { id: req.user } })
+        return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Logo updated", hotel_logo }, STATUSCODE.SUCCESS))
+    } catch (err) {
+        console.error(err)
+        return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
+    }
+}
+
 // RestaurantSetting has always had a create-on-hotel-creation path
 // (insertDefaultRestaurantSettings / the addHotelDetails create call) but
 // no update path at all anywhere in the codebase - every field on it
@@ -500,7 +571,13 @@ const getTable = async (req, res) => {
                     required: false
                 }
             ],
-
+            // No explicit order meant MySQL's own scan order decided table
+            // placement, which the Order/OrderDetails LEFT JOIN above can
+            // change once a table actually has a matching order row -
+            // task 33's "table jumps position the moment an order is
+            // created" (the frontend just renders whatever order this
+            // query returns, unsorted - see table-grid.index.tsx).
+            order: [['id', 'ASC']],
         });
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { tables }, STATUSCODE.SUCCESS))
@@ -988,4 +1065,4 @@ async function insertDefaultRestaurantSettings() {
 
     }
 }
-module.exports = { insertDefaultRestaurantSettings, setMenuShow, editHotelDetails, addEditServiceCharge, setDisplay, getTableCatagoriesWise, getHotelId, jsPrintManager, liveTable, tableWiseRetrieveOrder, searchByTableCatagories, removeTableCatagories, editTableCatagories, addTableCategory, updateInvoiceFormate, updateRestaurantSetting, getSingleHotel, getTableCatagories, getTableForCaptain, addHotelDetails, getHotel, addTable, getTable, reservedTable, removeTable, editTable }
+module.exports = { insertDefaultRestaurantSettings, setMenuShow, editHotelDetails, addEditServiceCharge, setDisplay, getTableCatagoriesWise, getHotelId, jsPrintManager, liveTable, tableWiseRetrieveOrder, searchByTableCatagories, removeTableCatagories, editTableCatagories, addTableCategory, updateInvoiceFormate, updateRestaurantSetting, getSingleHotel, getTableCatagories, getTableForCaptain, addHotelDetails, getHotel, addTable, getTable, reservedTable, removeTable, editTable, uploadHotelLogo }

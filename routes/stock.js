@@ -66,6 +66,10 @@ const { getAllRawMaterialName, checkStockLevel, checkStockLevelMobile } = requir
 const { getPurchaseOrders, createSupplier, getSupplier, getMaxPo, getSupplierWisePurchaseOrder, orderWiserConsumptionReports, getRawMaterialWisePurchaseOrder, editSupplier } = require("../controller/stock_Mangement/purchaseOrder")
 const { get } = require("https")
 const { createRawMaterialWastage, getWastageRecords, deleteWastageRecord, getWastageRecordsExcel } = require("../controller/stock_Mangement/westage")
+const {
+    getRequisitions, createRequisition, setRequisitionStatus,
+    setRequisitionItemQty, removeRequisition, fulfilRequisition,
+} = require("../controller/requisition")
 
 // Purchase Order Routes
 router.post("/purchaseOrder", adminAuth, validator(createPurchaseOrderSchema), createPurchaseOrder)
@@ -83,6 +87,14 @@ router.get("/supplier", adminAuth, getSupplier)
 router.get("/supplierWisePurchaseOrder", adminAuth, getSupplierWisePurchaseOrder)
 router.get("/rawMaterialWisePurchase", adminAuth, getRawMaterialWisePurchaseOrder)
 router.get("/maxPo", adminAuth, getMaxPo)
+
+// Requisition Routes
+router.get("/requisition", adminAuth, getRequisitions)
+router.post("/requisition", adminAuth, createRequisition)
+router.post("/requisitionStatus", adminAuth, setRequisitionStatus)
+router.post("/requisitionItemQty", adminAuth, setRequisitionItemQty)
+router.post("/requisitionRemove", adminAuth, removeRequisition)
+router.post("/requisitionFulfil", adminAuth, fulfilRequisition)
 
 
 // Raw Material Consumption Routes

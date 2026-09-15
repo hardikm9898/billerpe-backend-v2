@@ -10,6 +10,9 @@ const PromoCode = sequelize.define("hms_promo_code", {
         allowNull: false
     },
 
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
+
     promo_code_name: {
         type: DataTypes.STRING,
     },

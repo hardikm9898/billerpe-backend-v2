@@ -1,10 +1,17 @@
 const express = require("express")
 const router = express.Router()
-const { addHotelDetails, getHotel, addTable, getTable, reservedTable, editTable, removeTable, getTableForCaptain, getTableCatagories, getSingleHotel, updateInvoiceFormate, updateRestaurantSetting, addTableCategory, editTableCatagories, removeTableCatagories, searchByTableCatagories, tableWiseRetrieveOrder, liveTable, jsPrintManager, getHotelId, getTableCatagoriesWise, setDisplay, addEditServiceCharge, editHotelDetails, setMenuShow } = require("../controller/hotel")
+const { addHotelDetails, getHotel, addTable, getTable, reservedTable, editTable, removeTable, getTableForCaptain, getTableCatagories, getSingleHotel, updateInvoiceFormate, updateRestaurantSetting, addTableCategory, editTableCatagories, removeTableCatagories, searchByTableCatagories, tableWiseRetrieveOrder, liveTable, jsPrintManager, getHotelId, getTableCatagoriesWise, setDisplay, addEditServiceCharge, editHotelDetails, setMenuShow, uploadHotelLogo } = require("../controller/hotel")
 const { createAddonSchema, updatedAddonsSchema, printerSchema, printerSchemaEdit, createTableSchema } = require("../validation/validate")
 const { validator } = require("../middleware/validator")
 const { createUser, getRole, checkHotelLogin, createCaptain, checkCaptainLogin, updateUser, getCaptainUser, userAccess, getImage, getNumberSuggestion, getUserName } = require("../controller/user")
-const { createMenu, showMenu, checkTableAvailable, showCatagories, createCatagories, MenuShow, MenuShowByCatagories, searchByCatagories, editMenu, removeMenu, removeCatagories, editCatagories, searchByShortCode, searchBySubCatagories, menuByCategory, uploadMenuFromExcel, getMenuItemsWithVariants } = require("../controller/menu")
+const { createMenu, showMenu, checkTableAvailable, showCatagories, createCatagories, MenuShow, MenuShowByCatagories, searchByCatagories, editMenu, removeMenu, removeCatagories, editCatagories, searchByShortCode, searchBySubCatagories, menuByCategory, uploadMenuFromExcel, getMenuItemsWithVariants, createMenuCatalog, editMenuCatalog, getMenuCatalog, removeMenuCatalog } = require("../controller/menu")
+const { createPaymentMode, editPaymentMode, getPaymentMode, removePaymentMode } = require("../controller/paymentMode")
+const { getPaymentModeDefaults, savePaymentModeDefault, removePaymentModeDefault } = require("../controller/paymentModeDefault")
+const { getBillChargeRules, updateBillChargeRule } = require("../controller/billChargeRule")
+const { getNotificationSettings, toggleNotificationSetting } = require("../controller/notificationSetting")
+const { getRolePermissionDefaults, editRolePermissionDefault, editRolePermissionSpecialDefault } = require("../controller/rolePermissionDefault")
+const { editSettledOrder, getRefundDueOrders, settleRefundDue } = require("../controller/editSettledOrder")
+const { createQrOrder, getQrOrderStatus, getTableSessionStatus, getPendingQrOrders, updateQrOrderStatus, regenerateTableQr } = require("../controller/qrOrder")
 const upload = require("../middleware/upload")
 const { addToCart, getCart, removeCartItems, placeOrder, billData, billDataForAdmin, getOrders, getSingleOrder, getKotOrder, getHoldOrders, getPickupOrder, getDinInOrder, getSingleOrderForAdminCart, deleteOrder, getOrdersByBillNo, getPendingBills, getDueOrders, settleDue, settleAllDuePayment, getTimeLineByOrderId, getOrderTaxDetails, getAllOrderPaginationWise, makeSequenceBillNoOptimized } = require("../controller/order")
 const { userLogin, restaurantLogin, captainLogin, restaurantLogout, pdf, pinLogin } = require("../controller/auth")
@@ -12,6 +19,7 @@ const isAuth = require("../middleware/auth")
 const { adminAuth, mobileAuth, mobileSuperAdminAuth } = require("../middleware/adminAuth")
 const { addToCartAdmin, getAdminCart, AdminOrder, removeAdminCartItems, adminBillData, removeAdminAllCart, cancelOrder, kotOrder, holdOrder, test, addToCartForOnClickRetrieveCart, addComment, setPrinter, deletePdf, settleBills, editOrderClick, updateInvoice, rePrintAdminBillData, reprintkot, kotGeneratePdf, invoiceGeneratePdf, getBillViewData, sentEbill, getEbillCredit, creditDebitEbillData, updateOrderToserver, ordertimeOver, ordertimeExtend } = require("../controller/kto")
 const CaptainAuth = require("../middleware/captainAuth")
+const { registerLocalServer, getLocalServerStatus } = require("../controller/localServerRegistration")
 const { salesReport, itemWiseReports, cancelOrderReport, customReportsData, onlineOrderTotalSales } = require("../controller/report")
 const { dashBoard, mobileLogin } = require("../controller/mobileController/dashBoard")
 const { mobileTable, tableWiseKotRetrive } = require("../controller/mobileController/mobiletables")
@@ -22,11 +30,18 @@ const { restaurantDetails, superAdminLogin, checkSuperAdmin, AllInquiry, singleH
 const { tableBooking, getBookingData, deleteBookings, getSingleBookingData, updateBooking } = require("../controller/tableBooking")
 const { checkDashBoardOnOrNot } = require("../connection/socket")
 const { invoiceSetting, headerFooterContent, getFontSizeArray } = require("../controller/incoiceFormate")
+const { kotFormatSetting, kotHeaderFooterContent } = require("../controller/kotFormate")
 const superAdminAuth = require("../middleware/superAdminAuth")
 const { setPrinterSetting, getPrinter, EditPrinterSetting, deletedPrinter, setCategoriesForPrinter } = require("../controller/printer_setting")
 const { moveKot, moveTable } = require("../controller/table")
 const { salesDashBoardData } = require("../controller/dashBoard")
-const { offlineMenu, offlineMenuCateg, offlineTable, offlineTableCateg, offlineOrders, offlineOrdersDetails, offlineUser, offlineHotelUser, offlineInvoiceFormate, offlinePrinterSetting, offlineTableBooking, offlineUserAccess, offlineRoles, syncOrderDataWithDataBase, fetchAllData, offlineOnlineOrder, gettingAllRestaurantWhichIsTakenGst } = require("../controller/offline/offline")
+const { offlineMenu, offlineMenuCateg, offlineTable, offlineTableCateg, offlineOrders, offlineOrdersDetails, offlineUser, offlineHotelUser, offlineInvoiceFormate, offlinePrinterSetting, offlineTableBooking, offlineUserAccess, offlineRoles, offlineMenuCatalog, offlinePaymentMode, offlineBillChargeRule, offlineNotificationSetting, offlineRolePermissionDefault, syncOrderDataWithDataBase, fetchAllData, offlineOnlineOrder, gettingAllRestaurantWhichIsTakenGst, getOfflineSyncManifest } = require("../controller/offline/offline")
+const {
+    offlineRecipes, offlineSemiFinishedItems, offlineSemiFinishedRecipes, offlineExpenseHeads, offlineExpenseEntries,
+    offlineCashSessions, offlineCashMovements, offlinePromoCodesFull, offlineWastage, offlinePurchaseOrders,
+    offlinePurchaseOrderPayments, offlineSuppliers,
+} = require("../controller/offline/offlineOperations")
+const { offlineEntityPush } = require("../controller/offline/offlineEntityPush")
 const { GetOrderSFromZomoto, orderStatus, items, orderStatusChange, orderStatusChangeFromZomato, getOrderHistory, generateZomatoKot, generateZomatoBill } = require("../controller/zomotoSwiggy")
 const { dailySendToClientTotalSales, CustomerFeedBackSendMessage } = require("../controller/smsService")
 const { createVariant, getAllVariant, updatedVariant } = require("../controller/Variant/variant")
@@ -61,6 +76,9 @@ router.post("/updateRestaurantSetting", adminAuth, updateRestaurantSetting)
 router.post("/invoiceSetting", adminAuth, invoiceSetting)
 router.get("/getFontSizeArray", adminAuth, getFontSizeArray)
 router.get("/headerFooter", adminAuth, headerFooterContent)
+router.post("/kotFormatSetting", adminAuth, kotFormatSetting)
+router.get("/kotHeaderFooter", adminAuth, kotHeaderFooterContent)
+router.post("/hotelLogo", adminAuth, upload.single("hotel_logo"), uploadHotelLogo)
 router.post("/hotel", superAdminAuth, upload.fields([
     { name: "hotel_logo", maxCount: 1 },
     { name: "payment_image", maxCount: 1 }
@@ -98,6 +116,13 @@ router.get("/getUserAccess", adminAuth, userAccess)
 router.get("/getImage", getImage)
 router.get("/getUserName", adminAuth, getUserName)
 
+// ? local server registration routes (architecture memo, Phase A) - the
+// EXE calls these using the owner's already-established adminAuth session,
+// never a device-only credential, matching how registerDevice's initial
+// hotel-context resolution already authenticates.
+router.post("/device/register", adminAuth, registerLocalServer)
+router.get("/device/status", adminAuth, getLocalServerStatus)
+
 // ? captain routes
 router.get("/checkCaptainLogin", CaptainAuth, checkCaptainLogin)
 router.get("/captainTable", CaptainAuth, getTableForCaptain)
@@ -116,6 +141,33 @@ router.post('/addon', adminAuth, validator(createAddonSchema), createAddonDepart
 router.put('/addon', adminAuth, validator(updatedAddonsSchema), updatedAddons)
 router.get('/addon', adminAuth, getAllAddons)
 router.get('/variant', adminAuth, getAllVariant)
+
+router.post("/menuCatalog", adminAuth, requireAccess("Menu", "create"), createMenuCatalog)
+router.post("/menuCatalogEdit", adminAuth, requireAccess("Menu", "edit"), editMenuCatalog)
+router.get("/menuCatalog", adminAuth, requireAccess("Menu", "read"), getMenuCatalog)
+router.post("/menuCatalogRemove", adminAuth, requireAccess("Menu", "delete"), removeMenuCatalog)
+
+// No "Operations"/"Billing" backend access area exists (only the 10 areas
+// requireAccess already knows about) - same reasoning /variant and /addon
+// already use plain adminAuth with no requireAccess wrapper, rather than
+// forcing this under an ill-fitting area like "Menu".
+router.post("/paymentMode", adminAuth, createPaymentMode)
+router.post("/paymentModeEdit", adminAuth, editPaymentMode)
+router.get("/paymentMode", adminAuth, getPaymentMode)
+router.post("/paymentModeRemove", adminAuth, removePaymentMode)
+router.get("/paymentModeDefault", adminAuth, getPaymentModeDefaults)
+router.post("/paymentModeDefault", adminAuth, savePaymentModeDefault)
+router.post("/paymentModeDefaultRemove", adminAuth, removePaymentModeDefault)
+
+router.get("/billChargeRule", adminAuth, getBillChargeRules)
+router.post("/billChargeRule", adminAuth, updateBillChargeRule)
+
+router.get("/notificationSetting", adminAuth, getNotificationSettings)
+router.post("/notificationSettingToggle", adminAuth, toggleNotificationSetting)
+
+router.get("/rolePermissionDefault", adminAuth, getRolePermissionDefaults)
+router.post("/rolePermissionDefault", adminAuth, editRolePermissionDefault)
+router.post("/rolePermissionDefaultSpecial", adminAuth, editRolePermissionSpecialDefault)
 
 router.post("/menuRemove", adminAuth, requireAccess("Menu", "delete"), removeMenu)
 router.post("/catagoriesRemove", adminAuth, requireAccess("Menu", "delete"), removeCatagories)
@@ -167,6 +219,9 @@ router.post("/getDueOrders", adminAuth, getDueOrders)
 router.post("/settleDue", adminAuth, settleDue)
 router.post("/allSettleDue", adminAuth, settleAllDuePayment)
 router.post("/updateOrderToserver", adminAuth, updateOrderToserver)
+router.post("/editSettledOrder", adminAuth, editSettledOrder)
+router.get("/refundDue", adminAuth, getRefundDueOrders)
+router.post("/refundDue", adminAuth, settleRefundDue)
 
 // ? kot Orders 
 
@@ -286,6 +341,15 @@ router.get('/serviceCharge', mobileAuth, serviceCharge)
 
 router.get("/menuByCategory/:key", menuByCategory)
 
+// //! QR table ordering - createQrOrder/getQrOrderStatus are public (same
+// reasoning as menuByCategory above); the rest are staff-facing.
+router.post("/qrOrder", createQrOrder)
+router.get("/qrOrder/tableStatus", getTableSessionStatus)
+router.get("/qrOrder/:id/status", getQrOrderStatus)
+router.get("/qrOrder/pending", adminAuth, getPendingQrOrders)
+router.post("/qrOrder/:id/status", adminAuth, updateQrOrderStatus)
+router.post("/table/:id/qr-version", adminAuth, regenerateTableQr)
+
 
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! offline Data Get ????????????????????????????????????????????????? //
 
@@ -298,13 +362,37 @@ router.get('/offlineOrdersDetails', adminAuth, offlineOrdersDetails)
 router.get('/offlineUser', adminAuth, offlineUser)
 router.get('/offlineHotelUser', adminAuth, offlineHotelUser)
 router.get('/offlineRoles', adminAuth, offlineRoles)
+router.get('/offlineMenuCatalog', adminAuth, offlineMenuCatalog)
+router.get('/offlinePaymentMode', adminAuth, offlinePaymentMode)
+router.get('/offlineBillChargeRule', adminAuth, offlineBillChargeRule)
+router.get('/offlineNotificationSetting', adminAuth, offlineNotificationSetting)
+router.get('/offlineRolePermissionDefault', adminAuth, offlineRolePermissionDefault)
 router.get('/offlineInvoiceFormate', adminAuth, offlineInvoiceFormate)
 router.get('/offlinePrinterSetting', adminAuth, offlinePrinterSetting)
 router.get('/offlineTableBooking', adminAuth, offlineTableBooking)
 router.get('/offlineUserAccess', adminAuth, offlineUserAccess)
+router.get('/offlineSyncManifest', adminAuth, getOfflineSyncManifest)
 router.get('/offlineOnlineOrders', adminAuth, offlineOnlineOrder)
 
+// Task 2 (operations local-only entities) - pull half, see
+// controller/offline/offlineOperations.js.
+router.get('/offlineRecipes', adminAuth, offlineRecipes)
+router.get('/offlineSemiFinishedItems', adminAuth, offlineSemiFinishedItems)
+router.get('/offlineSemiFinishedRecipes', adminAuth, offlineSemiFinishedRecipes)
+router.get('/offlineExpenseHeads', adminAuth, offlineExpenseHeads)
+router.get('/offlineExpenseEntries', adminAuth, offlineExpenseEntries)
+router.get('/offlineCashSessions', adminAuth, offlineCashSessions)
+router.get('/offlineCashMovements', adminAuth, offlineCashMovements)
+router.get('/offlinePromoCodesFull', adminAuth, offlinePromoCodesFull)
+router.get('/offlineWastage', adminAuth, offlineWastage)
+router.get('/offlinePurchaseOrders', adminAuth, offlinePurchaseOrders)
+router.get('/offlinePurchaseOrderPayments', adminAuth, offlinePurchaseOrderPayments)
+router.get('/offlineSuppliers', adminAuth, offlineSuppliers)
+
 router.post('/syncOrderData', adminAuth, upload.single("foodImage"), syncOrderDataWithDataBase)
+// Task 2 (operations local-only entities) - push half, see
+// controller/offline/offlineEntityPush.js.
+router.post('/offlineEntityPush', adminAuth, offlineEntityPush)
 router.get('/fetchAll', adminAuth, fetchAllData)
 
 

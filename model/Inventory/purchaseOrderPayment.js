@@ -15,6 +15,8 @@ const PurchaseOrderPayment = sequelize.define("hms_purchase_payment", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
     date: { type: DataTypes.DATE, defaultValue: new Date() },
 
     amount: { type: DataTypes.BIGINT, defaultValue: 0 },

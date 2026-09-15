@@ -13,6 +13,8 @@ const ExpenseEntry = sequelize.define("hms_expense_entry_mst", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
     amount: {
         type: DataTypes.STRING,
         require: true,

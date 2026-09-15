@@ -7,7 +7,11 @@ const Supplier = sequelize.define("hms_supplier", {
         primaryKey: true,
         autoIncrement: true
     },
-    name: { 
+    // Task 2 push half - the exe's own local row id, so a re-push (retry,
+    // or an edit after an earlier successful push) upserts in place instead
+    // of creating a duplicate. See controller/offline/offlineEntityPush.js.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
+    name: {
         type: DataTypes.STRING,
         allowNull: false
     },

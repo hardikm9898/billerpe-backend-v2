@@ -278,16 +278,26 @@ const editMenuSchema = joi.object({
         }),
 })
 
+// Only name/number/table_name/booking_date/start_time/end_time are
+// actually required for a reservation - everything else (email,
+// no_of_person, totalAmount, gst_no, advance) is optional. email
+// previously required a valid address unconditionally
+// (joi.string().email().required()), rejecting every booking with it left
+// blank with "email" is not allowed to be empty - allow("", null) plus
+// dropping .required() lets it stay blank while still validating a real
+// address if one IS provided. start_time/end_time were missing
+// .required() entirely despite being genuinely required (the whole point
+// of a booking) - added here, not left implicit.
 const bookTable = joi.object({
     name: joi.string().required(),
-    email: joi.string().lowercase().email().required(),
+    email: joi.string().lowercase().email().allow("", null).optional(),
     number: joi.string().regex(/^[0-9]{10}$/).messages({ 'string.pattern.base': `Phone number must have 10 digits.` }).required(),
     booking_date: joi.date().required(),
-    start_time: joi.string(),
-    end_time: joi.string(),
-    no_of_person: joi.number().required(),
+    start_time: joi.string().required(),
+    end_time: joi.string().required(),
+    no_of_person: joi.number().optional(),
     totalAmount: joi.number(),
-    gst_no: joi.string(),
+    gst_no: joi.string().allow("", null),
     advance: joi.number(),
     table_name: joi.array().required()
 

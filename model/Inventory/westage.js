@@ -8,6 +8,8 @@ const Westage = sequelize.define("hms_watage_mst", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
     qty: {
         type: DataTypes.FLOAT,
         allowNull: false

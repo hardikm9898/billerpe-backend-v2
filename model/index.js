@@ -10,23 +10,31 @@ const Hotel = require("./hotel");
 const Merchant = require("./merchant");
 const superAdminModel = require("./superAdminModel");
 const SuperAdminUser = require("./superAdminUser");
+const LocalServerRegistration = require("./localServerRegistration");
 
 // ---------- User & Access Management ----------
 const User = require("./user");
 const HotelUser = require("./hotelUser");
 const Role = require("./role_mst");
 const UserAccess = require("./userAccess");
+const RolePermissionDefault = require("./rolePermissionDefault");
 
 // ---------- Table Management ----------
 const Table = require("./table");
 const TableCatagories = require("./table_catg");
 const TableBooking = require("./tablebooking");
+const QrOrder = require("./qrOrder");
 
 // ---------- Menu Management ----------
 const Menu = require("./menu");
 const Menu_categ = require("./menu_categ");
 const MenuVariants = require("./menu_variant");
 const Variants = require("./variants");
+const MenuCatalog = require("./menuCatalog");
+const PaymentMode = require("./paymentMode");
+const PaymentModeDefault = require("./paymentModeDefault");
+const BillChargeRule = require("./billChargeRule");
+const NotificationSetting = require("./notificationSetting");
 
 // ---------- Addons Management ----------
 const AddonDepartment = require("./addonDepartMent");
@@ -53,6 +61,8 @@ const PurchaseOrderPayment = require("./Inventory/purchaseOrderPayment");
 const PurchaseRawMaterial = require("./Inventory/purchaseRawMaterial");
 const RawMaterialConsumption = require("./Inventory/RawMaterialcon");
 const Supplier = require("./Inventory/supplyer");
+const Requisition = require("./Inventory/requisition");
+const RequisitionItem = require("./Inventory/requisitionItem");
 
 // ---------- Semi-Finished Items ----------
 const SemiFinishedItem = require("./semiFinishedItem");
@@ -82,6 +92,7 @@ const TempWebsitePurchase = require("./PurchaseFromWebSite");
 const KitchenSetting = require("./kitchen");
 const PrinterSetting = require("./printer_setting");
 const InvoiceFormate = require("./invoiceFormate");
+const KotFormate = require("./kotFormate");
 const PromoCode = require("./promoCode");
 
 // ---------- Website & Marketing ----------
@@ -96,6 +107,7 @@ const Testing = require("./testing");
 const AppUpdate = require("./updateApp");
 const AdminAddRestoSave = require("./adminAddRestoSave");
 const Westage = require("./Inventory/westage");
+const AuditLog = require("./Inventory/auditLog");
 const UserSession = require("./uerSession");
 const RaiseTicket = require("./raiseTicket");
 const WhatsappTemplate = require("./whatsappTemplate");
@@ -231,6 +243,11 @@ CrmMetaLeadSyncLog.belongsTo(CrmLead, { foreignKey: "crm_lead_id", onDelete: "SE
 Merchant.hasMany(Hotel, { foreignKey: "merchant_id", onDelete: "CASCADE" });
 Hotel.belongsTo(Merchant, { foreignKey: "merchant_id", onDelete: "CASCADE" });
 
+// Hotel -> LocalServerRegistration (one-active-per-hotel is enforced by the
+// generated column in the migration, not this association - see that file)
+Hotel.hasMany(LocalServerRegistration, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+LocalServerRegistration.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
 // ----------------------------------------------------------------------------
 // TABLE MANAGEMENT RELATIONSHIPS
 // ----------------------------------------------------------------------------
@@ -259,9 +276,44 @@ TableBooking.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onU
 User.hasMany(TableBooking, { foreignKey: 'UserId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 TableBooking.belongsTo(User, { foreignKey: 'UserId', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 
+// Table -> QrOrder
+Table.hasMany(QrOrder, { foreignKey: 'table_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+QrOrder.belongsTo(Table, { foreignKey: 'table_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Hotel -> QrOrder
+Hotel.hasMany(QrOrder, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+QrOrder.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
 // ----------------------------------------------------------------------------
 // MENU MANAGEMENT RELATIONSHIPS
 // ----------------------------------------------------------------------------
+
+// Hotel -> MenuCatalog
+Hotel.hasMany(MenuCatalog, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+MenuCatalog.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Hotel -> PaymentMode
+Hotel.hasMany(PaymentMode, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+PaymentMode.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Hotel -> PaymentModeDefault, and its own FKs to PaymentMode/TableCatagories
+// (table_categ_id nullable - see the model's own comment on what null means)
+Hotel.hasMany(PaymentModeDefault, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+PaymentModeDefault.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+PaymentModeDefault.belongsTo(PaymentMode, { foreignKey: 'payment_mode_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+PaymentModeDefault.belongsTo(TableCatagories, { foreignKey: 'table_categ_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Hotel -> BillChargeRule (delivery + packaging, one row each)
+Hotel.hasMany(BillChargeRule, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+BillChargeRule.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Hotel -> NotificationSetting (one row per trigger)
+Hotel.hasMany(NotificationSetting, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+NotificationSetting.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Hotel -> RolePermissionDefault (one row per role)
+Hotel.hasMany(RolePermissionDefault, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+RolePermissionDefault.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 
 // Menu_categ -> Menu
 Menu_categ.hasMany(Menu, { foreignKey: 'menu_categ_id' });
@@ -270,6 +322,10 @@ Menu.belongsTo(Menu_categ, { foreignKey: 'menu_categ_id' });
 // Hotel -> Menu_categ
 Hotel.hasMany(Menu_categ, { foreignKey: 'hotel_id' });
 Menu_categ.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// MenuCatalog -> Menu_categ (which catalogue a category belongs to)
+MenuCatalog.hasMany(Menu_categ, { foreignKey: 'menu_catalog_id' });
+Menu_categ.belongsTo(MenuCatalog, { foreignKey: 'menu_catalog_id' });
 
 // Hotel -> Menu
 Hotel.hasMany(Menu, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
@@ -282,6 +338,10 @@ Menu.belongsToMany(Variants, { through: "hms_menu_variant_mst", as: "variantData
 // Hotel -> Variants
 Hotel.hasMany(Variants, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 Variants.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// MenuCatalog -> Variants (which catalogue a variant master belongs to)
+MenuCatalog.hasMany(Variants, { foreignKey: 'menu_catalog_id' });
+Variants.belongsTo(MenuCatalog, { foreignKey: 'menu_catalog_id' });
 
 // MenuVariants relationships
 Hotel.hasMany(MenuVariants, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
@@ -300,6 +360,10 @@ Menu.hasMany(MenuVariants, { foreignKey: 'menu_id' });
 // Hotel -> AddonDepartment
 Hotel.hasMany(AddonDepartment, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 AddonDepartment.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// MenuCatalog -> AddonDepartment (which catalogue an addon group belongs to)
+MenuCatalog.hasMany(AddonDepartment, { foreignKey: 'menu_catalog_id' });
+AddonDepartment.belongsTo(MenuCatalog, { foreignKey: 'menu_catalog_id' });
 
 // AddonDepartment -> Addons
 AddonDepartment.hasMany(Addons, { foreignKey: 'department_id', onDelete: "CASCADE", onUpdate: "CASCADE" });
@@ -493,6 +557,18 @@ PurchaseOrderPayment.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCA
 HotelUser.hasMany(PurchaseOrderPayment, { foreignKey: 'userId', onDelete: "SET NULL", onUpdate: 'CASCADE' });
 PurchaseOrderPayment.belongsTo(HotelUser, { foreignKey: 'userId', onDelete: "SET NULL", onUpdate: 'CASCADE' });
 
+// Hotel -> Requisition
+Hotel.hasMany(Requisition, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+Requisition.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Requisition -> RequisitionItem
+Requisition.hasMany(RequisitionItem, { foreignKey: 'requisition_id', as: 'items', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+RequisitionItem.belongsTo(Requisition, { foreignKey: 'requisition_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// Hotel -> RequisitionItem
+Hotel.hasMany(RequisitionItem, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+RequisitionItem.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
 // Hotel -> RawMaterialConsumption
 Hotel.hasMany(RawMaterialConsumption, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 RawMaterialConsumption.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
@@ -600,6 +676,10 @@ Westage.belongsTo(HotelUser, { foreignKey: 'user_id' });
 //wastage --> unit
 Unit.hasOne(Westage, { foreignKey: 'unit_id' });
 Westage.belongsTo(Unit, { foreignKey: 'unit_id' });
+
+// auditLog --> hotel
+Hotel.hasMany(AuditLog, { foreignKey: 'hotel_id' });
+AuditLog.belongsTo(Hotel, { foreignKey: 'hotel_id' });
 // ----------------------------------------------------------------------------
 // FINANCIAL MANAGEMENT RELATIONSHIPS
 // ----------------------------------------------------------------------------
@@ -734,6 +814,10 @@ PrinterSetting.belongsTo(Menu_categ, { foreignKey: 'menu_categ_id', onDelete: 'C
 Hotel.hasOne(InvoiceFormate, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 InvoiceFormate.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 
+// Hotel -> KotFormate (Task 1 - dynamic KOT format, same shape as InvoiceFormate)
+Hotel.hasOne(KotFormate, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+KotFormate.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
 // Hotel -> PromoCode
 Hotel.hasMany(PromoCode, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 PromoCode.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
@@ -833,6 +917,7 @@ module.exports = {
     Merchant,
     superAdminModel,
     SuperAdminUser,
+    LocalServerRegistration,
 
     // User & Access
     User,
@@ -844,12 +929,19 @@ module.exports = {
     Table,
     TableCatagories,
     TableBooking,
+    QrOrder,
 
     // Menu Management
     Menu,
     Menu_categ,
     MenuVariants,
     Variants,
+    MenuCatalog,
+    PaymentMode,
+    PaymentModeDefault,
+    BillChargeRule,
+    NotificationSetting,
+    RolePermissionDefault,
 
     // Addons
     AddonDepartment,
@@ -876,6 +968,8 @@ module.exports = {
     PurchaseRawMaterial,
     RawMaterialConsumption,
     Supplier,
+    Requisition,
+    RequisitionItem,
     SemiFinishedItem,
     SemiFinishedRecipe,
     SemiFinishedStock,
@@ -903,6 +997,7 @@ module.exports = {
     KitchenSetting,
     PrinterSetting,
     InvoiceFormate,
+    KotFormate,
     PromoCode,
 
     // Website & Marketing
@@ -916,6 +1011,7 @@ module.exports = {
     AppUpdate,
     AdminAddRestoSave,
     Westage,
+    AuditLog,
     SyncIndexDB,
 
     // WhatsApp Agent

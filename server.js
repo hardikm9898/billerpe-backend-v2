@@ -123,13 +123,14 @@ app.use(
     cors({
         origin: [
             process.env.SOCKET_URL,
+            "http://192.168.1.48:8080",
             process.env.WEBSITE_URL,
             "http://127.0.0.1:5504",
             "https://www.billerpe.com",
             "https://billerpe.com",
             "https://pos.billerpe.com",
             "http://127.0.0.1:5505",
-            "http://192.168.1.18:3000",
+            "http://192.168.1.12:8080",
             "ws://192.168.1.18:3000",
             "http://localhost:3000",
             "http://localhost:8080", // billerpe-pos-pro (new design) dev server
@@ -238,6 +239,12 @@ server.listen(PORT, (err) => {
                 'hms_opening_closing_msts',
                 'hms_raise_ticket_msts',
                 'hotel_registrations',
+                // Holds the generated active_hotel_id column + its unique
+                // index (migration 20260829123343) that enforces "one
+                // active local server per restaurant" - an auto ALTER could
+                // touch or drop that column, so this table is provisioned
+                // by its migration only, never by boot-time sync.
+                'local_server_registrations',
                 'hms_user_masters',
                 'hms_whatsapp_template_msts',
                 'hms_website_user_msts',

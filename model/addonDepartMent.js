@@ -10,6 +10,11 @@ const AddonDepartment = sequelize.define("hms_addon_department_mst", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 10 (menu catalogue push) - see model/recipes.js's local_id comment.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true
+    },
     department_name: {
         type: DataTypes.STRING,
         allowNull: false

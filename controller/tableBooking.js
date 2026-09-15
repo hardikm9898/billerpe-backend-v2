@@ -216,22 +216,26 @@ const updateBooking = async (req, res) => {
             }
 
         }
-        // const schedulerStartTime = moment(start_time).tz("IST").format()
+        // Same auto-open scheduling as tableBooking's create path above
+        // (scheduleJobs) - this block used to reference `momentTime`, which
+        // is never defined anywhere in this file (real ReferenceError,
+        // confirmed live on every edit), and tried to
+        // schedule.rescheduleJob a job named "booking_id${id}" that
+        // create() never actually assigns that name to - schedule
+        // .scheduleJob there registers an ANONYMOUS job, so there was
+        // never a job under that key to reschedule in the first place.
+        // Since this function already deletes and recreates the
+        // TableBooking row wholesale (same pattern as create, right
+        // above), it registers a fresh job the same way create does
+        // instead. `findBookingData.UserId` is used directly (not the
+        // `user` variable above - User.update(...) returns an
+        // affected-row count, not a user instance, so it has no `.id` to
+        // give scheduleJobs).
+        
+        const timePart = start_time.split('T')[1];
+        const combinedDateTimeString = `${booking_date}T${timePart}`;
+        await scheduleJobs(combinedDateTimeString, end_time, findBookingData.booking_id, booking_date, hotel.id, table_name, { id: findBookingData.UserId }, t)
 
-        let startDate = momentTime(booking_date)
-        let startTime = momentTime(start_time, 'HH:mm')
-
-        const schedulerStartTime = moment(start_time).tz("IST").format()
-
-        startDate.set({
-            hour: startTime.get('hour'),
-            minute: startTime.get('minute'),
-            second: startTime.get('second')
-        });
-        console.log(startDate)
-
-        // startDate = moment(startDate).tz("IST").format()
-        schedule.rescheduleJob(`booking_id${id}`, new Date(startDate))
         await t.commit()
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: MESSAGE.BOOKING_UPDATED }, STATUSCODE.SUCCESS))

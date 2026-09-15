@@ -7,6 +7,8 @@ const CashSession = sequelize.define("hms_cashSession_mst", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
     opening_float: {
         type: DataTypes.DOUBLE,
         defaultValue: 0

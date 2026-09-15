@@ -12,6 +12,8 @@ const SemiFinishedItem = sequelize.define("hms_semi_finished_items_mst", {
         type: DataTypes.INTEGER,
         allowNull: false
     },
+    // Task 2 push half - see model/Inventory/supplyer.js's local_id comment.
+    local_id: { type: DataTypes.INTEGER, allowNull: true },
     name: {
         type: DataTypes.STRING,
         allowNull: false

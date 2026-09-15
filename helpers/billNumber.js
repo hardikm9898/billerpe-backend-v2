@@ -95,12 +95,26 @@ function getFinancialYearLabel(startMonth, timeZone = 'Asia/Kolkata') {
  *   - Returns 1 when no qualifying orders exist.
  *
  * @param {number} hotelId
+ * `transaction` (optional) - MUST be passed by any caller that also
+ * creates the order this number gets assigned to inside a transaction,
+ * e.g. controller/offline/offline.js#syncOrderDataWithDataBase's per-order
+ * loop. Without it, this SELECT runs on the default (untransacted)
+ * connection, which - by ordinary transaction isolation - can't see a row
+ * an in-flight transaction has created but not yet committed. Confirmed
+ * live as real duplicate bill numbers within a SINGLE sync batch (not just
+ * a cross-request race): processing order A assigns bill_no 8 inside
+ * transaction t; A's own Order.create is still uncommitted when order B is
+ * processed next in the same loop, so this SELECT (no transaction) reads
+ * the pre-A state and hands out 8 again for B - two different orders,
+ * same request, same loop, no concurrency involved at all.
+ *
  * @returns {Promise<number>} next bill number (integer ≥ 1)
  */
-async function getNextBillNo(hotelId) {
+async function getNextBillNo(hotelId, transaction) {
     const settings = await RestaurantSetting.findOne({
         where: { hotel_id: hotelId },
         attributes: ['bill_reset_type', 'financial_year_start_month', 'timeZone'],
+        transaction,
     });
 
     const billResetType = settings?.bill_reset_type ?? BILL_RESET_TYPE.NEVER;
@@ -126,8 +140,8 @@ async function getNextBillNo(hotelId) {
         where: baseWhere,
         order: [[sequelize.literal('CAST(bill_no AS UNSIGNED)'), 'DESC']],
         attributes: ['bill_no'],
+        transaction,
     });
-
     return latestOrder ? parseInt(latestOrder.bill_no, 10) + 1 : 1;
 }
 

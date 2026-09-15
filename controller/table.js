@@ -98,6 +98,13 @@ const moveKot = async (req, res) => {
             await t.rollback()
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE.BAD_REQUEST));
         }
+        // A bill already generated (status "success") is meant to be settled
+        // as printed, not have KOT rounds moved off it afterward - see
+        // moveTable's own identical guard below.
+        if (currentOrder.status === ORDER_TYPE.SUCCESS) {
+            await t.rollback()
+            return res.json(error("Bill already generated for this order - its KOT rounds can no longer be moved", STATUSCODE.BAD_REQUEST));
+        }
         const orderAvailableOnTable2 = await Order.findOne({
             where: {
                 hotel_id: req.user,
@@ -298,6 +305,16 @@ const moveTable = async (req, res) => {
         if (!currentOrder) {
             await t.rollback()
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE.BAD_REQUEST));
+        }
+        // A bill already generated (status "success" - see billerpe-pos-pro-v2's
+        // own mapRawLiveOrder, which reads this exact status as "Bill
+        // Generated") is meant to be settled as printed, not silently folded
+        // into/moved off its table afterward. The frontend already blocks this
+        // in its own mergeTables/transferTable before ever calling here -
+        // this is the server-side backstop for any other caller.
+        if (currentOrder.status === ORDER_TYPE.SUCCESS) {
+            await t.rollback()
+            return res.json(error("Bill already generated for this order - it can no longer be moved or merged", STATUSCODE.BAD_REQUEST));
         }
 
         let orderDeleted = false

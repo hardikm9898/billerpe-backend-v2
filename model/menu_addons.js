@@ -12,6 +12,11 @@ const MenuAddon = sequelize.define("hms_menu_addon_mst", {
         primaryKey: true,
         autoIncrement: true
     },
+    // Task 10 (menu catalogue push) - see model/recipes.js's local_id comment.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true
+    },
     menu_id: {
         type: DataTypes.INTEGER,
         references: { model: Menu }

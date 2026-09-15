@@ -20,16 +20,23 @@ const addExpenseHead = async (req, res) => {
         if (!/^[A-Za-z0-9\s&.,'()\-\[\]]+$/.test(expense_head_name)) {
             return res.json(error("Please Enter  Valid Expense Head Name", STATUSCODE.BAD_REQUEST));
         }
-        const expenseHead = await ExpenseHead.findOne({ where: { expense_head_name, hotel_id: req.user } })
+        const expenseHead = await ExpenseHead.findOne({ where: { expense_head_name, hotel_id: req.user, deleted: false } })
         if (expenseHead) return res.json(error("ExpenseHead Name Has Already Taken", STATUSCODE.BAD_REQUEST))
         await ExpenseHead.create({ expense_head_name, hotel_id: req.user })
-        const expenseHeads = await ExpenseHead.findAll({ where: { hotel_id: req.user } })
+        const expenseHeads = await ExpenseHead.findAll({ where: { hotel_id: req.user, deleted: false } })
         return res.status(STATUSCODE.CREATED).json(success("ExpenseHead Created", { expenseHeads }, STATUSCODE.CREATED))
     } catch (err) {
         console.log(err)
         return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
     }
 }
+// Deliberately NOT filtered on `deleted` - billerpe-pos-pro-v2 keeps every
+// head (deleted included) in its own local state purely to resolve past
+// expense entries' head name by id (see ExpenseHead's own `deleted` comment
+// in mock/types.ts); it filters deleted ones out of anywhere the user
+// picks/manages a head itself. Only the two mutation endpoints below (create/
+// edit) and the new delete endpoint keep their OWN `deleted: false` scoping,
+// since those are about active-name uniqueness, not display.
 const getAllExpenseHead = async (req, res) => {
     try {
         const hotel = await Hotel.findOne({ where: { id: req.user } })
@@ -49,13 +56,36 @@ const editExpenseHead = async (req, res) => {
         if (!/^[A-Za-z0-9\s&.,'()\-\[\]]+$/.test(expense_head_name)) {
             return res.json(error("Please Enter  Valid Expense Head Name", STATUSCODE.BAD_REQUEST));
         }
-        const expenseHead = await ExpenseHead.findOne({ where: { id, hotel_id: req.user } })
+        const expenseHead = await ExpenseHead.findOne({ where: { id, hotel_id: req.user, deleted: false } })
         if (!expenseHead) return res.json(error("Expense Head Not Found", STATUSCODE.BAD_REQUEST))
-        const duplicate = await ExpenseHead.findOne({ where: { expense_head_name, hotel_id: req.user, id: { [Op.ne]: id } } })
+        const duplicate = await ExpenseHead.findOne({ where: { expense_head_name, hotel_id: req.user, deleted: false, id: { [Op.ne]: id } } })
         if (duplicate) return res.json(error("ExpenseHead Name Has Already Taken", STATUSCODE.BAD_REQUEST))
         await ExpenseHead.update({ expense_head_name }, { where: { id, hotel_id: req.user } })
-        const expenseHeads = await ExpenseHead.findAll({ where: { hotel_id: req.user } })
+        const expenseHeads = await ExpenseHead.findAll({ where: { hotel_id: req.user, deleted: false } })
         return res.status(STATUSCODE.SUCCESS).json(success("ExpenseHead Updated Successfully", { expenseHeads }, STATUSCODE.SUCCESS))
+    } catch (err) {
+        console.log(err)
+        return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
+    }
+}
+// No endpoint exposed this before even though the model already carries a
+// `deleted` flag (see model/expenseHead.js) - soft-deletes one or more heads
+// (accepts either a single `id` or a bulk `allId` array, same dual shape as
+// menu's removeCatagories) so existing expense entries keep their
+// expense_head_id/join intact instead of a hard delete breaking history.
+const deleteExpenseHead = async (req, res) => {
+    try {
+        const hotel = await Hotel.findOne({ where: { id: req.user } })
+        if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
+        const { allId, id } = req.body
+        const ids = Array.isArray(allId) ? allId : (id ? [id] : [])
+        if (!ids.length) return res.json(error("id is required", STATUSCODE.BAD_REQUEST))
+        const found = await ExpenseHead.findAll({ where: { id: ids, hotel_id: req.user, deleted: false } })
+        if (!found.length) return res.json(error("Expense Head Not Found", STATUSCODE.BAD_REQUEST))
+        await ExpenseHead.update({ deleted: true }, { where: { id: ids, hotel_id: req.user } })
+        // Unfiltered on purpose - see getAllExpenseHead's own comment above.
+        const expenseHeads = await ExpenseHead.findAll({ where: { hotel_id: req.user } })
+        return res.status(STATUSCODE.SUCCESS).json(success("ExpenseHead Deleted Successfully", { expenseHeads }, STATUSCODE.SUCCESS))
     } catch (err) {
         console.log(err)
         return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
@@ -353,5 +383,5 @@ module.exports = {
     addExpenseMobile,
     allEntryMobile,
     editExpenseMobile,
-    deleteExpenseMobile, editExpense, deleteExpense, allEntry, addExpense, addExpenseHead, getAllExpenseHead, editExpenseHead
+    deleteExpenseMobile, editExpense, deleteExpense, allEntry, addExpense, addExpenseHead, getAllExpenseHead, editExpenseHead, deleteExpenseHead
 }

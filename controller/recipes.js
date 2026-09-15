@@ -788,6 +788,11 @@ const checkRawMaterialAvailableOrNot = async (orderId, hotel_id, user_id, extern
                         raw_material_id: r.raw_material_id,
                         cost: ((consumeQty / Number(r.rawMaterial.conversion_qty)) * Number(r.rawMaterial.purchase_price)),
                         order_id: orderId,
+                        // Was missing entirely - editOrderItemStock/cancelOrderStock's
+                        // per-item reversal both filter RawMaterialConsumption by this
+                        // column, so without it they silently match zero rows against
+                        // real data (see order_item_id's own model comment).
+                        order_item_id: item.id,
                         menu_id: item.MenuId,
                         variant_id: item.variant_id || null,
                         addon_id: r.addon_id || null,
@@ -1147,4 +1152,4 @@ const addInHandStock = async () => {
     }
 }
 
-module.exports = { convertMenuWise, getAllRecipesForMenu, checkRawMaterialAvailableOrNot, deleteRecipe, getSingleRecipes, addRecipes, editRecipes, getAllRecipes }
+module.exports = { convertMenuWise, getAllRecipesForMenu, checkRawMaterialAvailableOrNot, cancelOrderStock, deleteRecipe, getSingleRecipes, addRecipes, editRecipes, getAllRecipes }

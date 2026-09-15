@@ -40,6 +40,17 @@ const Order = sequelize.define("hms_order_mst", {
         type: DataTypes.BOOLEAN,
         defaultValue: false
     },
+    // The exe's own Order.id for this same order, once it's been pushed at
+    // least once - see controller/offline/offline.js's
+    // syncOrderDataWithDataBase and migration 20260910130000. Paired with
+    // hotel_id as the real idempotency key for a repeat push, now that a
+    // first-time sync can assign a brand new bill_no instead of keeping the
+    // exe's "OFF#" placeholder forever - bill_no itself is no longer safe
+    // to match a retry against once it can change out from under it.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
     payment: {
         type: DataTypes.STRING,
         defaultValue: STATUS.PENDING
@@ -66,6 +77,29 @@ const Order = sequelize.define("hms_order_mst", {
     },
     due: {
         type: DataTypes.DOUBLE,
+        defaultValue: 0
+    },
+    // Waiter service tip - entered at settlement, deliberately NOT part of
+    // the cash+upi+card+due=amount reconciliation (settleBills' own
+    // validation): a tip is an extra amount on top of the bill, often
+    // handed over separately from however the bill itself got paid, and
+    // forcing it through that same equation would make it impossible to
+    // log a cash tip against a UPI-paid bill. Attributed to the order's
+    // own hotelUserId (the waiter who took the order), not whoever happens
+    // to be logged in at settle time - matches how tips are actually
+    // meant in a restaurant (for the person who served the table).
+    tip: {
+        type: DataTypes.DOUBLE,
+        defaultValue: 0
+    },
+    // Owner-visible "reprinted N times" counter (Task 5) - incremented only
+    // by the exe's explicit "Reprint bill" action, never the first
+    // bill-generation print, and synced up from the exe's own local count
+    // (billerpe-local-exe/model/order.js's own comment) rather than
+    // incremented here directly, since the exe is where every real print
+    // happens.
+    billPrintCount: {
+        type: DataTypes.INTEGER,
         defaultValue: 0
     },
     total_sgst: {
@@ -112,6 +146,21 @@ const Order = sequelize.define("hms_order_mst", {
         type: DataTypes.BOOLEAN, defaultValue: false
     },
     service_charge: {
+        type: DataTypes.DOUBLE,
+        defaultValue: 0
+    },
+    // Delivery/packaging charges (settings/billing.tsx's DeliveryChargeRule/
+    // PackagingChargeRule) were computed client-side and folded straight
+    // into grandAmount, with nowhere of their own to persist to - invisible
+    // on the cloud-rendered e-bill webview (getBillViewData) even when
+    // configured and actually charged. Same DOUBLE/defaultValue(0)
+    // convention as service_charge above, which they sit alongside in
+    // every cart payload (see mock/store.tsx's orderTotals).
+    delivery_charge: {
+        type: DataTypes.DOUBLE,
+        defaultValue: 0
+    },
+    packaging_charge: {
         type: DataTypes.DOUBLE,
         defaultValue: 0
     },

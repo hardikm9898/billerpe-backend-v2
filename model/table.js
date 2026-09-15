@@ -32,6 +32,14 @@ const Table = sequelize.define("hms_table_mst", {
         type: DataTypes.ENUM,
         values: ["R", "T"], //
         defaultValue: "T"
+    },
+    // QR table ordering - see migrations/20260908130000-add-qr-version-to-table.js
+    // and controller/qrOrder.js's createQrOrder for why this exists (the
+    // one lever to kill a specific leaked/abused table's QR link).
+    qr_version: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 1,
     }
 
 })

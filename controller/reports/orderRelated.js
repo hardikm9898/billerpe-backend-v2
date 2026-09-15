@@ -111,7 +111,14 @@ const DiscountedOrdersReport = async (req, res) => {
             'createdAt'
         ]
         const orderBy = [['createdAt', 'DESC']]
-        const include = [{ model: User, attributes: ['name', 'number'] }]
+        // HotelUser here is who billed/owns the order (Order.hotelUserId) -
+        // the staff member responsible for whatever discount is on it, not
+        // the customer (that's the separate User include below). Task 44:
+        // the discount report had no way to see who gave a discount at all.
+        const include = [
+            { model: User, attributes: ['name', 'number'] },
+            { model: HotelUser, attributes: ['name'] },
+        ]
         const discountedOrdersList = await getPaginatedData(Order, page, limit, whereClause, include, attributes, orderBy)
 
         console.log("here-->")

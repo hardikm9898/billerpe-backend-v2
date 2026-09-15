@@ -1,5 +1,5 @@
 const express = require("express")
-const { addExpenseHead, getAllExpenseHead, editExpenseHead, addExpense, allEntry, editExpense, deleteExpense, deleteExpenseMobile, editExpenseMobile, allEntryMobile, addExpenseMobile, editExpenseHeadMobile, getAllExpenseHeadMobile, addExpenseHeadMobile, allEntryMobileExcel } = require("../controller/expence/expence")
+const { addExpenseHead, getAllExpenseHead, editExpenseHead, deleteExpenseHead, addExpense, allEntry, editExpense, deleteExpense, deleteExpenseMobile, editExpenseMobile, allEntryMobile, addExpenseMobile, editExpenseHeadMobile, getAllExpenseHeadMobile, addExpenseHeadMobile, allEntryMobileExcel } = require("../controller/expence/expence")
 const { adminAuth, mobileAuth } = require("../middleware/adminAuth")
 const { addExpenseSchema, editExpenseSchema, deleteExpenseSchema, allEntrySchema } = require("../validation/validate")
 const router = express.Router()
@@ -8,6 +8,7 @@ const { validator, queryValidator } = require("../middleware/validator")
 router.post("/addExpenseHead", adminAuth, addExpenseHead)
 router.get("/getAllExpenseHead", adminAuth, getAllExpenseHead)
 router.put("/editExpenseHead", adminAuth, editExpenseHead)
+router.delete("/deleteExpenseHead", adminAuth, deleteExpenseHead)
 
 //! Expense Routes
 
