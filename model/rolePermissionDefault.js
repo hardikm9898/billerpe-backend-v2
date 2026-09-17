@@ -24,6 +24,12 @@ const RolePermissionDefault = sequelize.define("hms_role_permission_default_mst"
     },
     permissions: { type: DataTypes.JSON, allowNull: false },
     special_permissions: { type: DataTypes.JSON, allowNull: false },
+    // Sync engine v2 (controller/sync/*) - the exe's own row id, the
+    // idempotency key for a repeat push. See migration 20260916100000.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
 });
 
 module.exports = RolePermissionDefault;

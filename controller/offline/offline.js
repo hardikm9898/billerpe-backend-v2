@@ -547,9 +547,48 @@ const syncOrderDataWithDataBase = async (req, res) => {
                 }
 
                 else {
-                    await Order.update({ TableId, UserId: user.id, totalAmount, gst, grandAmount, order_type, bill_no, payment, status, payment_type, cash, upi, card, tip, billPrintCount, service_charge, delivery_charge, packaging_charge, totalsgst, totalcgst, deleted, totalDiscount, hotel_id: req.user, isOffline: false }, { where: { id: cur.id }, transaction: t });
-                    await OrderDetails.destroy({ where: { orderId: cur.id }, transaction: t });
-                    orderIds[cur.id] = cur.id;
+                    // The order already has a real bill_no, meaning some
+                    // PRIOR sync already created its row here - but cur.id
+                    // is billerpe-local-exe's own LOCAL order id, not this
+                    // database's primary key (two separate, unrelated
+                    // autoincrement counters, same "local id vs cloud id"
+                    // problem the `if` branch above already accounts for
+                    // via local_id). This used to do
+                    // `where: { id: cur.id }` as if the two ids were
+                    // interchangeable - correct only by coincidence, wrong
+                    // the rest of the time: the update silently matched
+                    // zero rows, then the tax-insert step below tried to
+                    // insert hms_order_tax_msts rows referencing an
+                    // hmsOrderMstId that doesn't exist in this table,
+                    // tripping its foreign key constraint and rolling back
+                    // the ENTIRE batch (every other order in the same sync
+                    // tick too, since this is all one transaction) -
+                    // confirmed live as the actual cause of orders sitting
+                    // unsynced for days, which in turn stalled
+                    // billerpe-local-exe's own offline-duration clock (it
+                    // only resets when a FULL sync tick - push AND pull -
+                    // succeeds).
+                    let existing = await Order.findOne({ where: { local_id: cur.id, hotel_id: req.user }, transaction: t });
+                    if (!existing) {
+                        // Rows synced before the local_id column existed
+                        // have it NULL - same fallback the `if` branch
+                        // above already relies on.
+                        existing = await Order.findOne({ where: { id: cur.id, hotel_id: req.user }, transaction: t });
+                    }
+
+                    if (existing) {
+                        await Order.update({ TableId, UserId: user.id, totalAmount, gst, grandAmount, order_type, bill_no, payment, status, payment_type, cash, upi, card, tip, billPrintCount, service_charge, delivery_charge, packaging_charge, totalsgst, totalcgst, deleted, totalDiscount, hotel_id: req.user, isOffline: false, local_id: cur.id }, { where: { id: existing.id }, transaction: t });
+                        await OrderDetails.destroy({ where: { orderId: existing.id }, transaction: t });
+                        orderIds[cur.id] = existing.id;
+                    } else {
+                        // Genuinely never seen before despite already
+                        // carrying a real bill_no (shouldn't normally
+                        // happen - a real bill_no is only ever first
+                        // assigned by the `if` branch above) - create
+                        // fresh rather than silently drop the order.
+                        const order = await Order.create({ TableId, UserId: user.id, totalAmount, gst, grandAmount, order_type, bill_no, payment, status, payment_type, cash, upi, card, tip, billPrintCount, service_charge, delivery_charge, packaging_charge, totalsgst, totalcgst, deleted, totalDiscount, hotel_id: req.user, isOffline: false, local_id: cur.id }, { transaction: t });
+                        orderIds[cur.id] = order.id;
+                    }
                     billNoByLocalId[cur.id] = bill_no;
                 }
             }

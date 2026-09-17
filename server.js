@@ -123,7 +123,7 @@ app.use(
     cors({
         origin: [
             process.env.SOCKET_URL,
-            "http://192.168.1.48:8080",
+            "http://localhost:8080",
             process.env.WEBSITE_URL,
             "http://127.0.0.1:5504",
             "https://www.billerpe.com",
@@ -133,7 +133,7 @@ app.use(
             "http://192.168.1.12:8080",
             "ws://192.168.1.18:3000",
             "http://localhost:3000",
-            "http://localhost:8080", // billerpe-pos-pro (new design) dev server
+            "http://localhost:8080",
             "http://localhost:8081"
         ].filter(Boolean),
         credentials: true

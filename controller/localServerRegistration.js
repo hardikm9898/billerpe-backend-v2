@@ -2,6 +2,21 @@ const crypto = require("crypto");
 const { Hotel, LocalServerRegistration } = require("../model");
 const { MESSAGE, STATUSCODE } = require("../constant/const");
 const { success, error } = require("../responce/res");
+const { signDeviceToken } = require("../middleware/deviceAuth");
+
+// How long an active registration may go unseen before another PC is
+// allowed to take the outlet over WITHOUT anyone confirming. Anything
+// shorter risks two machines fighting over one restaurant across a brief
+// network blip; anything much longer strands a restaurant whose PC died
+// mid-service behind a support call. last_seen_at is refreshed by every
+// sync heartbeat (controller/sync/syncController.js), i.e. once a minute
+// while the exe is alive.
+const STALE_TAKEOVER_MS = 10 * 60 * 1000;
+
+function isStale(registration) {
+    if (!registration?.last_seen_at) return true;
+    return Date.now() - new Date(registration.last_seen_at).getTime() > STALE_TAKEOVER_MS;
+}
 
 // Phase A of the local-first architecture migration: the central authority
 // for "which PC is this restaurant's active local server" (architecture
@@ -22,7 +37,7 @@ const { success, error } = require("../responce/res");
 const registerLocalServer = async (req, res) => {
     try {
         const hotel_id = req.user;
-        const { device_id, hostname, app_version, os_info } = req.body;
+        const { device_id, hostname, app_version, os_info, replace } = req.body;
 
         if (!device_id) {
             return res.json(error("device_id is required", STATUSCODE.BAD_REQUEST));
@@ -37,42 +52,82 @@ const registerLocalServer = async (req, res) => {
             where: { hotel_id, status: "active" },
         });
 
-        if (activeRegistration && activeRegistration.device_id !== device_id) {
-            return res.json(
-                error(
-                    "This restaurant already has an active local server registered on another PC. A SuperAdmin must release it before this device can register.",
-                    STATUSCODE.CONFLICT,
-                ),
-            );
-        }
-
         const now = new Date();
 
-        if (activeRegistration) {
-            // Same device re-registering (EXE restart, reinstall on the same
-            // PC) - refresh metadata rather than minting a new
-            // installation_id, which is reserved for a genuine transfer.
-            await activeRegistration.update({ hostname, app_version, os_info, last_seen_at: now });
-            return res.json(
-                success(MESSAGE.SUCCESS, { registration: activeRegistration, reused: true }, STATUSCODE.SUCCESS),
-            );
+        // A DIFFERENT PC is asking to become this restaurant's server. Two
+        // machines both syncing one outlet would duplicate bills, so this is
+        // never silently allowed - but it must not need a support call
+        // either, which is what the old hard 409 forced for the common real
+        // case (the PC was replaced, or its disk was reimaged).
+        //   - previous server not seen for STALE_TAKEOVER_MS: taken over
+        //     automatically, since nothing is running there to conflict with.
+        //   - previous server still alive: refused with canReplace, so the
+        //     owner can confirm in the POS and retry with replace:true.
+        // Either way the old row is RELEASED, not deleted (audit trail), and
+        // a fresh installation_id invalidates the old device's token.
+        if (activeRegistration && activeRegistration.device_id !== device_id) {
+            const stale = isStale(activeRegistration);
+            if (!stale && !replace) {
+                return res.json(error(
+                    "Another PC is currently this restaurant's local server. Confirm replacing it to continue.",
+                    STATUSCODE.CONFLICT,
+                    {
+                        canReplace: true,
+                        existing: {
+                            hostname: activeRegistration.hostname,
+                            app_version: activeRegistration.app_version,
+                            last_seen_at: activeRegistration.last_seen_at,
+                        },
+                    },
+                ));
+            }
+            await activeRegistration.update({
+                status: "released",
+                released_at: now,
+                // Not a SuperAdmin release - recorded as a device takeover so
+                // the audit trail distinguishes the two.
+                released_by: null,
+            });
         }
 
-        const registration = await LocalServerRegistration.create({
+        let registration;
+        if (activeRegistration && activeRegistration.device_id === device_id) {
+            // Same device re-registering (exe restart, reinstall on the same
+            // PC, or an owner re-authenticating from the System page). Keeps
+            // its installation_id, so the device token it already holds
+            // stays valid.
+            await activeRegistration.update({
+                hostname, app_version, os_info, last_seen_at: now, token_issued_at: now,
+            });
+            registration = activeRegistration;
+        } else {
+            registration = await LocalServerRegistration.create({
+                hotel_id,
+                device_id,
+                installation_id: crypto.randomUUID(),
+                status: "active",
+                hostname,
+                app_version,
+                os_info,
+                registered_at: now,
+                last_seen_at: now,
+                token_issued_at: now,
+            });
+        }
+
+        // The credential the exe's background sync uses from here on - see
+        // middleware/deviceAuth.js for why it is not the owner's session.
+        const deviceToken = signDeviceToken({
             hotel_id,
-            device_id,
-            installation_id: crypto.randomUUID(),
-            status: "active",
-            hostname,
-            app_version,
-            os_info,
-            registered_at: now,
-            last_seen_at: now,
+            device_id: registration.device_id,
+            installation_id: registration.installation_id,
         });
 
-        return res.json(
-            success(MESSAGE.SUCCESS, { registration, reused: false }, STATUSCODE.SUCCESS),
-        );
+        return res.json(success(MESSAGE.SUCCESS, {
+            registration,
+            deviceToken,
+            reused: Boolean(activeRegistration && activeRegistration.device_id === device_id),
+        }, STATUSCODE.SUCCESS));
     } catch (err) {
         console.error("[localServerRegistration] registerLocalServer error:", err);
         return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR));

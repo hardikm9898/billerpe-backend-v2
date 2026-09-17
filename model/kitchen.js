@@ -23,7 +23,14 @@ const KitchenSetting = sequelize.define("hms_kitchen_setting", {
     order_type: {
         type: DataTypes.JSON,
         defaultValue: []
-    }
+    },
+    // Sync engine v2 (controller/sync/*) - the exe's own row id for this
+    // row, the idempotency key for a repeat push. See migration
+    // 20260916100000 for why this table needs it.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
 });
 
 module.exports = KitchenSetting;

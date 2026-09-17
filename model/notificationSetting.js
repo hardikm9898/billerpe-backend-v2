@@ -33,6 +33,12 @@ const NotificationSetting = sequelize.define("hms_notification_setting_mst", {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
     },
+    // Sync engine v2 (controller/sync/*) - the exe's own row id, the
+    // idempotency key for a repeat push. See migration 20260916100000.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
 });
 
 module.exports = NotificationSetting;

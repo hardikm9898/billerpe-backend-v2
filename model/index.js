@@ -11,6 +11,7 @@ const Merchant = require("./merchant");
 const superAdminModel = require("./superAdminModel");
 const SuperAdminUser = require("./superAdminUser");
 const LocalServerRegistration = require("./localServerRegistration");
+const WebBundle = require("./webBundle");
 
 // ---------- User & Access Management ----------
 const User = require("./user");
@@ -918,6 +919,7 @@ module.exports = {
     superAdminModel,
     SuperAdminUser,
     LocalServerRegistration,
+    WebBundle,
 
     // User & Access
     User,

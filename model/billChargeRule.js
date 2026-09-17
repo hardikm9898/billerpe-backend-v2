@@ -57,6 +57,12 @@ const BillChargeRule = sequelize.define("hms_bill_charge_mst", {
     enter_by: {
         type: DataTypes.STRING,
     },
+    // Sync engine v2 (controller/sync/*) - the exe's own row id, the
+    // idempotency key for a repeat push. See migration 20260916100000.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
 });
 
 module.exports = BillChargeRule;

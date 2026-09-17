@@ -23,9 +23,13 @@ const mobileRoutes = require("./mobile")
 const ticketRoutes = require("./ticket")
 const franchiseRoute = require("./franchise")
 const crmRoutes = require("./crm")
+const syncRoutes = require("./sync")
 const { verifyWebhook: verifyMetaWebhook, receiveLeadEvent: receiveMetaLeadEvent } = require("../controller/crm/metaWebhookController")
 
 Router.use("/", hotelRoutes)
+// Sync engine v2 - a restaurant's local exe only (device token, not a
+// person's session). See routes/sync.js.
+Router.use("/sync", syncRoutes)
 Router.use("/stock", stockRoutes)
 Router.use("/mobile", mobileRoutes)
 Router.use("/promocodes", promoCodeRoutes)

@@ -30,7 +30,13 @@ const mobileError = (message, statusCode) => {
         error: true,
     };
 }
-const error = (message, statusCode) => {
+// `extra` (optional) is merged into `results` alongside the message, for
+// the handful of errors a client must act on differently rather than just
+// display - e.g. the device-registration conflict's canReplace/existing
+// (controller/localServerRegistration.js), which the POS turns into a
+// "replace the other PC?" confirmation. Matches billerpe-local-exe's own
+// responce/res.js, which already had this third parameter.
+const error = (message, statusCode, extra) => {
     let sCode = statusCode;
 
     // console.log(statusCode)
@@ -51,7 +57,7 @@ const error = (message, statusCode) => {
 
     return {
         status: STATUS.FAIL,
-        results: { message },
+        results: { message, ...(extra || {}) },
         code: sCode,
         error: true,
     };
