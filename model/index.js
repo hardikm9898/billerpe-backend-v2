@@ -245,9 +245,19 @@ Merchant.hasMany(Hotel, { foreignKey: "merchant_id", onDelete: "CASCADE" });
 Hotel.belongsTo(Merchant, { foreignKey: "merchant_id", onDelete: "CASCADE" });
 
 // Hotel -> LocalServerRegistration (one-active-per-hotel is enforced by the
-// generated column in the migration, not this association - see that file)
-Hotel.hasMany(LocalServerRegistration, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
-LocalServerRegistration.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+// generated column in the migration, not this association - see that file).
+// RESTRICT, not CASCADE: MySQL will not let active_hotel_id's generated
+// expression use hotel_id as a base column while hotel_id's own FK carries
+// CASCADE (confirmed live, 2026-09-18 - "Cannot add foreign key
+// constraint", reproduced down to dropping the FK and watching the exact
+// same ADD COLUMN succeed). RESTRICT here is what lets a FRESH install's
+// sync() create this table correctly the first time, matching what the
+// migration now does to the same FK on an existing database. Confirmed no
+// code in this codebase ever calls Hotel.destroy(), so there is no live
+// behavior this changes - deleting a Hotel would simply need its
+// registrations dealt with first, instead of silently taking them with it.
+Hotel.hasMany(LocalServerRegistration, { foreignKey: 'hotel_id', onDelete: 'RESTRICT', onUpdate: 'RESTRICT' });
+LocalServerRegistration.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'RESTRICT', onUpdate: 'RESTRICT' });
 
 // ----------------------------------------------------------------------------
 // TABLE MANAGEMENT RELATIONSHIPS

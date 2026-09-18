@@ -29,14 +29,26 @@ module.exports = {
       'hms_menu_addon_msts',
     ];
 
+    // Guarded per-column and per-index, same reasoning as
+    // 20260901074800-add-local-id-to-operations-entities.js: every one of
+    // these 8 models already declares `local_id`, so on a fresh database
+    // sync() creates the column first - but none declares the unique
+    // index, which still needs to run for every table.
     for (const table of tables) {
-      await queryInterface.addColumn(table, 'local_id', { type: Sequelize.INTEGER, allowNull: true });
-      await queryInterface.addIndex(table, {
-        fields: ['hotel_id', 'local_id'],
-        unique: true,
-        name: `${table}_hotel_local_id_unique`,
-        where: { local_id: { [Sequelize.Op.ne]: null } },
-      });
+      const columns = await queryInterface.describeTable(table);
+      if (!columns.local_id) {
+        await queryInterface.addColumn(table, 'local_id', { type: Sequelize.INTEGER, allowNull: true });
+      }
+      const indexes = await queryInterface.showIndex(table);
+      const indexName = `${table}_hotel_local_id_unique`;
+      if (!indexes.some((i) => i.name === indexName)) {
+        await queryInterface.addIndex(table, {
+          fields: ['hotel_id', 'local_id'],
+          unique: true,
+          name: indexName,
+          where: { local_id: { [Sequelize.Op.ne]: null } },
+        });
+      }
     }
   },
 

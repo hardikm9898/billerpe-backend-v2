@@ -1,4 +1,0 @@
-function e(e){let t=[],n=[],r=``,i=!1;for(let a=0;a<e.length;a++){let o=e[a];if(i){o===`"`?e[a+1]===`"`?(r+=`"`,a++):i=!1:r+=o;continue}o===`"`?i=!0:o===`,`?(n.push(r),r=``):o===`
-`||o===`\r`?(o===`\r`&&e[a+1]===`
-`&&a++,n.push(r),t.push(n),n=[],r=``):r+=o}return(r.length||n.length)&&(n.push(r),t.push(n)),t.filter(e=>e.some(e=>e.trim().length))}function t(e){let t=String(e);return/[",\n]/.test(t)?`"${t.replace(/"/g,`""`)}"`:t}function n(e){return e.map(e=>e.map(t).join(`,`)).join(`\r
-`)}function r(e,t,n=`text/csv`){let r=new Blob([t],{type:n}),i=URL.createObjectURL(r),a=document.createElement(`a`);a.href=i,a.download=e,a.click(),URL.revokeObjectURL(i)}export{e as n,n as r,r as t};

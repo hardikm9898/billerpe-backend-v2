@@ -24,3 +24,12 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Filled-in production config. Contains live payment, WhatsApp/Meta and
+# database credentials - never commit it. .env.example documents the keys.
+.env.production
+.env.*.local
+
+# Published frontend bundles are runtime data, not source. In production
+# they live at WEB_BUNDLE_ROOT, outside the app folder entirely.
+/web-bundles/

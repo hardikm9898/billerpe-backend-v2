@@ -32,14 +32,29 @@ module.exports = {
       'hms_suppliers',
     ];
 
+    // Guarded per-column and per-index, same pattern as 20260916100000:
+    // every one of these 12 models already declares `local_id` (confirmed
+    // against model/*.js, 2026-09-18), so on a fresh database sync()
+    // creates the column before this migration ever runs - but NONE of
+    // these models declares the unique index, so that half genuinely still
+    // needs to run. An unguarded addColumn failing on the FIRST table in
+    // this loop used to abort before the index for ANY table got created,
+    // including tables where the index really was still missing.
     for (const table of hotelScoped) {
-      await queryInterface.addColumn(table, 'local_id', { type: Sequelize.INTEGER, allowNull: true });
-      await queryInterface.addIndex(table, {
-        fields: ['hotel_id', 'local_id'],
-        unique: true,
-        name: `${table}_hotel_local_id_unique`,
-        where: { local_id: { [Sequelize.Op.ne]: null } },
-      });
+      const columns = await queryInterface.describeTable(table);
+      if (!columns.local_id) {
+        await queryInterface.addColumn(table, 'local_id', { type: Sequelize.INTEGER, allowNull: true });
+      }
+      const indexes = await queryInterface.showIndex(table);
+      const indexName = `${table}_hotel_local_id_unique`;
+      if (!indexes.some((i) => i.name === indexName)) {
+        await queryInterface.addIndex(table, {
+          fields: ['hotel_id', 'local_id'],
+          unique: true,
+          name: indexName,
+          where: { local_id: { [Sequelize.Op.ne]: null } },
+        });
+      }
     }
 
     // hms_cashMovement_msts has no hotel_id of its own (only cashSessionId
@@ -47,13 +62,19 @@ module.exports = {
     // cashSessionId instead, which is enough to disambiguate (a local_id is
     // only ever meaningful within the local exe's own db, and cashSessionId
     // already ties a movement to one specific hotel's session).
-    await queryInterface.addColumn('hms_cashMovement_msts', 'local_id', { type: Sequelize.INTEGER, allowNull: true });
-    await queryInterface.addIndex('hms_cashMovement_msts', {
-      fields: ['cashSessionId', 'local_id'],
-      unique: true,
-      name: 'hms_cashMovement_msts_session_local_id_unique',
-      where: { local_id: { [Sequelize.Op.ne]: null } },
-    });
+    const cmColumns = await queryInterface.describeTable('hms_cashMovement_msts');
+    if (!cmColumns.local_id) {
+      await queryInterface.addColumn('hms_cashMovement_msts', 'local_id', { type: Sequelize.INTEGER, allowNull: true });
+    }
+    const cmIndexes = await queryInterface.showIndex('hms_cashMovement_msts');
+    if (!cmIndexes.some((i) => i.name === 'hms_cashMovement_msts_session_local_id_unique')) {
+      await queryInterface.addIndex('hms_cashMovement_msts', {
+        fields: ['cashSessionId', 'local_id'],
+        unique: true,
+        name: 'hms_cashMovement_msts_session_local_id_unique',
+        where: { local_id: { [Sequelize.Op.ne]: null } },
+      });
+    }
   },
 
   async down(queryInterface) {

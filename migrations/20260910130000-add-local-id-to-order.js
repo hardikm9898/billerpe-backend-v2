@@ -16,13 +16,23 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('hms_order_msts', 'local_id', { type: Sequelize.INTEGER, allowNull: true });
-    await queryInterface.addIndex('hms_order_msts', {
-      fields: ['hotel_id', 'local_id'],
-      unique: true,
-      name: 'hms_order_msts_hotel_local_id_unique',
-      where: { local_id: { [Sequelize.Op.ne]: null } },
-    });
+    // Guarded: model/order.js already declares the local_id COLUMN, so on a
+    // fresh database sync's own CREATE TABLE beats this migration to it -
+    // but the model's own `indexes:` option (5 entries) does not include
+    // this one, so the index genuinely still needs to run.
+    const columns = await queryInterface.describeTable('hms_order_msts');
+    if (!columns.local_id) {
+      await queryInterface.addColumn('hms_order_msts', 'local_id', { type: Sequelize.INTEGER, allowNull: true });
+    }
+    const indexes = await queryInterface.showIndex('hms_order_msts');
+    if (!indexes.some((i) => i.name === 'hms_order_msts_hotel_local_id_unique')) {
+      await queryInterface.addIndex('hms_order_msts', {
+        fields: ['hotel_id', 'local_id'],
+        unique: true,
+        name: 'hms_order_msts_hotel_local_id_unique',
+        where: { local_id: { [Sequelize.Op.ne]: null } },
+      });
+    }
   },
 
   async down(queryInterface) {

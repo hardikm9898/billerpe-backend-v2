@@ -12,12 +12,20 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addIndex('hms_auditLog_msts', {
-      fields: ['hotel_id', 'local_id'],
-      unique: true,
-      name: 'hms_auditLog_msts_hotel_local_id_unique',
-      where: { local_id: { [Sequelize.Op.ne]: null } },
-    });
+    // Guarded: this model's `local_id` column is real (declared inline, per
+    // this file's own comment above), but the model does not declare this
+    // INDEX, so a fresh sync-created table is still missing it - unlike the
+    // column, which the guard below correctly leaves alone if already there
+    // from a re-run.
+    const indexes = await queryInterface.showIndex('hms_auditLog_msts');
+    if (!indexes.some((i) => i.name === 'hms_auditLog_msts_hotel_local_id_unique')) {
+      await queryInterface.addIndex('hms_auditLog_msts', {
+        fields: ['hotel_id', 'local_id'],
+        unique: true,
+        name: 'hms_auditLog_msts_hotel_local_id_unique',
+        where: { local_id: { [Sequelize.Op.ne]: null } },
+      });
+    }
   },
 
   async down(queryInterface) {

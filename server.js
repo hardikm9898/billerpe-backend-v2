@@ -144,8 +144,10 @@ app.options("*", cors());
 /* ---------------------------------
    6. BODY PARSER
 ---------------------------------- */
+
 app.use(express.json({ limit: "5mb", verify: (req, _res, buf) => { req.rawBody = buf }}))
 app.use(express.urlencoded({ limit: "5mb", extended: true }))
+
 
 /* ---------------------------------
    7. ROUTES
@@ -245,6 +247,11 @@ server.listen(PORT, (err) => {
                 // touch or drop that column, so this table is provisioned
                 // by its migration only, never by boot-time sync.
                 'local_server_registrations',
+                // Unique index on `version` (migration 20260917120000) that
+                // boot-time alter:true does not know about, same reasoning
+                // as local_server_registrations directly above - provisioned
+                // by its migration only.
+                'web_bundles',
                 'hms_user_masters',
                 'hms_whatsapp_template_msts',
                 'hms_website_user_msts',
@@ -385,18 +392,87 @@ server.listen(PORT, (err) => {
                     return model.sync({ alter: true });
                 };
 
+                // ~100 models are created CONCURRENTLY below, but several
+                // carry a foreign key to another model in the same batch -
+                // whichever one runs first has no guarantee its parent's
+                // CREATE TABLE has landed yet. Confirmed live, 2026-09-18: a
+                // fresh database repeatedly lost this race on different
+                // tables each attempt (hms_user_accesses -> hms_hotelUser_
+                // masters, hms_purchase_rawMaterials -> hms_purchase_orders,
+                // hms_recipes_msts never created at all), and the failure
+                // was invisible - MySQL's error was logged, then a SECOND,
+                // unconditional "completed successfully" line printed right
+                // after it regardless, so a boot that silently left tables
+                // missing read as a clean success in every log.
+                //
+                // A real dependency-ordered creation would need walking
+                // every model's association graph - not done here. A short
+                // retry is far cheaper and handles the actual failure mode:
+                // the parent typically finishes within the same batch a
+                // moment later, so trying again shortly after almost always
+                // succeeds once every other CREATE TABLE has had a turn.
+                // Also covers ER_LOCK_DEADLOCK (1213) - confirmed live,
+                // 2026-09-18: concurrent `alter: true` across FK-linked
+                // tables can deadlock on MySQL metadata locks the same way
+                // the CRM tables did (see the comment above
+                // TABLES_TO_SKIP_ALTER) even outside that specific table
+                // set - e.g. hms_payment_mode_default_msts,
+                // hms_requisition_item_msts, hms_cashMovement_msts each
+                // failed this way on the same boot. MySQL's own guidance is
+                // that a deadlocked transaction is expected to be retried,
+                // and it clears the same way the FK race does: whichever
+                // other ALTER was holding the conflicting lock has usually
+                // finished by the next attempt.
+                const isMissingParentRace = (err) => {
+                    const code = err?.parent?.code || err?.original?.code;
+                    return code === 'ER_FK_CANNOT_OPEN_PARENT'
+                        || code === 'ER_CANNOT_ADD_FOREIGN'
+                        || code === 'ER_LOCK_DEADLOCK'
+                        || code === 'ER_LOCK_WAIT_TIMEOUT';
+                };
+                const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                const syncModelWithRetry = async (model, attempts = 5) => {
+                    for (let attempt = 1; ; attempt++) {
+                        try {
+                            return await syncModel(model);
+                        } catch (err) {
+                            if (!isMissingParentRace(err) || attempt >= attempts) throw err;
+                            logger.warn(
+                                `Sync race on ${model.getTableName()} (attempt ${attempt}/${attempts}) - `
+                                + `retrying: ${err.parent?.message || err.message}`,
+                            );
+                            await sleep(300 * attempt);
+                        }
+                    }
+                };
+
                 const parallelModels = models.filter(m => !SFI_SEQUENTIAL.includes(m.getTableName()));
                 const sequentialModels = SFI_SEQUENTIAL
                     .map(tbl => models.find(m => m.getTableName() === tbl))
                     .filter(Boolean);
 
-                await Promise.all(parallelModels.map(syncModel));
+                const results = await Promise.allSettled(parallelModels.map((m) => syncModelWithRetry(m)));
+                const failures = results
+                    .map((r, i) => (r.status === 'rejected' ? { table: parallelModels[i].getTableName(), err: r.reason } : null))
+                    .filter(Boolean);
 
                 for (const model of sequentialModels) {
-                    await syncModel(model);
+                    await syncModelWithRetry(model);
                 }
 
-                logger.info('Database sync completed successfully');
+                if (failures.length) {
+                    // Loud and specific on purpose - this used to be a
+                    // silent gap between an error line and an unconditional
+                    // "success" line right after it, discovered only when a
+                    // migration or a request against one of these tables
+                    // failed with no obvious connection back to boot.
+                    for (const f of failures) {
+                        logger.error(`Sync FAILED for ${f.table} after retries`, { err: f.err?.parent?.message || f.err?.message });
+                    }
+                    logger.error(`Database sync completed WITH ${failures.length} FAILED TABLE(S) - see above`);
+                } else {
+                    logger.info('Database sync completed successfully');
+                }
             } catch (err) {
                 console.log(err);
                 logger.error("Error syncing database", { err: err.message });
@@ -405,7 +481,6 @@ server.listen(PORT, (err) => {
                 qi.addIndex = originalAddIndex;
                 qi.removeIndex = originalRemoveIndex;
             }
-            logger.info('Database sync completed successfully');
         } catch (err) {
             console.log(err)
             logger.error("Error syncing database", { err: err.message });

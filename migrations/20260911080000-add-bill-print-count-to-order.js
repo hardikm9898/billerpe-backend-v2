@@ -6,10 +6,15 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('hms_order_msts', 'billPrintCount', {
-      type: Sequelize.INTEGER,
-      defaultValue: 0,
-    });
+    // Guarded: model/order.js already declares billPrintCount, so a fresh
+    // sync-created table has it before this migration ever runs.
+    const table = await queryInterface.describeTable('hms_order_msts');
+    if (!table.billPrintCount) {
+      await queryInterface.addColumn('hms_order_msts', 'billPrintCount', {
+        type: Sequelize.INTEGER,
+        defaultValue: 0,
+      });
+    }
   },
 
   async down(queryInterface) {

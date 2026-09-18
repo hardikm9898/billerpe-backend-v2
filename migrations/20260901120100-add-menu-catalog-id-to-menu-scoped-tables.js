@@ -21,10 +21,19 @@ module.exports = {
     // (model/menu_categ.js's "hms_menu_categ" -> hms_menu_categs, etc,
     // confirmed against the live schema) - these three are the real,
     // pluralized table names, not the singular define() strings.
+    // Guarded so a re-run after this migration failed partway through the
+    // loop (any table after the first one) does not re-attempt the tables
+    // it already finished.
     const tables = ['hms_menu_categs', 'hms_variant_msts', 'hms_addon_department_msts'];
     for (const table of tables) {
-      await queryInterface.addColumn(table, 'menu_catalog_id', { type: Sequelize.INTEGER, allowNull: true });
-      await queryInterface.addIndex(table, ['menu_catalog_id']);
+      const columns = await queryInterface.describeTable(table);
+      if (!columns.menu_catalog_id) {
+        await queryInterface.addColumn(table, 'menu_catalog_id', { type: Sequelize.INTEGER, allowNull: true });
+      }
+      const indexes = await queryInterface.showIndex(table);
+      if (!indexes.some((i) => i.name === `${table}_menu_catalog_id`)) {
+        await queryInterface.addIndex(table, ['menu_catalog_id']);
+      }
     }
   },
 

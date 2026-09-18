@@ -10,11 +10,17 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('hms_table_msts', 'qr_version', {
-      type: Sequelize.INTEGER,
-      allowNull: false,
-      defaultValue: 1,
-    });
+    // Guarded: hms_table_msts is skip-listed (server.js), but model/table.js
+    // already declares qr_version, so a fresh sync-created table has it
+    // before this migration ever runs.
+    const table = await queryInterface.describeTable('hms_table_msts');
+    if (!table.qr_version) {
+      await queryInterface.addColumn('hms_table_msts', 'qr_version', {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+        defaultValue: 1,
+      });
+    }
   },
 
   async down(queryInterface) {

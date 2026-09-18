@@ -6,10 +6,15 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('hms_order_msts', 'tip', {
-      type: Sequelize.DOUBLE,
-      defaultValue: 0,
-    });
+    // Guarded: model/order.js already declares tip, so a fresh sync-created
+    // table has it before this migration ever runs.
+    const table = await queryInterface.describeTable('hms_order_msts');
+    if (!table.tip) {
+      await queryInterface.addColumn('hms_order_msts', 'tip', {
+        type: Sequelize.DOUBLE,
+        defaultValue: 0,
+      });
+    }
   },
 
   async down(queryInterface) {

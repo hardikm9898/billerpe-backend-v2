@@ -1,1 +1,0 @@
-import{t as e}from"./jsx-runtime-CfuWmoMz.js";import{s as t}from"./index-D9j9OmB6.js";import{r as n}from"./keyboard-display-mMOtY2Iq.js";var r=e();function i(){let{orderId:e}=t.useParams();return(0,r.jsx)(n,{orderId:e})}export{i as component};

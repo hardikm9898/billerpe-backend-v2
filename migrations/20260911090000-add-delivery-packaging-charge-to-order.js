@@ -6,14 +6,21 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('hms_order_msts', 'delivery_charge', {
-      type: Sequelize.DOUBLE,
-      defaultValue: 0,
-    });
-    await queryInterface.addColumn('hms_order_msts', 'packaging_charge', {
-      type: Sequelize.DOUBLE,
-      defaultValue: 0,
-    });
+    // Guarded: model/order.js already declares both columns, so a fresh
+    // sync-created table has them before this migration ever runs.
+    const table = await queryInterface.describeTable('hms_order_msts');
+    if (!table.delivery_charge) {
+      await queryInterface.addColumn('hms_order_msts', 'delivery_charge', {
+        type: Sequelize.DOUBLE,
+        defaultValue: 0,
+      });
+    }
+    if (!table.packaging_charge) {
+      await queryInterface.addColumn('hms_order_msts', 'packaging_charge', {
+        type: Sequelize.DOUBLE,
+        defaultValue: 0,
+      });
+    }
   },
 
   async down(queryInterface) {
