@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { deviceAuth } = require("../middleware/deviceAuth");
-const { heartbeat, pull, push, pushOrders } = require("../controller/sync/syncController");
+const { heartbeat, pull, push, pushOrders, rebaseLocalIds } = require("../controller/sync/syncController");
 const { getManifest, getFile } = require("../controller/sync/webBundleController");
 
 // Sync engine v2 - the complete surface a restaurant's local exe uses for
@@ -19,6 +19,7 @@ router.get("/heartbeat", deviceAuth, heartbeat);
 router.get("/pull", deviceAuth, pull);
 router.post("/push", deviceAuth, push);
 router.post("/push/orders", deviceAuth, pushOrders);
+router.post("/rebase", deviceAuth, rebaseLocalIds);
 
 // The Web POS frontend an outlet's exe serves off its own disk. Requested
 // only when the heartbeat above reports a version the exe does not already

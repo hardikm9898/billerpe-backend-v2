@@ -65,7 +65,9 @@ const getCaptainUser = async (req, res) => {
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
 
         const users = await HotelUser.findAll({
-            where: { hotel_id: req.user }, include: [
+            where: { hotel_id: req.user },
+            attributes: { exclude: ["password", "pin", "refresh_token"] },
+            include: [
                 {
                     model: Role,
                     where: { role_name: { [Op.or]: ["C", "A", "B"] } }
@@ -269,7 +271,11 @@ const checkCaptainLogin = async (req, res) => {
             const hotel = await Hotel.findOne({ where: { id: req.user } })
             // console.log(hotel)
             if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
-            const userAccess = await HotelUser.findOne({ where: { id: req.userId }, include: [{ model: UserAccess }, { model: Role }] })
+            const userAccess = await HotelUser.findOne({
+                where: { id: req.userId },
+                attributes: { exclude: ["password", "pin", "refresh_token"] },
+                include: [{ model: UserAccess }, { model: Role }],
+            })
             // console.log(userAccess)
             return res.json(success(MESSAGE.SUCCESS, { access: userAccess }, STATUSCODE.SUCCESS))
         } catch (err) {

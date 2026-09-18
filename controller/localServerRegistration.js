@@ -4,20 +4,6 @@ const { MESSAGE, STATUSCODE } = require("../constant/const");
 const { success, error } = require("../responce/res");
 const { signDeviceToken } = require("../middleware/deviceAuth");
 
-// How long an active registration may go unseen before another PC is
-// allowed to take the outlet over WITHOUT anyone confirming. Anything
-// shorter risks two machines fighting over one restaurant across a brief
-// network blip; anything much longer strands a restaurant whose PC died
-// mid-service behind a support call. last_seen_at is refreshed by every
-// sync heartbeat (controller/sync/syncController.js), i.e. once a minute
-// while the exe is alive.
-const STALE_TAKEOVER_MS = 10 * 60 * 1000;
-
-function isStale(registration) {
-    if (!registration?.last_seen_at) return true;
-    return Date.now() - new Date(registration.last_seen_at).getTime() > STALE_TAKEOVER_MS;
-}
-
 // Phase A of the local-first architecture migration: the central authority
 // for "which PC is this restaurant's active local server" (architecture
 // memo §03/§04). Nothing here replaces billerpe-local-exe's own
@@ -34,10 +20,15 @@ function isStale(registration) {
 // registerDevice just refreshes metadata); rejects a DIFFERENT device
 // while one is already active for this hotel - that rejection is the
 // actual enforcement of §6 ("one active local server per restaurant").
+//
+// Moving a restaurant to another PC is deliberately a support action (the
+// owner's decision, 2026-09-18): no automatic takeover of a quiet PC and no
+// owner-confirmed replace. Support frees the restaurant with
+// POST /superAdmin/device/release, then the new PC registers normally.
 const registerLocalServer = async (req, res) => {
     try {
         const hotel_id = req.user;
-        const { device_id, hostname, app_version, os_info, replace } = req.body;
+        const { device_id, hostname, app_version, os_info } = req.body;
 
         if (!device_id) {
             return res.json(error("device_id is required", STATUSCODE.BAD_REQUEST));
@@ -54,44 +45,24 @@ const registerLocalServer = async (req, res) => {
 
         const now = new Date();
 
-        // A DIFFERENT PC is asking to become this restaurant's server. Two
-        // machines both syncing one outlet would duplicate bills, so this is
-        // never silently allowed - but it must not need a support call
-        // either, which is what the old hard 409 forced for the common real
-        // case (the PC was replaced, or its disk was reimaged).
-        //   - previous server not seen for STALE_TAKEOVER_MS: taken over
-        //     automatically, since nothing is running there to conflict with.
-        //   - previous server still alive: refused with canReplace, so the
-        //     owner can confirm in the POS and retry with replace:true.
-        // Either way the old row is RELEASED, not deleted (audit trail), and
-        // a fresh installation_id invalidates the old device's token.
+        // Two machines both syncing one outlet would duplicate bills.
         if (activeRegistration && activeRegistration.device_id !== device_id) {
-            const stale = isStale(activeRegistration);
-            if (!stale && !replace) {
-                return res.json(error(
-                    "Another PC is currently this restaurant's local server. Confirm replacing it to continue.",
-                    STATUSCODE.CONFLICT,
-                    {
-                        canReplace: true,
-                        existing: {
-                            hostname: activeRegistration.hostname,
-                            app_version: activeRegistration.app_version,
-                            last_seen_at: activeRegistration.last_seen_at,
-                        },
+            const support = hotel.support_number ? ` on ${hotel.support_number}` : "";
+            return res.json(error(
+                `This restaurant is already registered on another PC (${activeRegistration.hostname || "unknown PC"}). `
+                + `To move BillerPe to this PC, contact BillerPe support${support}.`,
+                STATUSCODE.CONFLICT,
+                {
+                    existing: {
+                        hostname: activeRegistration.hostname,
+                        last_seen_at: activeRegistration.last_seen_at,
                     },
-                ));
-            }
-            await activeRegistration.update({
-                status: "released",
-                released_at: now,
-                // Not a SuperAdmin release - recorded as a device takeover so
-                // the audit trail distinguishes the two.
-                released_by: null,
-            });
+                },
+            ));
         }
 
         let registration;
-        if (activeRegistration && activeRegistration.device_id === device_id) {
+        if (activeRegistration) {
             // Same device re-registering (exe restart, reinstall on the same
             // PC, or an owner re-authenticating from the System page). Keeps
             // its installation_id, so the device token it already holds

@@ -78,7 +78,11 @@ const offlineUserAccess = async (req, res) => {
         const hotel = await Hotel.findOne({ where: { id: req.user } });
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.NOT_FOUND));
 
-        let userAccess = await HotelUser.findOne({ where: { id: req.userId }, include: [{ model: UserAccess }, { model: Role }] })
+        let userAccess = await HotelUser.findOne({
+            where: { id: req.userId },
+            attributes: { exclude: ["password", "pin", "refresh_token"] },
+            include: [{ model: UserAccess }, { model: Role }],
+        })
 
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { userAccess }, STATUSCODE.SUCCESS))
@@ -219,7 +223,11 @@ const offlineHotelUser = async (req, res) => {
     try {
         const hotel = await Hotel.findOne({ where: { id: req.user } });
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.NOT_FOUND));
-        let hotelUsers = await HotelUser.findAll({ where: { hotel_id: req.user }, include: [{ model: Role }, { model: UserAccess }] })
+        let hotelUsers = await HotelUser.findAll({
+            where: { hotel_id: req.user },
+            attributes: { exclude: ["password", "pin", "refresh_token"] },
+            include: [{ model: Role }, { model: UserAccess }],
+        })
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { hotelUsers }, STATUSCODE.SUCCESS))
     } catch (err) {

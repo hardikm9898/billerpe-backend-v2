@@ -521,4 +521,42 @@ const pushOrders = async (req, res) => {
     }
 };
 
-module.exports = { heartbeat, pull, push, pushOrders };
+// POST /sync/rebase - called by the exe during registration, right after it
+// has wiped its local database and just before it pulls everything fresh.
+//
+// push matches rows by (hotel_id, local_id), where local_id is whatever
+// numbering the PC used when it first pushed a row. A fresh pull stores
+// every row on the exe under THIS table's own id, so those old links would
+// point edits at the wrong row or create duplicates. Re-linking here makes
+// the cloud agree with the database the exe is about to rebuild:
+//   - rows the exe pulls: local_id = id, exactly the id it will store them under
+//   - rows it never pulls (orders, customers, audit logs): local_id = -id, a
+//     value no exe-generated id can ever equal, and never NULL, so the
+//     bill_no / primary-key adoption fallbacks cannot claim them either.
+// Cleared to NULL first because MySQL checks the (hotel_id, local_id) unique
+// index row by row inside a multi-row UPDATE. `silent` keeps updatedAt, so
+// last-write-wins comparisons and the heartbeat's versions are unaffected.
+const rebaseLocalIds = async (req, res) => {
+    const hotelId = req.user;
+    try {
+        const targets = [...ENTITIES.filter((e) => e.direction !== "pull"), { ...ORDER_ENTITY, direction: "push" }]
+            .filter((e) => e.Model.rawAttributes.local_id);
+        const relinked = {};
+        await sequelize.transaction(async (transaction) => {
+            for (const entity of targets) {
+                const pk = primaryKeyOf(entity);
+                const where = scopeWhere(entity, hotelId);
+                await entity.Model.update({ local_id: null }, { where, transaction, silent: true });
+                const value = entity.direction === "both" ? sequelize.col(pk) : sequelize.literal(`-\`${pk}\``);
+                const [count] = await entity.Model.update({ local_id: value }, { where, transaction, silent: true });
+                relinked[entity.name] = count;
+            }
+        });
+        return res.json(success(MESSAGE.SUCCESS, { relinked }, STATUSCODE.SUCCESS));
+    } catch (err) {
+        console.error("[sync] rebaseLocalIds error:", err);
+        return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR));
+    }
+};
+
+module.exports = { heartbeat, pull, push, pushOrders, rebaseLocalIds };

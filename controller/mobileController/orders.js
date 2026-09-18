@@ -40,7 +40,11 @@ const mobileAccess = async (req, res) => {
         const hotel = await Hotel.findOne({ where: { id: req.user } })
         // console.log(hotel)
         if (!hotel) return res.json(mobileError(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
-        const userAccess = await HotelUser.findOne({ where: { id: req.userId }, include: [{ model: UserAccess }, { model: Role }] })
+        const userAccess = await HotelUser.findOne({
+            where: { id: req.userId },
+            attributes: { exclude: ["password", "pin", "refresh_token"] },
+            include: [{ model: UserAccess }, { model: Role }],
+        })
         const taxes = await TaxType.findAll({ where: { hotel_id: req.user, active: true } })
 
         if (device_id !== userAccess.device_id) {
