@@ -40,6 +40,19 @@ const HotelUser = sequelize.define("hms_hotelUser_master", {
     refresh_token: {
         type: DataTypes.STRING,
         defaultValue: ""
+    },
+    // Per-user exceptions to the role's permissions ({ modules, special }),
+    // set from the Web POS Users screen. Synced with the exe, which enforces
+    // them on every request (billerpe-local-exe/helpers/permissions.js).
+    permission_overrides: {
+        type: DataTypes.JSON,
+        allowNull: true,
+    },
+    // Sync engine v2: the exe's own id for a user it created - see
+    // controller/sync/syncController.js#push.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
     }
 },
 )

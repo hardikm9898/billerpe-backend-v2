@@ -26,6 +26,10 @@ const Role = sequelize.define("role_mst", {
     modify_by: {
         type: DataTypes.STRING
     },
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
 })
 
 

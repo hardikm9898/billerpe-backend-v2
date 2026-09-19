@@ -125,6 +125,7 @@ const pull = async (req, res) => {
             order: [["updatedAt", "ASC"], [pk, "ASC"]],
             limit: limit + 1,
             raw: true,
+            ...(entity.pullExclude ? { attributes: { exclude: entity.pullExclude } } : {}),
         });
 
         const hasMore = rows.length > limit;
@@ -248,7 +249,35 @@ const push = async (req, res) => {
                     where: { ...scopeWhere(entity, hotelId), local_id: localId },
                     transaction: t,
                 });
-                if (!existing) {
+                if (entity.naturalKey) {
+                    // Staff rows are matched by what identifies them (a user's
+                    // mobile number, a role's name), never by a bare id: two
+                    // different people can share an id across the exe's and the
+                    // cloud's numbering, and claiming by id would overwrite
+                    // one person's login with another's.
+                    const keyWhere = Object.fromEntries(entity.naturalKey.map((k) => [k, fields[k]]));
+                    if (!existing && entity.naturalKey.every((k) => fields[k] != null)) {
+                        existing = await entity.Model.findOne({
+                            where: { ...scopeWhere(entity, hotelId), ...keyWhere },
+                            transaction: t,
+                        });
+                    }
+                    if (entity.name === "hotelUsers" && fields.number) {
+                        const takenElsewhere = await entity.Model.findOne({
+                            where: { number: fields.number, hotel_id: { [Op.ne]: hotelId } },
+                            attributes: ["id"],
+                            transaction: t,
+                        });
+                        if (takenElsewhere) {
+                            await t.rollback();
+                            results.push({
+                                local_id: localId, ok: false, retryable: false,
+                                message: `Mobile ${fields.number} is already registered with another restaurant`,
+                            });
+                            continue;
+                        }
+                    }
+                } else if (!existing) {
                     // First push of a row that originally came DOWN from here:
                     // pull writes it on the exe under this table's own id, so
                     // its "local id" is numerically our id, and our row still

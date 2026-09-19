@@ -90,15 +90,11 @@ const sendAdminNotifications = (name, phone_number, email, message) => {
 const storeWebsiteUserData = async (req, res) => {
     try {
         const { name, phone_number, email, message } = req.body
-
         let checkUserAvailable = await webSiteUserData.findOne({ where: { phone_number } })
-
-        console.log(req.body, "header--->")
         if (!checkUserAvailable) {
             checkUserAvailable = await webSiteUserData.create({ name, phone_number, email, message })
             await sendWhatsAppMessage(name, phone_number)
             sendAdminNotifications(name, phone_number, email, message)
-
             await CrmLead.create({
                 name,
                 phone_number,

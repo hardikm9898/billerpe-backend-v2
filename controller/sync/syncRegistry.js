@@ -73,9 +73,19 @@ const ENTITIES = [
     { name: "ebillCredit", Model: models.EBillCredit, direction: "pull" },
 
     // ---- staff -------------------------------------------------------------
-    { name: "roles", Model: models.Role, direction: "pull", idField: "role_cd" },
-    { name: "hotelUsers", Model: models.HotelUser, direction: "pull", dependsOn: [{ field: "role_cd", parent: "roles" }] },
-    { name: "userAccess", Model: models.UserAccess, direction: "pull", dependsOn: [{ field: "hotelUser_id", parent: "hotelUsers" }] },
+    // Two-way since 2026-09-18: staff can be added on the exe with no
+    // internet. `naturalKey` makes push match by identity instead of by id
+    // (see push). Session columns never travel in either direction.
+    { name: "roles", Model: models.Role, direction: "both", idField: "role_cd", naturalKey: ["role_name"], skipFields: ["role_cd"] },
+    {
+        name: "hotelUsers", Model: models.HotelUser, direction: "both", naturalKey: ["number"],
+        dependsOn: [{ field: "role_cd", parent: "roles" }],
+        skipFields: ["refresh_token", "device_id"], pullExclude: ["refresh_token", "device_id"],
+    },
+    {
+        name: "userAccess", Model: models.UserAccess, direction: "both", naturalKey: ["hotelUser_id", "access_name"],
+        dependsOn: [{ field: "hotelUser_id", parent: "hotelUsers" }],
+    },
 
     // ---- stock master ------------------------------------------------------
     { name: "units", Model: models.Unit, direction: "both" },

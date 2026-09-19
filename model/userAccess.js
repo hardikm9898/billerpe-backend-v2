@@ -30,6 +30,10 @@ const UserAccess = sequelize.define("hms_user_access", {
     read: {
         type: DataTypes.BOOLEAN,
         defaultValue: false
+    },
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
     }
 },)
 
