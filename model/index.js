@@ -25,6 +25,7 @@ const Table = require("./table");
 const TableCatagories = require("./table_catg");
 const TableBooking = require("./tablebooking");
 const QrOrder = require("./qrOrder");
+const QrSession = require("./qrSession");
 
 // ---------- Menu Management ----------
 const Menu = require("./menu");
@@ -294,6 +295,11 @@ QrOrder.belongsTo(Table, { foreignKey: 'table_id', onDelete: 'CASCADE', onUpdate
 // Hotel -> QrOrder
 Hotel.hasMany(QrOrder, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
 QrOrder.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUpdate: 'CASCADE' });
+
+// QrSession -> QrOrder (one customer's visit, many rounds). No FK constraint:
+// rounds created before sessions existed have session_id NULL.
+QrSession.hasMany(QrOrder, { foreignKey: 'session_id', constraints: false });
+QrOrder.belongsTo(QrSession, { foreignKey: 'session_id', constraints: false });
 
 // ----------------------------------------------------------------------------
 // MENU MANAGEMENT RELATIONSHIPS
@@ -942,6 +948,7 @@ module.exports = {
     TableCatagories,
     TableBooking,
     QrOrder,
+    QrSession,
 
     // Menu Management
     Menu,

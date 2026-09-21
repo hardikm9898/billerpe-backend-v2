@@ -47,6 +47,18 @@ const QrOrder = sequelize.define("hms_qr_order_msts", {
         type: DataTypes.ENUM,
         values: ["pending", "accepted", "rejected", "expired"],
         defaultValue: "pending"
+    },
+    // The customer's visit this round belongs to (model/qrSession.js).
+    session_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+    },
+    // One-time key the customer's page sends with a submission, so a double
+    // tap or a network retry is saved once instead of becoming a duplicate
+    // order. Unique per session (migration 20260920100000).
+    client_key: {
+        type: DataTypes.STRING(64),
+        allowNull: true,
     }
 })
 

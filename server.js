@@ -252,6 +252,8 @@ server.listen(PORT, (err) => {
                 // as local_server_registrations directly above - provisioned
                 // by its migration only.
                 'web_bundles',
+                // Indexes owned by migration 20260920100000.
+                'hms_qr_session_msts',
                 'hms_user_masters',
                 'hms_whatsapp_template_msts',
                 'hms_website_user_msts',

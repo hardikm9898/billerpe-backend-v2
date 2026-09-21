@@ -11,7 +11,7 @@ const { getBillChargeRules, updateBillChargeRule } = require("../controller/bill
 const { getNotificationSettings, toggleNotificationSetting } = require("../controller/notificationSetting")
 const { getRolePermissionDefaults, editRolePermissionDefault, editRolePermissionSpecialDefault } = require("../controller/rolePermissionDefault")
 const { editSettledOrder, getRefundDueOrders, settleRefundDue } = require("../controller/editSettledOrder")
-const { createQrOrder, getQrOrderStatus, getTableSessionStatus, getPendingQrOrders, updateQrOrderStatus, regenerateTableQr } = require("../controller/qrOrder")
+const { createQrOrder, getQrOrderStatus, getTableSessionStatus, getPendingQrOrders, updateQrOrderStatus, regenerateTableQr, startQrSession, getQrSession, qrSessionTableState } = require("../controller/qrOrder")
 const upload = require("../middleware/upload")
 const { addToCart, getCart, removeCartItems, placeOrder, billData, billDataForAdmin, getOrders, getSingleOrder, getKotOrder, getHoldOrders, getPickupOrder, getDinInOrder, getSingleOrderForAdminCart, deleteOrder, getOrdersByBillNo, getPendingBills, getDueOrders, settleDue, settleAllDuePayment, getTimeLineByOrderId, getOrderTaxDetails, getAllOrderPaginationWise, makeSequenceBillNoOptimized } = require("../controller/order")
 const { userLogin, restaurantLogin, captainLogin, restaurantLogout, pdf, pinLogin } = require("../controller/auth")
@@ -346,6 +346,9 @@ router.get("/menuByCategory/:key", menuByCategory)
 
 // //! QR table ordering - createQrOrder/getQrOrderStatus are public (same
 // reasoning as menuByCategory above); the rest are staff-facing.
+router.post("/qrSession", startQrSession)
+router.post("/qrSession/tableState", deviceOrAdminAuth, qrSessionTableState)
+router.get("/qrSession/:key", getQrSession)
 router.post("/qrOrder", createQrOrder)
 router.get("/qrOrder/tableStatus", getTableSessionStatus)
 router.get("/qrOrder/:id/status", getQrOrderStatus)

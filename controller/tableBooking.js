@@ -76,6 +76,48 @@ const scheduleJobs = async (start_time, end_time, booking_id, booking_date, hote
         throw new Error
     }
 }
+// Overlap check for a table's bookings. Times arrive as local
+// "YYYY-MM-DDTHH:mm:ss" strings (older rows may be plain "HH:mm" or carry
+// seconds/zone), so they are turned into minutes on that booking's own date
+// and compared as numbers. The old check compared the strings in SQL and
+// also required booking_date to be exactly equal - which it never was once
+// the DATE column carried a time - so an overlapping booking went through.
+const dayOf = (value) => {
+    if (!value) return null
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10)
+    return moment(value).format("YYYY-MM-DD")
+}
+const timeText = (v) => (String(v).includes("T") ? String(v).split("T")[1] : String(v)).slice(0, 5)
+const slotRange = (bookingDate, start, end) => {
+    const day = (typeof start === "string" && start.includes("T")) ? start.slice(0, 10) : dayOf(bookingDate)
+    const minutesOf = (v) => {
+        const [h, m] = timeText(v).split(":").map(Number)
+        return h * 60 + (m || 0)
+    }
+    const base = moment(day, "YYYY-MM-DD").valueOf() / 60000
+    const startMin = base + minutesOf(start)
+    let endMin = base + minutesOf(end)
+    if (endMin <= startMin) endMin += 24 * 60 // runs past midnight
+    return [startMin, endMin]
+}
+const findClash = async ({ hotelId, tableId, bookingDate, start, end, ignoreBookingId }) => {
+    const day = moment(dayOf(bookingDate), "YYYY-MM-DD")
+    const candidates = await TableBooking.findAll({
+        where: {
+            TableId: tableId, hotel_id: hotelId, deleted: false,
+            booking_date: { [Op.between]: [day.clone().subtract(1, "day").toDate(), day.clone().add(2, "day").toDate()] },
+            ...(ignoreBookingId ? { booking_id: { [Op.ne]: ignoreBookingId } } : {}),
+        },
+    })
+    const [s1, e1] = slotRange(bookingDate, start, end)
+    return candidates.find((b) => {
+        const [s2, e2] = slotRange(b.booking_date, b.start_time, b.end_time)
+        return s1 < e2 && e1 > s2
+    }) || null
+}
+const clashMessage = (tableName, clash) =>
+    `${tableName} is already booked from ${timeText(clash.start_time)} to ${timeText(clash.end_time)}${clash.name ? ` (${clash.name})` : ""}. Choose another time or table.`
+
 const tableBooking = async (req, res) => {
     const t = await sequelize.transaction()
     try {
@@ -100,7 +142,12 @@ const tableBooking = async (req, res) => {
             return res.json(error(message, res.statusCode))
         }
         if (parseInt(advance) > parseInt(totalAmount)) {
+            await t.rollback()
             return res.json(error("Advance Payment Must Be Less Then or Equal Total Amount", res.statusCode))
+        }
+        if (timeText(start_time) === timeText(end_time)) {
+            await t.rollback()
+            return res.json(error("End time must be after the start time.", STATUSCODE.BAD_REQUEST))
         }
         let user = await User.findOne({ where: { number, hotel_id: hotel.id } })
         if (user) {
@@ -116,22 +163,11 @@ const tableBooking = async (req, res) => {
         for (const table of table_name) {
             const checkTableAvailable = await Table.findOne({ where: { id: table, hotel_id: hotel.id } })
             if (checkTableAvailable) {
-                const findTableBookAlready = await TableBooking.findOne({
-                    where: {
-                        TableId: table,
-                        start_time: {
-                            [Op.lt]: end_time
-                        },
-                        end_time: {
-                            [Op.gt]: start_time
-                        }, booking_date: new Date(moment(booking_date)), hotel_id: hotel.id, deleted: false
-                    }
-                })
+                const findTableBookAlready = await findClash({ hotelId: hotel.id, tableId: table, bookingDate: booking_date, start: start_time, end: end_time })
 
                 if (findTableBookAlready) {
-                    // throw error
                     await t.rollback()
-                    return res.json(error(` ${checkTableAvailable.table_name} Is Already Booked In This Time Range`, STATUSCODE.CONFLICT))
+                    return res.json(error(clashMessage(checkTableAvailable.table_name, findTableBookAlready), STATUSCODE.CONFLICT))
                 }
                 else {
                     await TableBooking.create({ TableId: table, UserId: user.id, name, enter_by: req.userId, email, booking_id: lastEntry ? lastEntry.id + 1 : 1, number, booking_date, start_time, end_time, no_of_person, totalAmount, gst_no, advance, table_name, hotel_id: hotel.id }, { transaction: t })
@@ -160,9 +196,11 @@ const updateBooking = async (req, res) => {
         const hotel = await Hotel.findOne({ where: { id: req.user } })
         // console.log(hotel)
         const { id } = req.params
-        const findBookingData = await TableBooking.findOne({ where: { booking_id: parseInt(id) } })
-        if (!findBookingData) return res.json(error(MESSAGE.BOOKING_NOT_FOUND, STATUSCODE.BAD_REQUEST))
-        await TableBooking.destroy({ where: { booking_id: findBookingData.booking_id } }, { transaction: t })
+        const findBookingData = await TableBooking.findOne({ where: { booking_id: parseInt(id), hotel_id: req.user } })
+        if (!findBookingData) {
+            await t.rollback()
+            return res.json(error(MESSAGE.BOOKING_NOT_FOUND, STATUSCODE.BAD_REQUEST))
+        }
 
         const { name, email, number, booking_date, start_time, end_time, no_of_person, totalAmount, gst_no, advance, table_name } = req.body
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
@@ -177,9 +215,30 @@ const updateBooking = async (req, res) => {
             return res.json(error(message, res.statusCode))
         }
         if (parseInt(advance) > parseInt(totalAmount)) {
+            await t.rollback()
             return res.json(error("Advance Payment Must Be Less Then or Equal Total Amount", res.statusCode))
         }
-        let user = await User.update({ name, email, number }, { where: { id: findBookingData.UserId } }, { transaction: t })
+        if (timeText(start_time) === timeText(end_time)) {
+            await t.rollback()
+            return res.json(error("End time must be after the start time.", STATUSCODE.BAD_REQUEST))
+        }
+        // Every table is checked BEFORE anything changes: the old code deleted
+        // the booking first (outside the transaction), so a refused edit lost
+        // the original booking. Its own rows don't count as a clash.
+        for (const table of table_name) {
+            const checkTable = await Table.findOne({ where: { id: table, hotel_id: hotel.id } })
+            if (!checkTable) {
+                await t.rollback()
+                return res.json(error(MESSAGE.TABLE_NOT_AVAILABLE, STATUSCODE.BAD_REQUEST))
+            }
+            const clash = await findClash({ hotelId: hotel.id, tableId: table, bookingDate: booking_date, start: start_time, end: end_time, ignoreBookingId: findBookingData.booking_id })
+            if (clash) {
+                await t.rollback()
+                return res.json(error(clashMessage(checkTable.table_name, clash), STATUSCODE.CONFLICT))
+            }
+        }
+        await TableBooking.destroy({ where: { booking_id: findBookingData.booking_id, hotel_id: hotel.id }, transaction: t })
+        await User.update({ name, email, number }, { where: { id: findBookingData.UserId }, transaction: t })
 
 
         // const lastEntry1 = await TableBooking.findAll({
@@ -189,25 +248,7 @@ const updateBooking = async (req, res) => {
         for (const table of table_name) {
             const checkTableAvailable = await Table.findOne({ where: { id: table, hotel_id: hotel.id } })
             if (checkTableAvailable) {
-                const findTableBookAlready = await TableBooking.findOne({
-                    where: {
-
-                        TableId: table,
-                        start_time: {
-                            [Op.lt]: end_time
-                        },
-                        end_time: {
-                            [Op.gt]: start_time
-                        }, hotel_id: hotel.id, deleted: false
-                    }
-                })
-
-                if (findTableBookAlready) {
-                    // throw error
-                    await t.rollback()
-                    return res.json(error(`${checkTableAvailable.table_name} Is Already Booked In This Time Range`, STATUSCODE.CONFLICT))
-                }
-                else {
+                {
                     await TableBooking.create({ TableId: table, UserId: findBookingData.UserId, name, enter_by: findBookingData.enter_by, modified_by: req.userId, email, booking_id: findBookingData.booking_id, number, booking_date, start_time, end_time, no_of_person, totalAmount, gst_no, advance, table_name, hotel_id: hotel.id }, { transaction: t })
                 }
             } else {

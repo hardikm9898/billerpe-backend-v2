@@ -40,6 +40,13 @@ const TableCatagories = sequelize.define("hms_table_categ", {
         type: DataTypes.INTEGER,
         allowNull: true,
     },
+    // Display order (Table Category screen, table grid section tabs/list) -
+    // same idea as Menu_categ's own rank. Synced both ways like every other
+    // column here (controller/sync/syncRegistry.js's generic push/pull).
+    rank: {
+        type: DataTypes.INTEGER,
+        defaultValue: 0,
+    },
 })
 
 

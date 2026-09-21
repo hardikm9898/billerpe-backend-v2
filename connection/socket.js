@@ -35,6 +35,7 @@ const cookie = require('cookie');
 
 let io;
 let kdsNamespace;
+let deviceNamespace;
 
 // Handshake auth: the same "token" cookie already sent (httpOnly, via
 // withCredentials on the client) to every REST endpoint is also present on
@@ -177,6 +178,27 @@ function initializeSocket(server) {
 
     // Initialize KDS namespace
     kdsNamespace = io.of("/kds");
+
+    // Live link from each restaurant's exe (billerpe-local-exe/services/
+    // cloudLink.js), authenticated with its device token - separate from the
+    // staff namespaces, which authenticate with a login cookie. Lets the
+    // cloud tell the exe about a new QR order at once instead of on its next
+    // 60s heartbeat.
+    deviceNamespace = io.of("/device");
+    deviceNamespace.use(async (socket, next) => {
+        try {
+            const { verifyDeviceToken } = require("../middleware/deviceAuth");
+            const result = await verifyDeviceToken(socket.handshake.auth?.token);
+            if (!result.ok) return next(new Error(result.message));
+            socket.deviceHotelId = result.hotel_id;
+            return next();
+        } catch (err) {
+            return next(new Error("Unauthorized"));
+        }
+    });
+    deviceNamespace.on("connection", (socket) => {
+        socket.join(`device:${socket.deviceHotelId}`);
+    });
 
     io.use(socketAuth);
     kdsNamespace.use(socketAuth);
@@ -598,7 +620,14 @@ const emitToPOS = (hotelId, event, data) => {
     }
 }
 
+// Sends an event to the restaurant's exe over its live link. A no-op if the
+// exe is not connected right now - its heartbeat catches up.
+function emitToDevice(hotelId, event, data) {
+    if (deviceNamespace) deviceNamespace.to(`device:${hotelId}`).emit(event, data);
+}
+
 module.exports = {
+    emitToDevice,
     initializeSocket,
     getIO,
     getKDSNamespace,

@@ -41,7 +41,7 @@ const error = (message, statusCode, extra) => {
 
     // console.log(statusCode)
     // List of common HTTP request code
-    const codes = [200, 201, 400, 401, 404, 403, 422, 500, 409];
+    const codes = [200, 201, 400, 401, 404, 403, 422, 500, 409, 429];
 
     // Get matched code
     const findCode = codes.find((code) => code === sCode);

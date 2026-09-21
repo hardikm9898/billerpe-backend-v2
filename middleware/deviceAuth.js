@@ -40,45 +40,38 @@ function readToken(req) {
     return null;
 }
 
+// Shared by the REST middleware below and the exe's live socket link
+// (connection/socket.js's /device namespace).
+async function verifyDeviceToken(token) {
+    if (!token) return { ok: false, message: "Device token required" };
+    let decoded;
+    try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET_KEY_ADMIN);
+    } catch {
+        return { ok: false, message: "Invalid device token" };
+    }
+    if (decoded?.typ !== DEVICE_TOKEN_TYPE) return { ok: false, message: "Not a device token" };
+    const registration = await LocalServerRegistration.findOne({
+        where: { hotel_id: decoded.hotel_id, device_id: decoded.device_id, status: "active" },
+    });
+    if (!registration) {
+        return { ok: false, message: "This device is no longer the registered local server for this restaurant - register it again." };
+    }
+    if (registration.installation_id !== decoded.installation_id) {
+        return { ok: false, message: "This device's registration was replaced - register it again to resume syncing." };
+    }
+    return { ok: true, hotel_id: decoded.hotel_id, device_id: decoded.device_id, registration };
+}
+
 const deviceAuth = async (req, res, next) => {
     try {
-        const token = readToken(req);
-        if (!token) {
-            return res.status(STATUSCODE.UNAUTHORIZED).json(error("Device token required", STATUSCODE.UNAUTHORIZED));
+        const result = await verifyDeviceToken(readToken(req));
+        if (!result.ok) {
+            return res.status(STATUSCODE.UNAUTHORIZED).json(error(result.message, STATUSCODE.UNAUTHORIZED));
         }
-
-        let decoded;
-        try {
-            decoded = jwt.verify(token, process.env.JWT_SECRET_KEY_ADMIN);
-        } catch {
-            return res.status(STATUSCODE.UNAUTHORIZED).json(error("Invalid device token", STATUSCODE.UNAUTHORIZED));
-        }
-        if (decoded?.typ !== DEVICE_TOKEN_TYPE) {
-            // A staff/owner access token must not be usable here: these
-            // endpoints write on behalf of a whole outlet.
-            return res.status(STATUSCODE.UNAUTHORIZED).json(error("Not a device token", STATUSCODE.UNAUTHORIZED));
-        }
-
-        const registration = await LocalServerRegistration.findOne({
-            where: { hotel_id: decoded.hotel_id, device_id: decoded.device_id, status: "active" },
-        });
-        if (!registration) {
-            return res.status(STATUSCODE.UNAUTHORIZED).json(error(
-                "This device is no longer the registered local server for this restaurant - register it again.",
-                STATUSCODE.UNAUTHORIZED,
-            ));
-        }
-        if (registration.installation_id !== decoded.installation_id) {
-            return res.status(STATUSCODE.UNAUTHORIZED).json(error(
-                "This device's registration was replaced - register it again to resume syncing.",
-                STATUSCODE.UNAUTHORIZED,
-            ));
-        }
-
-        // Same convention as adminAuth so controllers read identically.
-        req.user = decoded.hotel_id;
-        req.deviceId = decoded.device_id;
-        req.registration = registration;
+        req.user = result.hotel_id;
+        req.deviceId = result.device_id;
+        req.registration = result.registration;
         return next();
     } catch (err) {
         console.error("deviceAuth error:", err);
@@ -86,4 +79,4 @@ const deviceAuth = async (req, res, next) => {
     }
 };
 
-module.exports = { deviceAuth, signDeviceToken, DEVICE_TOKEN_TYPE };
+module.exports = { deviceAuth, signDeviceToken, verifyDeviceToken, DEVICE_TOKEN_TYPE };
