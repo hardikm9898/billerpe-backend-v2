@@ -4,6 +4,7 @@ const router = express.Router();
 const { deviceAuth } = require("../middleware/deviceAuth");
 const { heartbeat, pull, push, pushOrders, rebaseLocalIds } = require("../controller/sync/syncController");
 const { getManifest, getFile } = require("../controller/sync/webBundleController");
+const { createTicket, listTickets } = require("../controller/sync/supportController");
 
 // Sync engine v2 - the complete surface a restaurant's local exe uses for
 // background sync, and the only routes that accept a device token
@@ -27,5 +28,10 @@ router.post("/rebase", deviceAuth, rebaseLocalIds);
 // WEB-BUNDLE-DELIVERY-PLAN.md and controller/sync/webBundleController.js.
 router.get("/web-bundle/manifest", deviceAuth, getManifest);
 router.get("/web-bundle/file", deviceAuth, getFile);
+
+// Support tickets raised from the outlet's Web POS, forwarded by the exe
+// (controller/sync/supportController.js). Only when staff raise one.
+router.post("/support/ticket", deviceAuth, createTicket);
+router.get("/support/tickets", deviceAuth, listTickets);
 
 module.exports = router;

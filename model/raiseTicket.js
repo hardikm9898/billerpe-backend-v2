@@ -15,8 +15,9 @@ const RaiseTicket = sequelize.define("hms_raise_ticket_mst", {
     },
 
     issue: {
-        type: DataTypes.STRING,
-        defaultValue: ""
+        // TEXT since 20260921120000-ticket-issue-text (Web POS tickets carry
+        // a full description, not just a one-line issue).
+        type: DataTypes.TEXT,
     },
     star: {
         type: DataTypes.ENUM("0", "1", "2", "3", "4", "5"),
