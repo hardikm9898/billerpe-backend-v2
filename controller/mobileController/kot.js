@@ -2410,9 +2410,16 @@ const sentEbillMobile = async (req, res) => {
             return res.json(mobileError("Order Not Found", STATUSCODE.BAD_REQUEST))
         }
 
-        const order = await Order.findByPk(orderId)
+        // Scoped to the caller's outlet (was an unscoped findByPk).
+        const order = await Order.findOne({ where: { id: orderId, hotel_id: req.user } })
         if (!order) {
             return res.json(mobileError("Order Not Found", STATUSCODE.BAD_REQUEST))
+        }
+        // Never send an e-bill with no items (owner report, 2026-09-22) -
+        // same guard as the web /sentEbill route.
+        const itemCount = await OrderDetails.count({ where: { orderId: order.id, hotel_id: req.user } })
+        if (!itemCount) {
+            return res.json(mobileError("This bill has no items. Add items before sending the e-bill.", STATUSCODE.BAD_REQUEST))
         }
 
 

@@ -2578,119 +2578,76 @@ const getHearderAndFooterData = async (hotel, grandAmount) => {
     })
     return { headerText, footerText }
 }
+// The e-bill's header/footer lines, from the hotel's Invoice Format
+// (hms_invoice_formate_mst: headerLine1..10 / footerLine1..10, each a
+// keyword or literal text, with fontH1..10 / fontF1..10 sizes).
+//
+// Rendered with EXACTLY the rules the printed bill uses
+// (billerpe-pos-pro-v2 store.tsx#renderInvoiceHeaderFooter), so the e-bill
+// and the paper bill look the same (owner requirement, 2026-09-22). Before:
+// every line's font size was ignored, labels differed ("GSTIN = " vs
+// "GSTIN: "), and a keyword whose value was empty printed "GSTIN = null".
+const INVOICE_LINE_SLOTS = 10
+function escapeBillHtml(v) {
+    return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
 const getHearderAndFooterDataBillView = async (hotel, grandAmount) => {
-    const headerContent = []
-    const footerContent = []
+    const format = hotel.hms_invoice_formate_mst?.dataValues || hotel.hms_invoice_formate_mst || null
+    const address = [hotel.address1, hotel.address2].filter((v) => v && String(v).trim()).join(", ")
+    const logo = hotel.hotel_logo && hotel.hotel_logo !== "placeholder.png" ? hotel.hotel_logo : ""
 
-    const upiId = hotel?.upiId || ""; // Replace with your UPI ID
-    const merchantName = encodeURIComponent(hotel?.hotel_name || ""); // Using first line of header as merchant name
-    const transactionNote = encodeURIComponent(`Bill Payment - ${0}`);
-    const amount = grandAmount;
+    let upiQr = ""
+    if (hotel.upiId) {
+        const upiUrl = `upi://pay?pa=${hotel.upiId}&pn=${encodeURIComponent(hotel.hotel_name || "")}&tn=${encodeURIComponent(`Bill Payment - ${grandAmount}`)}&am=${grandAmount}&cu=INR`
+        upiQr = await qrcode.toDataURL(upiUrl, { width: 150, margin: 2 })
+    }
 
-    // Construct UPI URL
-    const upiUrl = `upi://pay?pa=${upiId}&pn=${merchantName}&tn=${transactionNote}&am=${amount}&cu=INR`;
-
-    // Generate QR code as base64
-    const qrCodeImage = await qrcode.toDataURL(upiUrl, {
-        width: 150,
-        margin: 2
-    });
-
-
-    if (hotel.hms_invoice_formate_mst?.dataValues) {
-
-        for (let key of Object.keys(hotel.hms_invoice_formate_mst?.dataValues)) {
-            if (key.includes("header")) {
-                headerContent.push({ value: hotel.hms_invoice_formate_mst?.dataValues[key] })
-            } if (key.includes("footer")) {
-                footerContent.push({ value: hotel.hms_invoice_formate_mst?.dataValues[key] })
+    const render = (slot) => {
+        if (!format) return []
+        const linePrefix = slot === "header" ? "headerLine" : "footerLine"
+        const fontPrefix = slot === "header" ? "fontH" : "fontF"
+        const out = []
+        for (let i = 1; i <= INVOICE_LINE_SLOTS; i++) {
+            const value = format[`${linePrefix}${i}`] == null ? "" : String(format[`${linePrefix}${i}`]).trim()
+            if (!value) continue
+            const size = parseInt(String(format[`${fontPrefix}${i}`] || ""), 10)
+            const style = size ? ` style="font-size:${size}px"` : ""
+            const p = (html, cls) => out.push(`<p${cls ? ` class="${cls}"` : ""}${style}>${html}</p>`)
+            switch (value) {
+                case "hotel_logo":
+                    if (logo) out.push(`<img style="display:block;margin:0 auto;max-height:80px;max-width:150px" src="${process.env.SUPER_URL}/images/${logo}"/>`)
+                    break
+                case "upiId":
+                    if (upiQr) out.push(`<img style="display:block;margin:0 auto" width="120" height="120" src="${upiQr}"/>`)
+                    break
+                case "hotel_name":
+                    p(escapeBillHtml(hotel.hotel_name), "hotel-name")
+                    break
+                case "address":
+                    if (address) p(escapeBillHtml(address), "hotel-address")
+                    break
+                case "gst_no":
+                    if (hotel.gst_no) p(`GSTIN: ${escapeBillHtml(hotel.gst_no)}`)
+                    break
+                case "fssai_no":
+                    if (hotel.fssai_no) p(`FSSAI: ${escapeBillHtml(hotel.fssai_no)}`)
+                    break
+                case "restaurant_number":
+                    if (hotel.contact1) p(`Mo. ${escapeBillHtml(hotel.contact1)}`)
+                    break
+                case "marketing_text": {
+                    const text = slot === "header" ? hotel.invoiceFormateHeaderText : hotel.invoiceFormateBottomText
+                    if (text && String(text).trim()) p(escapeBillHtml(text))
+                    break
+                }
+                default:
+                    p(escapeBillHtml(value))
             }
-
         }
+        return out
     }
-    const headerText = headerContent.map((el) => {
 
-        let data = ""
-        if (el.value == "marketing_text") {
-            data = hotel.invoiceFormateHeaderText
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name ' ? 'hotel-name ' : ''}" > ${data} </p>` : ''
-        }
-        else if (el.value === 'hotel_logo') {
-            // const paths = path.join(__dirname, "../", "public", "images")
-            return el.value ? `<img style="height:auto; max-width:150px " src="${process.env.SUPER_URL}/images/${hotel[el.value]}"/> ` : ''
-        }
-        else if (el.value === 'upiId') {
-
-            // const paths = path.join(__dirname, "../", "public", "images")
-            return el.value ? `<img style="height:auto; max-width:150px" src="${qrCodeImage}"/> ` : ''
-        }
-
-        else if (el.value === 'gst_no') {
-
-            data = `GSTIN = ${hotel[el.value]}`
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name' : ''}"> ${data} </p>` : ''
-        } else if (el.value === 'fssai_no') {
-            data = `FSSAI_No :${hotel[el.value]} `
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name' : ''}"> ${data} </p>` : ''
-        }
-        else if (el.value === 'restaurant_number') {
-            data = `Mo.${hotel.contact1}`
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}"  class="${el.value === 'hotel_name' ? 'hotel-name' : ''}"> ${data} </p>` : ''
-        } else if (el.value === "address") {
-            data = hotel.address1 + " " + hotel.address2
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name' : ''}"> ${data} </p>` : ''
-        } else if (hotel[el.value]) {
-            data = hotel[el.value]
-            return el.value ? `<p  style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name' : ''}"> ${data} </p>` : ''
-        }
-        else {
-            data = el.value
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name' : ''}"> ${data} </p>` : ''
-        }
-
-    }
-    )
-
-    const footerText = footerContent.map((el) => {
-        let data = ""
-        if (el.value == "marketing_text") {
-            data = hotel.invoiceFormateBottomText
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name invoice-grand-total' : 'invoice-grand-total'}"> ${data} </p>` : ''
-        }
-        else if (el.value === 'hotel_logo') {
-            // const paths = path.join(__dirname, "../", "public", "images")
-            return el.value ? `<img class="invoice-grand-total" style="height:auto" src="${process.env.SUPER_URL}/images/${hotel[el.value]}"/> ` : ''
-        }
-
-        else if (el.value === 'upiId') {
-
-            // const paths = path.join(__dirname, "../", "public", "images")
-            return el.value ? `<img style="height:auto; max-width:150px" src="${qrCodeImage}"/> ` : ''
-        }
-        else if (el.value === 'gst_no') {
-
-            data = `GSTIN = ${hotel[el.value]}`
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name invoice-grand-total' : 'invoice-grand-total'}"> ${data} </p>` : ''
-        } else if (el.value === 'fssai_no') {
-            data = `FSSAI_No :${hotel[el.value]} `
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name invoice-grand-total' : 'invoice-grand-total'}"> ${data} </p>` : ''
-        }
-        else if (el.value === 'restaurant_number') {
-            data = `Mo.${hotel.contact1}`
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name invoice-grand-total' : 'invoice-grand-total'}"> ${data} </p>` : ''
-        } else if (el.value === "address") {
-            data = hotel.address1 + " " + hotel.address2
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name invoice-grand-total' : 'invoice-grand-total'}"> ${data} </p>` : ''
-        } else if (hotel[el.value]) {
-            data = hotel[el.value]
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name invoice-grand-total' : 'invoice-grand-total'}"> ${data} </p>` : ''
-        }
-        else {
-            data = el.value
-            return el.value ? `<p style="font-size:${el.fontSize ? el.fontSize + " !important" : ""}" class="${el.value === 'hotel_name' ? 'hotel-name invoice-grand-total' : 'invoice-grand-total'}"> ${data} </p>` : ''
-        }
-    })
-    return { headerText, footerText }
+    return { headerText: render("header"), footerText: render("footer") }
 }
 const rePrintAdminBillData = async (req, res) => {
     try {
@@ -3671,6 +3628,30 @@ const decodeHashId = (id) => {
 
 }
 
+// A line's add-ons as a flat list for the e-bill: [{ addon_name, price, qty }].
+// Stored department-grouped ([{ department_name, hms_addon_msts: [...] }])
+// or flat, and often as JSON text rather than an array - the exe's SQLite
+// JSON column pushes it up as a string - so both are unwrapped here.
+function billViewAddons(value) {
+    let v = value
+    for (let i = 0; i < 3 && typeof v === "string"; i++) {
+        try { v = JSON.parse(v || "[]") } catch { return [] }
+    }
+    if (!Array.isArray(v)) return []
+    const out = []
+    for (const entry of v) {
+        if (!entry || typeof entry !== "object") continue
+        if (Array.isArray(entry.hms_addon_msts)) {
+            for (const a of entry.hms_addon_msts) {
+                out.push({ addon_name: a?.addon_name || a?.name || "", price: Number(a?.price) || 0, qty: Number(a?.qty) || 1 })
+            }
+        } else if ("price" in entry) {
+            out.push({ addon_name: entry.addon_name || entry.name || "", price: Number(entry.price) || 0, qty: Number(entry.qty) || 1 })
+        }
+    }
+    return out
+}
+
 const getBillViewData = async (req, res) => {
 
     try {
@@ -3685,7 +3666,15 @@ const getBillViewData = async (req, res) => {
         if (!order) {
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }
-        const orderDetail = await OrderDetails.findAll({ where: { orderId: order?.dataValues.id, hotel_id: id }, include: { model: Variants, as: "variantData" }, attributes: ['qty', 'price', 'id', 'MenuId', "addons"] })
+        // Lines in the order they were taken: KOT round, then entry order.
+        // There was no ORDER BY, so the customer's e-bill listed items in
+        // whatever order the database happened to return them.
+        const orderDetail = await OrderDetails.findAll({
+            where: { orderId: order?.dataValues.id, hotel_id: id },
+            include: { model: Variants, as: "variantData" },
+            attributes: ['qty', 'price', 'id', 'MenuId', "addons", "variant_name", "kotNumber"],
+            order: [["kotNumber", "ASC"], ["id", "ASC"]],
+        })
         if (!orderDetail.length) {
             return res.json(error(MESSAGE.ORDERDETAILS_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }
@@ -3696,14 +3685,23 @@ const getBillViewData = async (req, res) => {
             const documents = {}
 
             const menuData = await Menu.findOne({ where: { id: cur.MenuId, hotel_id: id }, attributes: ['item_name', 'sub_categories'] })
-            console.log(cur.addons, "Addons:::")
-            documents.item_name = menuData.item_name
-            documents.variantData = cur.variantData
-            documents.addons = cur.addons
+            const addons = billViewAddons(cur.addons)
+            documents.item_name = menuData?.item_name ?? "Item"
+            // variant_name is what the exe sends (billerpe-local-exe
+            // services/sync/pushOrders.js); the Variants join needs a
+            // variant_id the push never carries, so it was always empty.
+            const variantName = cur.variant_name || cur.variantData?.variants_name || ""
+            documents.variantData = variantName ? { variants_name: variantName } : null
+            documents.addons = addons
             documents.price = cur.price
             documents.qty = cur.qty
-            documents.sub_categories = menuData.sub_categories
-            documents.totalAmount = cur.price * cur.qty
+            documents.sub_categories = menuData?.sub_categories
+            // Same line rule as the exe's bill engine (helpers/billEngine.js):
+            // price x qty + each add-on's price x its own qty. Was price x qty
+            // alone, so add-ons were charged in the total but missing from
+            // the line they belong to.
+            const addonAmount = addons.reduce((sum, a) => sum + (Number(a.price) || 0) * (Number(a.qty) || 1), 0)
+            documents.totalAmount = Math.round(((Number(cur.price) || 0) * (Number(cur.qty) || 0) + addonAmount) * 100) / 100
             items.push(documents)
             totalQty += cur.qty
         }
@@ -3807,6 +3805,12 @@ const sentEbill = async (req, res) => {
         if (!order) {
             return res.json(error("Order Not Found", STATUSCODE.BAD_REQUEST))
         }
+        // A bill with no items would reach the customer as a blank Rs 0
+        // e-bill (owner report, 2026-09-22).
+        const itemCount = await OrderDetails.count({ where: { orderId: order.id, hotel_id: req.user } })
+        if (!itemCount) {
+            return res.json(error("This bill has no items. Add items before sending the e-bill.", STATUSCODE.BAD_REQUEST))
+        }
         const bill_no = generateHashId(order.id)
         const hotelId = generateHashId(req.user)
         // No `#/` prefix - that was the old CRA app's HashRouter
@@ -3868,13 +3872,21 @@ const sentEbill = async (req, res) => {
             return res.json(error("Could not send the e-bill on WhatsApp. Please try again.", STATUSCODE.BAD_REQUEST))
         }
 
-        if (!checkUserHaveCredit) {
-            await EBillCredit.create({ hotel_id: req.user, credit: 49 })
-            await EBillCreditDebit.create({ hotel_id: req.user, credit: true, amount: 50, mobile })
-            await EBillCreditDebit.create({ orderId: order.id, hotel_id: req.user, debit: true, amount: 1, mobile })
-        } else {
-            await EBillCredit.update({ credit: checkUserHaveCredit.credit - 1 }, { where: { hotel_id: req.user } })
-            await EBillCreditDebit.create({ orderId: order.id, hotel_id: req.user, debit: true, amount: 1, mobile })
+        // The message is already on the customer's WhatsApp at this point.
+        // A failure while recording the credit used must not be reported as
+        // "not sent" - staff saw "Something went wrong" for an e-bill the
+        // customer had actually received, and sent it again.
+        try {
+            if (!checkUserHaveCredit) {
+                await EBillCredit.create({ hotel_id: req.user, credit: 49 })
+                await EBillCreditDebit.create({ hotel_id: req.user, credit: true, amount: 50, mobile })
+                await EBillCreditDebit.create({ orderId: order.id, hotel_id: req.user, debit: true, amount: 1, mobile })
+            } else {
+                await EBillCredit.update({ credit: checkUserHaveCredit.credit - 1 }, { where: { hotel_id: req.user } })
+                await EBillCreditDebit.create({ orderId: order.id, hotel_id: req.user, debit: true, amount: 1, mobile })
+            }
+        } catch (creditErr) {
+            console.error(creditErr, `sentEbill: e-bill sent for order ${order.id} but the credit could not be recorded`)
         }
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Invoice send to User Whatsapp" }, STATUSCODE.SUCCESS))
@@ -3893,8 +3905,10 @@ const getEbillCredit = async (req, res) => {
         } else {
             return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { credit: credit?.credit || 0 }, STATUSCODE.SUCCESS))
         }
-    } catch (error) {
-        log("Error From Get EbillCredit", error)
+    } catch (err) {
+        // Was `catch (error)`, which hid the error() reply helper - so this
+        // handler threw a TypeError instead of answering.
+        log("Error From Get EbillCredit", err)
         return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
     }
 }
@@ -3909,8 +3923,9 @@ const creditDebitEbillData = async (req, res) => {
             return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { credit: credit?.credit || 0 }, STATUSCODE.SUCCESS))
         }
 
-    } catch (error) {
-        log("Error WHile Getting CreditDebitDta::", error)
+    } catch (err) {
+        // Same shadowed-`error` fix as getEbillCredit above.
+        log("Error WHile Getting CreditDebitDta::", err)
         return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
     }
 }
@@ -3929,8 +3944,9 @@ const updateOrderToserver = async (req, res) => {
         await addToFroRemoveTimeLine(orderId, action, req.userId, id)
         await webChange(req.user, io, orderId)
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Success" }, STATUSCODE.SUCCESS))
-    } catch (error) {
-        console.log("Error While Using :::", error)
+    } catch (err) {
+        // Same shadowed-`error` fix as getEbillCredit.
+        console.log("Error While Using :::", err)
         return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
 
     }

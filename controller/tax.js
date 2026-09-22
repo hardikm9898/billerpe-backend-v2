@@ -26,18 +26,23 @@ const editTaxType = async (req, res) => {
     try {
 
         const { tax_name, tax_value, amount, order_type, active, id, menu_ids, table_categ_ids } = req.body
-        const checkName = await TaxType.findByPk(id)
+        // Scoped to the caller's own restaurant: this used findByPk(id) and
+        // updated by id alone, so any restaurant could edit another's tax.
+        const checkName = await TaxType.findOne({ where: { id, hotel_id: req.user } })
         if (!checkName) return res.json(error("Tax Type Not Found", STATUSCODE.BAD_REQUEST))
+        // "Sent" means present, not truthy: `if (active)` made it impossible
+        // to switch a tax OFF, and an empty list could never clear a limit
+        // back to "all" (owner report, 2026-09-22 - same fix as the exe's
+        // controller/tax.js).
         const updateObject = {}
-        if (tax_name) updateObject.tax_name = tax_name
-        if (tax_value) updateObject.tax_value = tax_value
-        if (amount) updateObject.amount = amount
-        if (order_type) updateObject.order_type = order_type
-        if (order_type.length) updateObject.order_type = order_type
-        if (active) updateObject.active = active
-        if (menu_ids.length) updateObject.menu_ids = menu_ids
-        if (table_categ_ids.length) updateObject.table_categ_ids = table_categ_ids
-        await TaxType.update(updateObject, { where: { id } })
+        if (tax_name !== undefined) updateObject.tax_name = tax_name
+        if (tax_value !== undefined) updateObject.tax_value = tax_value
+        if (amount !== undefined) updateObject.amount = amount
+        if (Array.isArray(order_type)) updateObject.order_type = order_type
+        if (active !== undefined) updateObject.active = active === true || active === "true" || active === 1
+        if (Array.isArray(menu_ids)) updateObject.menu_ids = menu_ids
+        if (Array.isArray(table_categ_ids)) updateObject.table_categ_ids = table_categ_ids
+        await TaxType.update(updateObject, { where: { id, hotel_id: req.user } })
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { mesasage: "Tax Type Updated Sucssesfully" }, STATUSCODE.SUCCESS))
 

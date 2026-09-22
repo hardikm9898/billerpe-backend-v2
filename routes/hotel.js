@@ -74,7 +74,10 @@ router.post("/setDisplay", adminAuth, setDisplay)
 router.post("/setMenuShow", adminAuth, setMenuShow)
 router.get("/jspm", jsPrintManager)
 router.get("/singleHotel", adminAuth, getSingleHotel)
-router.post("/updateInvoiceFormate", adminAuth, updateInvoiceFormate)
+// deviceOrAdminAuth: the outlet's exe forwards the bill details it saves
+// (GST/FSSAI/UPI/marketing text) so the e-bill, rendered here, matches the
+// printed bill (billerpe-local-exe controller/hotel.js#updateInvoiceFormate).
+router.post("/updateInvoiceFormate", deviceOrAdminAuth, updateInvoiceFormate)
 router.post("/updateRestaurantSetting", adminAuth, updateRestaurantSetting)
 router.post("/invoiceSetting", deviceOrAdminAuth, invoiceSetting)
 router.get("/getFontSizeArray", adminAuth, getFontSizeArray)
