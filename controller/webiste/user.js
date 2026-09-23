@@ -5,6 +5,7 @@ const { error, success } = require("../../responce/res")
 const axios = require("axios")
 
 const WHATSAPP_URL = `https://graph.facebook.com/v22.0/${process.env.WHATSAPPPHONEID}/messages`
+
 const WHATSAPP_HEADERS = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${process.env.WHATSAPPTOKEN}`

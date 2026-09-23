@@ -79,6 +79,24 @@ const Order = sequelize.define("hms_order_mst", {
         type: DataTypes.DOUBLE,
         defaultValue: 0
     },
+    // Amounts paid with the outlet's own payment modes (Paytm, ...), synced
+    // from the exe (billerpe-local-exe/helpers/otherPayments.js): JSON
+    // [{ name, amount }] and their total.
+    other_payments: {
+        type: DataTypes.TEXT,
+        allowNull: true
+    },
+    // When the bill was generated on the exe - what the bill itself shows
+    // (billerpe-local-exe/helpers/orderTotals.js#stampBilledAt). createdAt is
+    // when the table was opened, a different day for an overnight table.
+    billed_at: {
+        type: DataTypes.DATE,
+        allowNull: true
+    },
+    other_amount: {
+        type: DataTypes.DOUBLE,
+        defaultValue: 0
+    },
     // Waiter service tip - entered at settlement, deliberately NOT part of
     // the cash+upi+card+due=amount reconciliation (settleBills' own
     // validation): a tip is an extra amount on top of the bill, often

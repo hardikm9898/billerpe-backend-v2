@@ -104,6 +104,26 @@ const updateUser = async (req, res) => {
 
         let user = await HotelUser.findOne({ where: { hotel_id: req.user, id } })
         if (!user) return res.json(error(MESSAGE.USER_NOT_FOUND, STATUSCODE.BAD_REQUEST))
+
+        // The outlet owner's own login is locked (owner rule, 2026-09-22):
+        // never turned off, never moved to another role, permissions never
+        // changed - and only the owner may change their own details. Same
+        // rule as the exe (billerpe-local-exe/helpers/ownerAccount.js); it has
+        // to hold here too, because staff accounts sync down from here.
+        const onlyDigits = (v) => String(v ?? "").replace(/\D/g, "")
+        const ownerAccount = onlyDigits(hotel.owner_number) && onlyDigits(user.number) === onlyDigits(hotel.owner_number)
+        if (ownerAccount) {
+            if (active === false || active === "false" || active === 0) {
+                return res.json(error("This is the owner's account - it can't be turned off, renamed to another role or have its permissions changed.", STATUSCODE.BAD_REQUEST))
+            }
+            if (Array.isArray(access_name) && access_name.length) {
+                return res.json(error("This is the owner's account - its permissions can't be changed.", STATUSCODE.BAD_REQUEST))
+            }
+            if (String(req.userId) !== String(user.id)) {
+                return res.json(error("Only the owner can change their own name, mobile number or password.", STATUSCODE.FORBIDDEN))
+            }
+        }
+
         let roleData = await Role.findOne({ where: { role_name: role, hotel_id: req.user } })
         if (!roleData) {
             roleData = await Role.create({ role_name: role, hotel_id: req.user })
@@ -111,6 +131,14 @@ const updateUser = async (req, res) => {
 
 
         const updateFields = { name, role_cd: roleData.role_cd, email, number, active }
+        if (ownerAccount) {
+            updateFields.role_cd = user.role_cd
+            updateFields.active = true
+            const newNumber = onlyDigits(number)
+            if (newNumber && newNumber !== onlyDigits(user.number)) {
+                await Hotel.update({ owner_number: newNumber }, { where: { id: req.user } })
+            }
+        }
         if (password) {
             updateFields.password = await bcrypt.hash(password, saltRounds)
         }

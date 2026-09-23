@@ -2170,7 +2170,7 @@ const adminBillData = async (req, res) => {
             return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }
 
-        const order = await Order.findOne({ where: { hotel_id: req.user, id: orderId }, include: { model: OrderTax, include: { model: TaxType } }, attributes: ['id', 'totalAmount', 'UserId', 'TableId', 'bill_no', 'gst', 'grandAmount', 'totalDiscount', 'order_type', 'createdAt', "token", "service_charge", "isOffline"] })
+        const order = await Order.findOne({ where: { hotel_id: req.user, id: orderId }, include: { model: OrderTax, include: { model: TaxType } }, attributes: ['id', 'totalAmount', 'UserId', 'TableId', 'bill_no', 'gst', 'grandAmount', 'totalDiscount', 'order_type', 'createdAt', 'billed_at', "token", "service_charge", "isOffline"] })
         if (!order) {
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE
                 .NOT_FOUND))
@@ -2227,7 +2227,7 @@ const adminBillData = async (req, res) => {
             totalQty += cur.qty
         }
 
-        const timeAndDate = moment(order.createdAt).format("DD/MM/YYYY hh:mm a");
+        const timeAndDate = moment(order.billed_at || order.createdAt).format("DD/MM/YYYY hh:mm a");
 
         const subtotal = order.totalAmount
 
@@ -2718,7 +2718,7 @@ const rePrintAdminBillData = async (req, res) => {
                 totalQty += cur.qty
             }
             const currentDate = new Date();
-            const timeAndDate = moment(order.createdAt).format("DD/MM/YYYY hh:mm a")
+            const timeAndDate = moment(order.billed_at || order.createdAt).format("DD/MM/YYYY hh:mm a")
             const subtotal = order.totalAmount
             let user
             let table
@@ -2792,7 +2792,7 @@ const rePrintAdminBillData = async (req, res) => {
 
         const currentDate = new Date();
 
-        const timeAndDate = moment(order.createdAt).format("DD/MM/YYYY hh:mm a")
+        const timeAndDate = moment(order.billed_at || order.createdAt).format("DD/MM/YYYY hh:mm a")
 
         const subtotal = order.totalAmount
 
@@ -3662,7 +3662,7 @@ const getBillViewData = async (req, res) => {
         if (!hotel) {
             return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }
-        const order = await Order.findOne({ where: { hotel_id: id, id: orderId }, attributes: ['id', 'totalAmount', 'UserId', 'TableId', 'bill_no', 'gst', 'grandAmount', 'totalDiscount', 'order_type', 'createdAt', "token", "service_charge", "delivery_charge", "packaging_charge", "tip", "isOffline"] })
+        const order = await Order.findOne({ where: { hotel_id: id, id: orderId }, attributes: ['id', 'totalAmount', 'UserId', 'TableId', 'bill_no', 'gst', 'grandAmount', 'totalDiscount', 'order_type', 'createdAt', 'billed_at', "token", "service_charge", "delivery_charge", "packaging_charge", "tip", "isOffline"] })
         if (!order) {
             return res.json(error(MESSAGE.ORDER_NOT_FOUND, STATUSCODE.NOT_FOUND))
         }

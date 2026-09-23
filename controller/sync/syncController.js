@@ -410,7 +410,7 @@ const ORDER_FIELDS = [
     "totalAmount", "gst", "grandAmount", "roundOff", "totalDiscount",
     "discount_reason", "discount_type", "discount_value",
     "service_charge", "delivery_charge", "packaging_charge",
-    "cash", "upi", "card", "due", "tip", "billPrintCount",
+    "cash", "upi", "card", "due", "other_payments", "other_amount", "tip", "billPrintCount", "billed_at",
     "total_sgst", "total_cgst", "deleted", "token", "business_date", "createdAt",
 ];
 
