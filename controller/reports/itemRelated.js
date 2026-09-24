@@ -83,9 +83,9 @@ const { getShiftedDateRange } = require("../../utils/dateUtils");
 //             gst_type: item.gst_type,
 //             variant_name: item.variant_name,
 //             catagoriesName: item.catagoriesName,
-//             totalQty: parseInt(item.totalQty),
-//             price: parseInt(item.price),
-//             totalSale: parseInt(item.totalSale),
+//             totalQty: to2(item.totalQty),
+//             price: to2(item.price),
+//             totalSale: to2(item.totalSale),
 //             dynamicTax :getAllDynamictaxes.filter(el=>{
 //             if(hotel.invoiceFormateIncGst && item.gst_type==="S"){
 //                 if()
@@ -130,6 +130,10 @@ const { getShiftedDateRange } = require("../../utils/dateUtils");
 // };
 
 
+
+// Quantities may be fractional (1.5 plates, 0.25 kg - owner rule, 2026-09-24)
+// and prices carry paise: parseInt reported 1.5 x 99.50 as 1 and 148.
+const to2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
 const itemTextReports = async (req, res) => {
     try {
         const hotel = await Hotel.findOne({
@@ -444,9 +448,9 @@ const HighestSellingReports = async (req, res) => {
             variant_name: item?.variant_name || "",
 
             catagoriesName: item.catagoriesName,
-            totalQty: parseInt(item.totalQty),
+            totalQty: to2(item.totalQty),
 
-            totalSale: parseInt(item.totalSale),
+            totalSale: to2(item.totalSale),
 
         }));
 
@@ -523,9 +527,9 @@ const getDayWiseItemReport = async (startDate, endDate, hotel_id) => {
                 const formattedItem = {
                     item_name: item.item_name,
                     variant_name: item.variant_name,
-                    qty: parseInt(item.qty),
-                    price: parseInt(item.price),
-                    totalSale: parseInt(item.totalSale)
+                    qty: to2(item.qty),
+                    price: to2(item.price),
+                    totalSale: to2(item.totalSale)
                 };
                 console.log(defaultData)
                 defaultData.items.push(formattedItem);
@@ -538,9 +542,9 @@ const getDayWiseItemReport = async (startDate, endDate, hotel_id) => {
             const formattedItem = {
                 item_name: item.item_name,
                 variant_name: item.variant_name,
-                qty: parseInt(item.qty),
-                price: parseInt(item.price),
-                totalSale: parseInt(item.totalSale)
+                qty: to2(item.qty),
+                price: to2(item.price),
+                totalSale: to2(item.totalSale)
             };
             console.log(acc[i])
             acc[i].items.push(formattedItem);
@@ -612,9 +616,9 @@ const getMonthWiseItemReport = async (startDate, endDate, hotel_id) => {
                 const formattedItem = {
                     item_name: item.item_name,
                     variant_name: item.variant_name,
-                    qty: parseInt(item.qty),
-                    price: parseInt(item.price),
-                    totalSale: parseInt(item.totalSale)
+                    qty: to2(item.qty),
+                    price: to2(item.price),
+                    totalSale: to2(item.totalSale)
                 };
                 console.log(defaultData)
                 defaultData.items.push(formattedItem);
@@ -627,9 +631,9 @@ const getMonthWiseItemReport = async (startDate, endDate, hotel_id) => {
             const formattedItem = {
                 item_name: item.item_name,
                 variant_name: item.variant_name,
-                qty: parseInt(item.qty),
-                price: parseInt(item.price),
-                totalSale: parseInt(item.totalSale)
+                qty: to2(item.qty),
+                price: to2(item.price),
+                totalSale: to2(item.totalSale)
             };
             console.log(acc[i])
             acc[i].items.push(formattedItem);
@@ -701,9 +705,9 @@ const getYearWiseItemReport = async (startDate, endDate, hotel_id) => {
                 const formattedItem = {
                     item_name: item.item_name,
                     variant_name: item.variant_name,
-                    qty: parseInt(item.qty),
-                    price: parseInt(item.price),
-                    totalSale: parseInt(item.totalSale)
+                    qty: to2(item.qty),
+                    price: to2(item.price),
+                    totalSale: to2(item.totalSale)
                 };
                 console.log(defaultData)
                 defaultData.items.push(formattedItem);
@@ -716,9 +720,9 @@ const getYearWiseItemReport = async (startDate, endDate, hotel_id) => {
             const formattedItem = {
                 item_name: item.item_name,
                 variant_name: item.variant_name,
-                qty: parseInt(item.qty),
-                price: parseInt(item.price),
-                totalSale: parseInt(item.totalSale)
+                qty: to2(item.qty),
+                price: to2(item.price),
+                totalSale: to2(item.totalSale)
             };
             console.log(acc[i])
             acc[i].items.push(formattedItem);

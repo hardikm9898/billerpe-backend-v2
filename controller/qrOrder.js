@@ -342,13 +342,28 @@ const getPendingQrOrders = async (req, res) => {
 // is the one source of truth for that decision, this just relays it.
 const updateQrOrderStatus = async (req, res) => {
     try {
-        const { status } = req.body
+        const { status, items } = req.body
         if (!["accepted", "rejected", "expired"].includes(status)) {
             return res.json(error("Invalid status", STATUSCODE.BAD_REQUEST))
         }
         const qrOrder = await QrOrder.findOne({ where: { id: req.params.id, hotel_id: req.user } })
         if (!qrOrder) return res.json(error("Order not found", STATUSCODE.NOT_FOUND))
-        await qrOrder.update({ status })
+        // Staff accept/reject each item (owner rule, 2026-09-24): the exe
+        // sends every item with its decision and, when rejected, the reason
+        // - that is what the customer's page shows per dish. Only the
+        // decision fields are taken; the dish itself stays as submitted.
+        const current = typeof qrOrder.items === "string" ? JSON.parse(qrOrder.items) : qrOrder.items
+        const update = { status }
+        if (Array.isArray(items) && Array.isArray(current) && items.length === current.length) {
+            update.items = current.map((item, i) => {
+                const d = items[i] || {}
+                const decision = d.decision === "rejected" ? "rejected" : d.decision === "accepted" ? "accepted" : undefined
+                if (!decision) return item
+                const reason = decision === "rejected" ? String(d.rejectReason ?? "").slice(0, 120) : undefined
+                return { ...item, decision, ...(reason ? { rejectReason: reason } : {}) }
+            })
+        }
+        await qrOrder.update(update)
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Updated" }, STATUSCODE.SUCCESS))
     } catch (err) {
         console.log(err, "updateQrOrderStatus error")

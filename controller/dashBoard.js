@@ -179,7 +179,7 @@ const itemWiseDashBoardData = async (req, res) => {
             item_name: el?.dataValues?.hms_menu_mst?.dataValues?.item_name || el.hms_menu_mst?.item_name,
             catagoriesName: el?.dataValues?.hms_menu_mst?.dataValues?.hms_menu_categ?.dataValues?.menu_categ_nm || el.hms_menu_mst?.hms_menu_categ?.menu_categ_nm,
             totalQty: el.dataValues?.totalQty || el.totalQty,
-            totalSale: parseInt(el.dataValues?.totalQty || el.totalQty) * parseInt(el.dataValues?.hms_menu_mst?.dataValues?.price || el.hms_menu_mst?.price)
+            totalSale: Math.round((Number(el.dataValues?.totalQty || el.totalQty) || 0) * (Number(el.dataValues?.hms_menu_mst?.dataValues?.price || el.hms_menu_mst?.price) || 0) * 100) / 100
         }));
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, data, STATUSCODE.SUCCESS));
