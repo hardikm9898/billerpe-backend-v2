@@ -57,4 +57,7 @@ Router.post("/crm/meta/webhook", receiveMetaLeadEvent)
 
 Router.use("/crm", crmRoutes)
 
+// BillerPe POS App (Plan 2) - bearer-token API for CLOUD_APP outlets.
+Router.use("/app/v1", require("../appv1/routes"))
+
 module.exports = Router

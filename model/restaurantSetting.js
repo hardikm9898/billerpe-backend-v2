@@ -65,7 +65,9 @@ const RestaurantSetting = sequelize.define("hms_res_setting", {
         type: DataTypes.DATEONLY,
         allowNull: true,
         defaultValue: null
-    }
+    },
+    supplier_payment_expense: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    qr_ordering: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true }
 }, {
     indexes: [
         {

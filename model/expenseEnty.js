@@ -40,6 +40,8 @@ const ExpenseEntry = sequelize.define("hms_expense_entry_mst", {
         defaultValue: () => moment().format("YYYY-MM-DD"),
         index: true
     },
+    // POS App (Plan 2): supplier payment <-> its auto expense (exe column).
+    purchase_payment_id: { type: DataTypes.INTEGER, allowNull: true },
     deleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false

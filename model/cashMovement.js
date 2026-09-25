@@ -29,7 +29,11 @@ const CashMovement = sequelize.define("hms_cashMovement_mst", {
     at: {
         type: DataTypes.DATE,
         defaultValue: () => new Date()
-    }
+    },
+    // POS App (Plan 2), same columns as the exe: the expense / supplier
+    // payment this drawer movement paid.
+    expense_entry_id: { type: DataTypes.INTEGER, allowNull: true },
+    purchase_payment_id: { type: DataTypes.INTEGER, allowNull: true },
 })
 
 module.exports = CashMovement

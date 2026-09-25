@@ -260,7 +260,14 @@ const Hotel = sequelize.define("hotel_registration", {
     show_menu_with_image: {
         type: DataTypes.BOOLEAN,
         defaultValue: false
-    }
+    },
+    // Which product this outlet bought (one per customer): LOCAL_SUITE =
+    // Web POS + Captain App through the exe; CLOUD_APP = BillerPe POS App
+    // (billing on the cloud, /app/v1). Changed only by superadmin.
+    product_plan: { type: DataTypes.STRING(20), allowNull: false, defaultValue: "LOCAL_SUITE" },
+    // POS App devices allowed for this outlet - superadmin only.
+    app_device_limit: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 3 },
+    token_reset_at: { type: DataTypes.DATE, allowNull: true }
 })
 // Hotel.hasOne(ServiceCharge, {
 //     foreignKey: 'hotel_id', onDelete: 'CASCADE', // If a hotel is deleted, delete all associated table categories

@@ -25,6 +25,8 @@ const PurchaseOrderPayment = sequelize.define("hms_purchase_payment", {
     payment_mode: { type: DataTypes.STRING(60) },
     payment_ref_no: { type: DataTypes.STRING, defaultValue: "" },
     paymentDate: { type: DataTypes.DATE, defaultValue: new Date() },
+    // POS App (Plan 2): supplier payment <-> its auto expense (exe column).
+    expense_entry_id: { type: DataTypes.INTEGER, allowNull: true },
     deleted_status: { type: DataTypes.BOOLEAN, defaultValue: false }
 
 })

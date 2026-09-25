@@ -78,6 +78,8 @@ const Menu = sequelize.define("hms_menu_mst", {
         type: DataTypes.BOOLEAN,
         defaultValue: false
     },
+    // POS App quick "86": on the menu but not orderable right now.
+    out_of_stock: { type: DataTypes.BOOLEAN, defaultValue: false },
     is_deleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false

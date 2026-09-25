@@ -923,7 +923,20 @@ SyncIndexDB.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUp
 // MODULE EXPORTS
 // ============================================================================
 
+const { AppDevice, AppClientKey, AppQueueEntry, AppAlert } = require("./appV1");
+const StockMovement = require("./stockMovement");
+StockMovement.belongsTo(RawMaterial, { foreignKey: "raw_material_id" });
+StockMovement.belongsTo(HotelUser, { foreignKey: "user_id" });
+
 module.exports = {
+    RaiseTicket,
+    StockMovement,
+    // BillerPe POS App (Plan 2)
+    AppDevice,
+    AppClientKey,
+    AppQueueEntry,
+    AppAlert,
+
     RestaurantSetting,
     UserSession,
     // Database

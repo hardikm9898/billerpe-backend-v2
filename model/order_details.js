@@ -56,7 +56,17 @@ const OrderDetails = sequelize.define("hms_orderDetails", {
     ready: {
         type: DataTypes.BOOLEAN,
         defaultValue: false
-    }
+    },
+    // Plan 2 (/app/v1), same meaning as billerpe-local-exe's columns:
+    // firedBy = HotelUser who sent the line (only they or a Manager/Owner
+    // may remove it); kds_hidden = printed with the bill, never on a KDS;
+    // route_* = a custom item's chosen kitchen / device printer; kds_state =
+    // KDS progress (sent | preparing | ready; served = status "delivered").
+    firedBy: { type: DataTypes.INTEGER, allowNull: true },
+    kds_hidden: { type: DataTypes.BOOLEAN, defaultValue: false },
+    route_kitchen_id: { type: DataTypes.INTEGER, allowNull: true },
+    route_printer_ref: { type: DataTypes.STRING(64), allowNull: true },
+    kds_state: { type: DataTypes.STRING(16), allowNull: true }
 }, {
     indexes: [
         { fields: ["orderId"] },                    // all order-detail fetches by order

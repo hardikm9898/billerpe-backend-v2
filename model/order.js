@@ -186,7 +186,17 @@ const Order = sequelize.define("hms_order_mst", {
         type: DataTypes.DATEONLY,
         defaultValue: () => moment().format("YYYY-MM-DD"),
         index: true
-    }
+    },
+    // Bill engine inputs/outputs persisted with the order (same columns as
+    // billerpe-local-exe). Written by Plan 2 (/app/v1); the exe's push
+    // carries them too.
+    roundOff: { type: DataTypes.DOUBLE, defaultValue: 0 },
+    packaging_override: { type: DataTypes.DOUBLE, allowNull: true },
+    service_override: { type: DataTypes.DOUBLE, allowNull: true },
+    // POS App (Plan 2): guests, the order's menu, pickup ready time.
+    guests: { type: DataTypes.INTEGER, defaultValue: 0 },
+    menu_catalog_id: { type: DataTypes.INTEGER, allowNull: true },
+    token_ready_at: { type: DataTypes.DATE, allowNull: true }
 },
     {
         indexes: [

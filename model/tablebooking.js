@@ -54,6 +54,11 @@ const TableBooking = sequelize.define("hms_tableBooking_mst", {
         type: DataTypes.BOOLEAN,
         defaultValue: true
     },
+    // POS App (Plan 2): seated / noshow marked by staff; null = by the clock.
+    app_status: {
+        type: DataTypes.STRING(16),
+        allowNull: true
+    },
     booking_id: {
         type: DataTypes.INTEGER,
         allowNull: false

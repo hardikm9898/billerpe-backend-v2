@@ -39,6 +39,11 @@ const RawMaterialConsumption = sequelize.define("hms_raw_material_consumption", 
     },
 
     // 🔥 ORDER CONTEXT
+    // POS App (Plan 2): a recipe can use a semi-finished item (exe column).
+    semi_finished_item_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true
+    },
     order_id: {
         type: DataTypes.INTEGER,
         allowNull: true
