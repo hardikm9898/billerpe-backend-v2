@@ -19,8 +19,10 @@ const PurchaseOrderPayment = sequelize.define("hms_purchase_payment", {
     local_id: { type: DataTypes.INTEGER, allowNull: true },
     date: { type: DataTypes.DATE, defaultValue: new Date() },
 
-    amount: { type: DataTypes.BIGINT, defaultValue: 0 },
-    payment_mode: { type: DataTypes.ENUM, values: ["card", "cheque", "online", "other", "cash"] },
+    amount: { type: DataTypes.DOUBLE, defaultValue: 0 },
+    // The outlet's own mode name (Cash, UPI, Card, custom) or Cheque / Bank
+    // transfer - was an enum with no UPI. Migration 20260925120000.
+    payment_mode: { type: DataTypes.STRING(60) },
     payment_ref_no: { type: DataTypes.STRING, defaultValue: "" },
     paymentDate: { type: DataTypes.DATE, defaultValue: new Date() },
     deleted_status: { type: DataTypes.BOOLEAN, defaultValue: false }

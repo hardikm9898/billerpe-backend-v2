@@ -20,18 +20,19 @@ const PurchaseOrder = sequelize.define("hms_purchase_order", {
         defaultValue: () => require('moment')().format("YYYY-MM-DD")
     },
     Po_no: { type: DataTypes.INTEGER, defaultValue: 0 },
-    sub_total: { type: DataTypes.INTEGER, defaultValue: 0 },
-    discount_value: { type: DataTypes.INTEGER, defaultValue: 0 },
+    // DOUBLE (were INTEGER / BIGINT - no paise). Migration 20260925120000.
+    sub_total: { type: DataTypes.DOUBLE, defaultValue: 0 },
+    discount_value: { type: DataTypes.DOUBLE, defaultValue: 0 },
     invoice_date: { type: DataTypes.DATE, defaultValue: new Date() },
     invoice_number: { type: DataTypes.STRING, defaultValue: "" },
     payment_type: { type: DataTypes.ENUM, values: ["paid", "partial", "unpaid"] },
     discount_type: { type: DataTypes.ENUM, values: ["fix", "pr"] },
     GSTNo: { type: DataTypes.STRING, defaultValue: "" },
     update_inventory: { type: DataTypes.BOOLEAN, defaultValue: true },
-    grandAmount: { type: DataTypes.BIGINT, defaultValue: 0 },
+    grandAmount: { type: DataTypes.DOUBLE, defaultValue: 0 },
 
-    discount: { type: DataTypes.INTEGER, defaultValue: 0 },
-    delivery_charge: { type: DataTypes.INTEGER, defaultValue: 0 },
+    discount: { type: DataTypes.DOUBLE, defaultValue: 0 },
+    delivery_charge: { type: DataTypes.DOUBLE, defaultValue: 0 },
     deleted_status: { type: DataTypes.BOOLEAN, defaultValue: false }
 })
 
