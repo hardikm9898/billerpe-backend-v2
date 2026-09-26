@@ -21,12 +21,22 @@
 //
 // Every addColumn is guarded so the migration is safe to re-run on a
 // database where sync({alter}) already added a column.
+// Table names are case sensitive on Linux MySQL (hms_orderDetails) but
+// lower-cased on Windows: every existing table is looked up by its real
+// spelling in this database.
+async function realNames(queryInterface) {
+  const tables = (await queryInterface.showAllTables()).map((t) => String(t.tableName ?? t));
+  return (name) => tables.find((t) => t.toLowerCase() === name.toLowerCase()) ?? name;
+}
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
+    const real = await realNames(queryInterface);
     const add = async (table, column, spec) => {
-      const cols = await queryInterface.describeTable(table);
-      if (!cols[column]) await queryInterface.addColumn(table, column, spec);
+      const name = real(table);
+      const cols = await queryInterface.describeTable(name);
+      if (!cols[column]) await queryInterface.addColumn(name, column, spec);
     };
 
     await add('hotel_registrations', 'product_plan', { type: Sequelize.STRING(20), allowNull: false, defaultValue: 'LOCAL_SUITE' });
@@ -43,11 +53,11 @@ module.exports = {
     await add('hms_order_msts', 'menu_catalog_id', { type: Sequelize.INTEGER, allowNull: true });
     await add('hms_order_msts', 'token_ready_at', { type: Sequelize.DATE, allowNull: true });
 
-    await add('hms_orderdetails', 'firedBy', { type: Sequelize.INTEGER, allowNull: true });
-    await add('hms_orderdetails', 'kds_hidden', { type: Sequelize.BOOLEAN, allowNull: false, defaultValue: false });
-    await add('hms_orderdetails', 'route_kitchen_id', { type: Sequelize.INTEGER, allowNull: true });
-    await add('hms_orderdetails', 'route_printer_ref', { type: Sequelize.STRING(64), allowNull: true });
-    await add('hms_orderdetails', 'kds_state', { type: Sequelize.STRING(16), allowNull: true });
+    await add('hms_orderDetails', 'firedBy', { type: Sequelize.INTEGER, allowNull: true });
+    await add('hms_orderDetails', 'kds_hidden', { type: Sequelize.BOOLEAN, allowNull: false, defaultValue: false });
+    await add('hms_orderDetails', 'route_kitchen_id', { type: Sequelize.INTEGER, allowNull: true });
+    await add('hms_orderDetails', 'route_printer_ref', { type: Sequelize.STRING(64), allowNull: true });
+    await add('hms_orderDetails', 'kds_state', { type: Sequelize.STRING(16), allowNull: true });
 
     // Quick "86" toggle: item is on the menu but cannot be ordered today.
     await add('hms_menu_msts', 'out_of_stock', { type: Sequelize.BOOLEAN, allowNull: false, defaultValue: false });
@@ -61,14 +71,14 @@ module.exports = {
     await add('hms_raw_material_consumptions', 'semi_finished_item_id', { type: Sequelize.INTEGER, allowNull: true });
     // Reservation marked by staff (seated / noshow); empty = decided by the
     // clock and the table's orders, like the exe's reservation timer.
-    await add('hms_tablebooking_msts', 'app_status', { type: Sequelize.STRING(16), allowNull: true });
+    await add('hms_tableBooking_msts', 'app_status', { type: Sequelize.STRING(16), allowNull: true });
     // Supplier payment <-> its auto expense (exe stock overhaul, 2026-09-25).
     await add('hms_expense_entry_msts', 'purchase_payment_id', { type: Sequelize.INTEGER, allowNull: true });
     await add('hms_purchase_payments', 'expense_entry_id', { type: Sequelize.INTEGER, allowNull: true });
     // Which expense / supplier payment a drawer movement paid (exe columns):
     // editing or deleting it corrects the drawer while its session is open.
-    await add('hms_cashmovement_msts', 'expense_entry_id', { type: Sequelize.INTEGER, allowNull: true });
-    await add('hms_cashmovement_msts', 'purchase_payment_id', { type: Sequelize.INTEGER, allowNull: true });
+    await add('hms_cashMovement_msts', 'expense_entry_id', { type: Sequelize.INTEGER, allowNull: true });
+    await add('hms_cashMovement_msts', 'purchase_payment_id', { type: Sequelize.INTEGER, allowNull: true });
 
     const tables = await queryInterface.showAllTables();
     const has = (t) => tables.map((x) => String(x.tableName ?? x).toLowerCase()).includes(t);
@@ -166,20 +176,21 @@ module.exports = {
   },
 
   async down(queryInterface) {
+    const real = await realNames(queryInterface);
     for (const t of ['hms_stock_movements', 'app_alerts', 'app_queue_entries', 'app_client_keys', 'app_devices']) {
-      await queryInterface.dropTable(t).catch(() => {});
+      await queryInterface.dropTable(real(t)).catch(() => {});
     }
-    const drop = (table, column) => queryInterface.removeColumn(table, column).catch(() => {});
+    const drop = (table, column) => queryInterface.removeColumn(real(table), column).catch(() => {});
     await drop('hms_raw_material_consumptions', 'semi_finished_item_id');
     await drop('hms_expense_entry_msts', 'purchase_payment_id');
-    await drop('hms_tablebooking_msts', 'app_status');
+    await drop('hms_tableBooking_msts', 'app_status');
     await drop('hms_purchase_payments', 'expense_entry_id');
-    await drop('hms_cashmovement_msts', 'expense_entry_id');
-    await drop('hms_cashmovement_msts', 'purchase_payment_id');
+    await drop('hms_cashMovement_msts', 'expense_entry_id');
+    await drop('hms_cashMovement_msts', 'purchase_payment_id');
     await drop('hms_res_settings', 'qr_ordering');
     await drop('hms_menu_msts', 'out_of_stock');
     await drop('hms_res_settings', 'supplier_payment_expense');
-    for (const c of ['kds_state', 'route_printer_ref', 'route_kitchen_id', 'kds_hidden', 'firedBy']) await drop('hms_orderdetails', c);
+    for (const c of ['kds_state', 'route_printer_ref', 'route_kitchen_id', 'kds_hidden', 'firedBy']) await drop('hms_orderDetails', c);
     for (const c of ['token_ready_at', 'menu_catalog_id', 'guests', 'service_override', 'packaging_override', 'roundOff']) await drop('hms_order_msts', c);
     for (const c of ['token_reset_at', 'app_device_limit', 'product_plan']) await drop('hotel_registrations', c);
   },
