@@ -6,6 +6,7 @@ const { error, success } = require("../responce/res")
 
 const Hotel = require("../model/hotel")
 const RestaurantSetting = require("../model/restaurantSetting")
+const SalesSummaryLog = require("../model/salesSummaryLog")
 const moment = require("moment-timezone")
 
 const axios = require("axios")
@@ -307,10 +308,11 @@ const getSalesSummaryMetrics = async (hotel_id, startD, endD) => {
     }
 }
 
+/** Returns { ok, messageId } or { ok: false, error }. */
 const sendRestaurantSalesSummary = async (hotel, timeZone, businessStartTime, businessDate) => {
     if (!hotel.owner_number) {
         console.warn(`Skipping sales summary for hotel ${hotel.id}: no owner_number`)
-        return false
+        return { ok: false, error: "no owner number" }
     }
     const [hour, minute, second] = businessStartTime.split(':').map(Number)
 
@@ -361,41 +363,74 @@ const sendRestaurantSalesSummary = async (hotel, timeZone, businessStartTime, bu
     try {
         const response = await axios.post(url, body, { headers })
         console.log(response.data, `Sales summary sent for hotel ${hotel.id} (business date ${businessDate})`)
-        return true
+        return { ok: true, messageId: response.data?.messages?.[0]?.id }
     } catch (err) {
         console.error(err?.response?.data || err.message, `Error sending sales summary for hotel ${hotel.id}`)
-        return false
+        const apiError = err?.response?.data?.error?.message
+        return { ok: false, error: apiError || err.message || "send failed" }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SALES-SUMMARY QUEUE
-// Rate-limited, in-process worker. The per-minute cron only *enqueues* hotels
-// whose business day has closed and that haven't been sent yet; a single guarded
-// worker drains the queue slowly (so we never blast hundreds of WhatsApp messages
-// in one minute and trip Meta rate limits). last_summary_sent_date is updated only
-// on a successful send, so failures naturally retry on the next cron tick.
+// The owner gets one WhatsApp summary per business day, when the day closes
+// (business_day_start_time the next morning). The per-minute cron only
+// *enqueues* hotels whose day has closed; a single guarded worker drains the
+// queue slowly (so we never blast hundreds of messages in one minute and trip
+// Meta rate limits). Each send first claims the hotel's row for that day in
+// hms_sales_summary_logs (unique hotel + day), so nothing is sent twice - not
+// after a restart, not from a second server process, and not to an outlet with
+// no hms_res_settings row (2026-09-26: those got it every minute). A failed send
+// is tried again later, a few times, only while the day is still fresh.
 // ─────────────────────────────────────────────────────────────────────────────
-const SUMMARY_SEND_DELAY_MS = 1500   // gap between WhatsApp sends (rate-limit safety)
-const SUMMARY_MAX_ATTEMPTS = 2       // retries within a single drain before giving up for this run
+const SUMMARY_SEND_DELAY_MS = 1500             // gap between WhatsApp sends (rate-limit safety)
+const SUMMARY_RETRY_AFTER_MS = 30 * 60 * 1000  // a failed send waits this long
+const SUMMARY_MAX_ATTEMPTS = 4                 // per outlet per business day
+const SUMMARY_SEND_WINDOW_HOURS = 6            // after closing; later is too late to be "the end of the day"
 
 let summaryWorkerRunning = false
 const summaryQueue = []
 const summaryQueued = new Set()      // de-dupe key: `${hotelId}-${businessDate}`
 
-// Sent by this server, by the same key. last_summary_sent_date lives on the
-// hotel's hms_res_setting row; a hotel without that row was never marked and
-// got the summary again every minute (2026-09-26: 475 messages to 25 numbers).
-const summarySent = new Set()
-// A send that failed waits before the next try instead of retrying every minute.
-const SUMMARY_RETRY_AFTER_MS = 30 * 60 * 1000
-const summaryRetryAt = new Map()     // key -> time the next try is allowed
-
 const enqueueSummaryJob = (job) => {
     const key = `${job.hotel.id}-${job.businessDate}`
     if (summaryQueued.has(key)) return   // already queued / in-flight
     summaryQueued.add(key)
-    summaryQueue.push({ ...job, key, attempts: 0 })
+    summaryQueue.push({ ...job, key })
+}
+
+// A row that may still be sent: none yet, or a failed one whose retry time has come.
+const summaryDue = (log, now = Date.now()) =>
+    !log || (log.status === "failed" && log.attempts < SUMMARY_MAX_ATTEMPTS && (!log.next_try_at || new Date(log.next_try_at).getTime() <= now))
+
+// Claim the outlet's day before sending. Returns the claimed row, or null when
+// it was sent, is being sent, or is not due (another process may have it).
+const claimSummary = async (hotelId, businessDate) => {
+    let log = await SalesSummaryLog.findOne({ where: { hotel_id: hotelId, business_date: businessDate }, order: [["id", "ASC"]] })
+    if (!log) {
+        try {
+            log = await SalesSummaryLog.create({ hotel_id: hotelId, business_date: businessDate, status: "sending", attempts: 1 })
+        } catch (err) {
+            if (err?.name === "SequelizeUniqueConstraintError") return null   // another process claimed it first
+            throw err
+        }
+        // Without the unique index (migration not run yet) two processes can both
+        // insert: the lowest id wins, the other backs out.
+        const first = await SalesSummaryLog.findOne({ where: { hotel_id: hotelId, business_date: businessDate }, order: [["id", "ASC"]] })
+        if (first && first.id !== log.id) {
+            await log.destroy()
+            return null
+        }
+        return log
+    }
+    if (!summaryDue(log)) return null
+    const [claimed] = await SalesSummaryLog.update(
+        { status: "sending", attempts: log.attempts + 1 },
+        { where: { id: log.id, status: "failed", attempts: log.attempts } },
+    )
+    if (claimed !== 1) return null
+    // Reload: the result is saved as a change from "sending", not from the stale "failed".
+    return log.reload()
 }
 
 const processSummaryQueue = async () => {
@@ -405,30 +440,32 @@ const processSummaryQueue = async () => {
         while (summaryQueue.length) {
             const job = summaryQueue.shift()
             const { hotel, timeZone, businessStartTime, businessDate, setting } = job
-            let ok = false
             try {
-                ok = await sendRestaurantSalesSummary(hotel, timeZone, businessStartTime, businessDate)
-            } catch (err) {
-                console.error(`Unexpected error sending summary for hotel ${hotel.id}`, err?.message)
-            }
-
-            if (ok) {
-                summarySent.add(job.key)
-                summaryRetryAt.delete(job.key)
-                if (setting) await setting.update({ last_summary_sent_date: businessDate })
-                summaryQueued.delete(job.key)
-            } else {
-                job.attempts += 1
-                if (job.attempts < SUMMARY_MAX_ATTEMPTS) {
-                    summaryQueue.push(job)            // retry later in this same drain
-                } else {
-                    summaryQueued.delete(job.key)     // give up for this run; tried again after SUMMARY_RETRY_AFTER_MS
-                    summaryRetryAt.set(job.key, Date.now() + SUMMARY_RETRY_AFTER_MS)
-                    console.error(`Summary send failed this run for hotel ${hotel.id} (business date ${businessDate})`)
+                const log = await claimSummary(hotel.id, businessDate)
+                if (!log) continue
+                let result = { ok: false, error: "not sent" }
+                try {
+                    result = await sendRestaurantSalesSummary(hotel, timeZone, businessStartTime, businessDate)
+                } catch (err) {
+                    result = { ok: false, error: err?.message || "send failed" }
                 }
+                if (result.ok) {
+                    await log.update({ status: "sent", message_id: result.messageId || null, error: null, next_try_at: null })
+                    if (setting) await setting.update({ last_summary_sent_date: businessDate })
+                } else {
+                    await log.update({
+                        status: "failed",
+                        error: String(result.error || "send failed").slice(0, 250),
+                        next_try_at: new Date(Date.now() + SUMMARY_RETRY_AFTER_MS),
+                    })
+                    console.error(`Summary send failed for hotel ${hotel.id} (business date ${businessDate}), attempt ${log.attempts}/${SUMMARY_MAX_ATTEMPTS}`)
+                }
+                await sleep(SUMMARY_SEND_DELAY_MS)
+            } catch (err) {
+                console.error(`Unexpected error in summary job for hotel ${hotel.id}`, err?.message)
+            } finally {
+                summaryQueued.delete(job.key)
             }
-
-            await sleep(SUMMARY_SEND_DELAY_MS)
         }
     } finally {
         summaryWorkerRunning = false
@@ -446,7 +483,10 @@ const checkAndSendClosingSummaries = async () => {
             include: { model: RestaurantSetting }
         })
 
+        const due = []
         for (const hotel of hotels) {
+            // No way to deliver.
+            if (!hotel.owner_number) continue
             const setting = hotel.hms_res_setting
             const timeZone = setting?.timeZone || "Asia/Kolkata"
             const businessStartTime = setting?.business_day_start_time || "00:01:00"
@@ -457,29 +497,35 @@ const checkAndSendClosingSummaries = async () => {
 
             // Business day for this hotel hasn't closed yet today → nothing to send.
             if (nowTz.isBefore(businessStartToday)) continue
+            // Closed too long ago (server was down, or just deployed): skip rather than send late.
+            if (nowTz.diff(businessStartToday, 'hours', true) > SUMMARY_SEND_WINDOW_HOURS) continue
 
             // The business day that just closed started one day before this morning's start time.
             const businessDate = businessStartToday.clone().subtract(1, 'day').format('YYYY-MM-DD')
 
-            // Already sent for this business date (guard against duplicates).
+            // Sent before the summary log existed.
             if (setting?.last_summary_sent_date === businessDate) continue
 
-            // No way to deliver — skip without marking, stays visible as null for follow-up.
-            if (!hotel.owner_number) continue
-
-            // Already sent by this server (the only record for a hotel with no
-            // settings row), or a failed send still waiting for its retry time.
-            const key = `${hotel.id}-${businessDate}`
-            if (summarySent.has(key)) continue
-            if ((summaryRetryAt.get(key) || 0) > Date.now()) continue
-
-            enqueueSummaryJob({ hotel, timeZone, businessStartTime, businessDate, setting })
+            due.push({ hotel, timeZone, businessStartTime, businessDate, setting })
         }
+        if (!due.length) return
 
-        // Keys from past business days are no longer needed.
-        const oldest = moment().subtract(3, 'days').format('YYYY-MM-DD')
-        for (const k of summarySent) if (k.slice(k.indexOf('-') + 1) < oldest) summarySent.delete(k)
-        for (const k of summaryRetryAt.keys()) if (k.slice(k.indexOf('-') + 1) < oldest) summaryRetryAt.delete(k)
+        // Already sent / being sent / waiting to retry: one query for all of them.
+        const logs = await SalesSummaryLog.findAll({
+            where: {
+                hotel_id: due.map((d) => d.hotel.id),
+                business_date: [...new Set(due.map((d) => d.businessDate))],
+            },
+            order: [["id", "ASC"]],
+        })
+        const logOf = new Map()
+        for (const l of logs) {
+            const k = `${l.hotel_id}-${l.business_date}`
+            if (!logOf.has(k)) logOf.set(k, l)
+        }
+        for (const d of due) {
+            if (summaryDue(logOf.get(`${d.hotel.id}-${d.businessDate}`))) enqueueSummaryJob(d)
+        }
 
         // Fire-and-forget; the worker is self-guarded against overlap.
         processSummaryQueue()

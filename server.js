@@ -222,6 +222,8 @@ server.listen(PORT, (err) => {
                 // POS App (Plan 2): schema owned by migration 20260926100000.
                 "app_devices", "app_client_keys", "app_queue_entries", "app_alerts", "hms_stock_movements",
                 "hms_res_settings",
+                // Owner's daily sales summary: schema owned by migration 20260926160000.
+                "hms_sales_summary_logs",
                 'hms_menu_msts',
                 'hms_recipes_msts',
                 "hms_semi_finished_items_msts",
