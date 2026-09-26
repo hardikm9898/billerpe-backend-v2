@@ -171,7 +171,7 @@ async function createOrder(c, cart, status) {
         guests: cart.type === "dinin" ? Math.max(1, Number(cart.guests) || 1) : 0,
         menu_catalog_id: Number(cart.menuId) || null,
     }, { transaction: c.t });
-    await attachCustomer(c, order, cart.customerName, cart.customerMobile);
+    await attachCustomer(c, order, cart.customerName, cart.customerMobile, { address: cart.customerAddress, gstin: cart.customerGstin });
     await event(c, order.id, `Order created · bill ${bill_no}${token ? ` · token ${token}` : ""}`, "place_order");
     // A reservation holding this table is fulfilled by this order (the
     // reservation clock sees an order started during the hold - exe rule).
@@ -195,7 +195,7 @@ async function applyCartMeta(c, order, cart) {
     if (cart.type === "dinin" && Number(cart.guests) > 0) patch.guests = Math.floor(Number(cart.guests));
     if (Number(cart.menuId)) patch.menu_catalog_id = Number(cart.menuId);
     if (Object.keys(patch).length) await order.update(patch, { transaction: c.t });
-    if (cart.customerName || cart.customerMobile) await attachCustomer(c, order, cart.customerName, cart.customerMobile);
+    if (cart.customerName || cart.customerMobile) await attachCustomer(c, order, cart.customerName, cart.customerMobile, { address: cart.customerAddress, gstin: cart.customerGstin });
 }
 
 async function kitchensFor(c, order, lines) {
@@ -256,30 +256,56 @@ async function holdOrder(c, cart) {
 
 /* ------------------------------ customer ------------------------------ */
 
-/** Real customer on the order's own User row; reuse an existing customer with that mobile. */
-async function attachCustomer(c, order, name, mobile) {
+// Web POS customer-details-dialog.tsx GSTIN_PATTERN.
+const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+/**
+ * The order's customer (Web POS dialog: mobile, name, address, GSTIN).
+ * A known mobile re-uses that customer row; otherwise the order's own
+ * placeholder row becomes the customer. A row that already belongs to a
+ * real customer is never renamed to someone else: a new row is made.
+ * All fields empty = the order has no customer again.
+ */
+async function attachCustomer(c, order, name, mobile, extra = {}) {
     const number = String(mobile || "").trim();
     const nm = String(name || "").trim();
-    if (!number && !nm) return;
+    const address = String(extra.address || "").trim();
+    const gstin = String(extra.gstin || "").trim().toUpperCase();
     if (number && !/^\d{10}$/.test(number)) fail("Enter a 10-digit mobile number");
+    if (gstin && !GSTIN.test(gstin)) fail("Enter a valid 15-character GSTIN");
+    const pointTo = async (userId) => {
+        if (order.UserId === userId) return;
+        await order.update({ UserId: userId }, { transaction: c.t });
+        await OrderDetails.update({ UserId: userId }, { where: { orderId: order.id, hotel_id: c.hotelId }, transaction: c.t });
+    };
+    if (!number && !nm) {
+        if (!extra.clear) return;
+        const blank = await User.create({ hotel_id: c.hotelId, name: "", number: "", address: "", gstin: "", isPlaceholder: true }, { transaction: c.t });
+        return pointTo(blank.id);
+    }
+    const details = { ...(nm ? { name: nm } : {}), ...(address ? { address } : {}), ...(gstin ? { gstin } : {}) };
     if (number) {
-        const existing = await User.findOne({ where: { hotel_id: c.hotelId, number, isPlaceholder: false }, transaction: c.t });
+        const existing = await User.findOne({ where: { hotel_id: c.hotelId, number, isPlaceholder: false }, order: [["id", "DESC"]], transaction: c.t });
         if (existing) {
-            if (nm && nm !== existing.name) await existing.update({ name: nm }, { transaction: c.t });
-            if (order.UserId !== existing.id) {
-                await order.update({ UserId: existing.id }, { transaction: c.t });
-                await OrderDetails.update({ UserId: existing.id }, { where: { orderId: order.id, hotel_id: c.hotelId }, transaction: c.t });
-            }
-            return;
+            if (Object.keys(details).length) await existing.update(details, { transaction: c.t });
+            return pointTo(existing.id);
         }
     }
-    await User.update({ ...(nm ? { name: nm } : {}), ...(number ? { number } : {}), isPlaceholder: false }, { where: { id: order.UserId, hotel_id: c.hotelId }, transaction: c.t });
+    const own = await User.findOne({ where: { id: order.UserId, hotel_id: c.hotelId }, transaction: c.t });
+    if (own && own.isPlaceholder) {
+        await own.update({ ...details, ...(number ? { number } : {}), isPlaceholder: false }, { transaction: c.t });
+        return;
+    }
+    const fresh = await User.create({ hotel_id: c.hotelId, name: nm, number, address, gstin, isPlaceholder: false }, { transaction: c.t });
+    return pointTo(fresh.id);
 }
 
-async function setCustomer(c, orderId, name, mobile) {
+/** setCustomer(orderId, { name, mobile, address, gstin }) - all empty removes the customer. */
+async function setCustomer(c, orderId, cust = {}) {
     need(c, "biller", "edit");
     const o = await findOrder(c, orderId);
-    await attachCustomer(c, o, name, mobile);
+    await attachCustomer(c, o, cust.name, cust.mobile, { address: cust.address, gstin: cust.gstin, clear: true });
+    await event(c, o.id, cust.mobile ? `Customer ${cust.name || ""} ${cust.mobile}`.replace(/\s+/g, " ") : "Customer removed", "update_order");
 }
 
 async function setGuests(c, orderId, guests) {
@@ -337,14 +363,7 @@ async function printBill(c, orderId, { byRequest = false } = {}) {
     if (!isOpen(o)) fail("This order is closed");
     const lines = await OrderDetails.findAll({ where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t });
     if (!lines.length) fail("Nothing to bill yet");
-    const held = lines.filter((l) => l.status === "in-progress");
-    let kotNo = null;
-    if (held.length) {
-        const hotel = await Hotel.findOne({ where: { id: c.hotelId }, attributes: ["bill_with_kot"], transaction: c.t });
-        if (!tokenApplies(hotel?.bill_with_kot, o.order_type)) fail("Some items are held, not sent. Send them to the kitchen before the bill.");
-        kotNo = ((await OrderDetails.max("kotNumber", { where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t })) || 0) + 1;
-        await OrderDetails.update({ status: "kot", kotNumber: kotNo, kds_hidden: true, firedBy: c.userId, kds_state: "sent" }, { where: { id: held.map((l) => l.id) }, transaction: c.t });
-    }
+    const { held, kotNo, printKot } = await billUnsent(c, o, lines);
     await o.update({ status: "success", ...(o.billed_at ? {} : { billed_at: new Date() }) }, { transaction: c.t });
     await setTableStatus(c, o.TableId, "P");
     await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t });
@@ -352,8 +371,43 @@ async function printBill(c, orderId, { byRequest = false } = {}) {
     const hotel = await Hotel.findOne({ where: { id: c.hotelId }, attributes: ["bill_with_token"], transaction: c.t });
     const order = await loadOrderView(c.hotelId, o.id, c.t);
     const heldIds = new Set(held.map((l) => String(l.id)));
-    const kotLines = kotNo ? (order.kots.find((k) => k.kotNo === kotNo)?.lines ?? []).filter((l) => heldIds.has(l.id)) : [];
+    const kotLines = kotNo && printKot ? (order.kots.find((k) => k.kotNo === kotNo)?.lines ?? []).filter((l) => heldIds.has(l.id)) : [];
     return { order, kotLines, printToken: o.token > 0 && tokenApplies(hotel?.bill_with_token, o.order_type) };
+}
+
+/**
+ * Items never sent to the kitchen, on a bill (Web POS "Save" / "Bill Print"
+ * / Settle without a KOT - exe AdminOrder): they become the order's next
+ * round, shown on no KDS. With Bill-with-KOT on for this order type they
+ * are also printed as a KOT with the bill (on the invoice printer).
+ */
+async function billUnsent(c, o, lines) {
+    const all = lines || (await OrderDetails.findAll({ where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t }));
+    const held = all.filter((l) => l.status === "in-progress");
+    if (!held.length) return { held, kotNo: null, printKot: false };
+    const kotNo = ((await OrderDetails.max("kotNumber", { where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t })) || 0) + 1;
+    await OrderDetails.update({ status: "kot", kotNumber: kotNo, kds_hidden: true, firedBy: c.userId, kds_state: "sent" }, { where: { id: held.map((l) => l.id) }, transaction: c.t });
+    const hotel = await Hotel.findOne({ where: { id: c.hotelId }, attributes: ["bill_with_kot"], transaction: c.t });
+    await event(c, o.id, `${held.length} item(s) billed without a KOT`, "update_order");
+    return { held, kotNo, printKot: tokenApplies(hotel?.bill_with_kot, o.order_type) };
+}
+
+/**
+ * Bill straight from a phone's cart without a KOT first (Web POS): the cart
+ * replaces the order's held items, and the bill is generated (request = a
+ * captain with no bill printer: the counter is told).
+ */
+async function billCart(c, cart, opts = {}) {
+    need(c, "biller", "create");
+    await checkLines(c, cart.lines);
+    const order = (await orderForCart(c, cart)) || (await createOrder(c, cart, "hold"));
+    await applyCartMeta(c, order, cart);
+    await OrderDetails.destroy({ where: { orderId: order.id, hotel_id: c.hotelId, status: "in-progress" }, transaction: c.t });
+    await buildRows(c, order, cart.lines, { held: true });
+    // Pickup: stock goes out when the order is taken (owner rule).
+    const r = opts.request ? await requestBill(c, order.id) : await printBill(c, order.id);
+    if (order.order_type === "pickup") await deductStockForOrder(order.id, c.hotelId, c.t, c.userId);
+    return r;
 }
 
 /** A captain whose phone has no bill printer: the bill is generated for the counter. */
@@ -556,8 +610,8 @@ async function settle(c, orderId, input) {
     const o = await findOrder(c, orderId);
     if (o.payment === "success") fail(`Bill ${o.bill_no} is already settled`);
     if (!isOpen(o)) fail("This order is closed");
-    const held = await OrderDetails.count({ where: { orderId: o.id, hotel_id: c.hotelId, status: "in-progress" }, transaction: c.t });
-    if (held) fail("Some items are held, not sent. Send or remove them first.");
+    // Held items are settled like a bill without a KOT (Web POS).
+    await billUnsent(c, o);
     const totals = await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t });
     const grand = totals.grandAmount;
     if (!(grand > 0) && !(await OrderDetails.count({ where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t }))) fail("Nothing to bill yet");
@@ -620,19 +674,167 @@ async function counterOrder(c, input) {
     return sendKot(c, { ...input, guests: 1 });
 }
 
-/** Edit a settled bill: back to "bill generated"; payments and dues reversed. */
-async function reopenSettled(c, orderId) {
+/**
+ * Payment rows -> the order's columns (cash/upi/card/due + the outlet's own
+ * modes by name in other_payments). `had` = modes the bill already used:
+ * those stay allowed even if switched off since.
+ */
+async function paymentColumns(c, rows, had = new Set()) {
+    const modes = await paymentModes(c);
+    const byId = (id) => modes.find((m) => `pm-${m.id}` === id || String(m.name).toLowerCase() === id);
+    const cols = { cash: 0, upi: 0, card: 0, due: 0 };
+    const other = [];
+    for (const p of rows) {
+        const mode = byId(p.modeId);
+        if (mode && isOff(mode.active) && !had.has(p.modeId)) fail(`${mode.name} is switched off`);
+        if (BUILT_IN.includes(p.modeId)) cols[p.modeId] = r2(cols[p.modeId] + p.amount);
+        else {
+            if (!mode) fail("That payment mode is not set up for this outlet");
+            const same = other.find((x) => x.name === mode.name);
+            if (same) same.amount = r2(same.amount + p.amount);
+            else other.push({ name: mode.name, amount: p.amount });
+        }
+    }
+    return { cols, other };
+}
+
+/**
+ * Edit a settled bill (owner bug list 2026-09-26 item 11; Web POS / exe
+ * controller/editSettledOrder.js). Lines change in place - the table is not
+ * occupied again - and the payment is given again for the whole new bill.
+ * Cash differences go in/out of the open drawer (signed, unlike the exe's
+ * positive Withdraw); a lower bill's difference is handed back now or kept
+ * as a refund owed (due < 0, as on the exe). Stock is re-deducted.
+ */
+async function editSettled(c, orderId, edit = {}) {
     needSpecial(c, "orders.reopenSettled");
     const o = await findOrder(c, orderId);
-    if (o.deleted || o.payment !== "success") fail("Only a settled bill can be reopened");
-    await recordCash(c, Number(o.cash || 0), `Bill ${o.bill_no} reopened`, "Withdraw");
-    // Stock goes back; settling again deducts the bill as it then stands.
-    await reverseAllOrderStock(o.id, c.hotelId, c.t, "Settled bill reopened");
-    await o.update({ cash: 0, upi: 0, card: 0, due: 0, other_payments: null, other_amount: 0, payment: "pending", status: "success" }, { transaction: c.t });
-    await OrderDetails.update({ payment_status: "pending" }, { where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t });
-    await setTableStatus(c, o.TableId, "P");
-    await event(c, o.id, "Settled bill reopened for editing", "update_order");
-    await audit(c, "Billing", `Reopened settled bill ${o.bill_no}`);
+    if (o.deleted || o.payment !== "success") fail("Only a settled bill can be edited");
+    const rows = await OrderDetails.findAll({ where: { orderId: o.id, hotel_id: c.hotelId }, include: [{ model: Menu, attributes: ["item_name"] }], transaction: c.t });
+    const byId = new Map(rows.map((r) => [String(r.id), r]));
+    const qtyOf = new Map();
+    for (const e of edit.lines || []) {
+        const row = byId.get(String(e.lineId));
+        if (!row) fail("An item on this bill was not found");
+        const name = row.hms_menu_mst?.item_name || "Item";
+        const q = Number(e.qty);
+        if (!(q >= 0)) fail(`${name}: quantity cannot be negative`);
+        if (Math.round(q * 100) !== q * 100) fail(`${name}: quantity can have at most 2 decimals`);
+        qtyOf.set(String(e.lineId), r2(q));
+    }
+    const added = Array.isArray(edit.added) ? edit.added : [];
+    if (added.length) await checkLines(c, added);
+    const qtyNow = (r) => (qtyOf.has(String(r.id)) ? qtyOf.get(String(r.id)) : Number(r.qty));
+    if (!rows.some((r) => qtyNow(r) > 0) && !added.length) fail("A bill needs at least one item");
+
+    const oldGrand = r2(o.grandAmount);
+    const oldCash = r2(o.cash);
+    const had = new Set(["cash", "upi", "card", "due"].filter((k) => Number(o[k]) > 0));
+    const modes = await paymentModes(c);
+    for (const p of parseJson(o.other_payments, []) || []) {
+        const m = modes.find((x) => String(x.name).trim().toLowerCase() === String(p.name || "").trim().toLowerCase());
+        if (m) had.add(`pm-${m.id}`);
+    }
+
+    // Stock: everything the old bill took goes back; the new bill is deducted below.
+    await reverseAllOrderStock(o.id, c.hotelId, c.t, `Bill ${o.bill_no} edited`);
+    for (const r of rows) {
+        const q = qtyNow(r);
+        if (q <= 0) await r.destroy({ transaction: c.t });
+        else if (q !== Number(r.qty)) await r.update({ qty: q }, { transaction: c.t });
+    }
+    if (added.length) {
+        // Added on the bill, never cooked from a KOT: a round shown on no KDS.
+        const kotNo = ((await OrderDetails.max("kotNumber", { where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t })) || 0) + 1;
+        const made = await buildRows(c, o, added, { kotNumber: kotNo, kdsHidden: true });
+        await OrderDetails.update({ status: "delivered", ready: true, kds_state: "ready", payment_status: "success" }, { where: { id: made.map((m) => m.id) }, transaction: c.t });
+    }
+
+    // One discount per bill, checked against the new subtotal.
+    const d = edit.discount && Number(edit.discount.value) > 0 ? edit.discount : null;
+    const plain = await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t, discount: { type: "fix", value: 0 }, discountReason: "" });
+    let totals = plain;
+    if (d) {
+        const value = Number(d.value);
+        if (d.type === "pr" && value > 100) fail("A discount cannot be above 100%");
+        if (d.type !== "pr" && value > plain.subtotal) fail("A discount cannot be more than the bill");
+        if (!String(d.reason || "").trim()) fail("Add a reason for the discount");
+        totals = await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t, discount: { type: d.type === "pr" ? "pr" : "fix", value }, discountReason: String(d.reason).trim() });
+    }
+    const grand = r2(totals.grandAmount);
+
+    const pays = (edit.payments || []).filter((p) => Number(p.amount) > 0).map((p) => ({ modeId: String(p.modeId), amount: r2(p.amount) }));
+    const { cols, other } = await paymentColumns(c, pays, had);
+    const refundLater = r2(Math.max(0, Number(edit.refundLater) || 0));
+    const paid = r2(pays.reduce((a, p) => a + p.amount, 0));
+    if (refundLater > 0 && cols.due > 0) fail("A bill cannot be both due and owed a refund");
+    if (Math.abs(paid - refundLater - grand) > 0.009) {
+        fail(`The edited bill totals ₹${grand.toFixed(2)}, but the payments add up to ₹${r2(paid - refundLater).toFixed(2)}. Please adjust the payment.`);
+    }
+    const name = String(edit.customerName || "").trim();
+    const mobile = String(edit.customerMobile || "").trim();
+    if (cols.due > 0) {
+        const user = await User.findOne({ where: { id: o.UserId }, transaction: c.t });
+        const haveName = name || (!user?.isPlaceholder && user?.name);
+        const haveMobile = mobile || (!user?.isPlaceholder && user?.number);
+        if (!haveName || !/^\d{10}$/.test(String(haveMobile || ""))) fail("Due needs the customer's name and 10-digit mobile");
+    }
+    if (name || mobile) await attachCustomer(c, o, name, mobile);
+
+    await o.update({
+        ...cols,
+        due: cols.due > 0 ? cols.due : refundLater > 0 ? -refundLater : 0,
+        other_payments: other.length ? JSON.stringify(other) : null,
+        other_amount: r2(other.reduce((a, x) => a + x.amount, 0)),
+    }, { transaction: c.t });
+    await OrderDetails.update({ payment_status: "success" }, { where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t });
+    await deductStockForOrder(o.id, c.hotelId, c.t, c.userId);
+
+    const cashDelta = r2(cols.cash - oldCash);
+    if (cashDelta > 0) await recordCash(c, cashDelta, `Edited bill ${o.bill_no}`);
+    if (cashDelta < 0) await recordCash(c, -cashDelta, `Refund · edited bill ${o.bill_no}`, "Withdraw");
+    const modeLabel = (k) => (k === "upi" ? "UPI" : k[0].toUpperCase() + k.slice(1));
+    const paidText = [
+        ...Object.entries(cols).filter(([, v]) => v > 0).map(([k, v]) => `${modeLabel(k)} ₹${v.toFixed(2)}`),
+        ...other.map((x) => `${x.name} ₹${x.amount.toFixed(2)}`),
+    ].join(" + ");
+    await event(c, o.id, `Settled bill edited · ₹${oldGrand.toFixed(2)} → ₹${grand.toFixed(2)} · ${paidText}${refundLater > 0 ? ` · refund owed ₹${refundLater.toFixed(2)}` : ""}`, "update_order");
+    await audit(c, "Billing", `Edited settled bill ${o.bill_no}`);
+    return { grand, due: cols.due, refundOwed: refundLater, cashIn: cashDelta > 0 ? cashDelta : 0, cashOut: cashDelta < 0 ? -cashDelta : 0 };
+}
+
+/** Hand back a refund owed. Cash comes out of the open drawer; the bill's payments drop by it. */
+async function settleRefund(c, orderId, modeId) {
+    need(c, "ops-ledger", "edit");
+    const o = await findOrder(c, orderId);
+    const amount = r2(-(Number(o.due) || 0));
+    if (o.deleted || !(amount > 0)) fail("This bill has no refund owed");
+    if (!modeId || modeId === "due") fail("Pick how the money was handed back");
+    const modes = await paymentModes(c);
+    const custom = BUILT_IN.includes(modeId) ? null : modes.find((m) => `pm-${m.id}` === modeId);
+    const builtIn = BUILT_IN.includes(modeId) ? modes.find((m) => String(m.name).toLowerCase() === modeId) : null;
+    if ((!BUILT_IN.includes(modeId) && !custom) || (custom && isOff(custom.active)) || (builtIn && isOff(builtIn.active))) fail("Pick how the money was handed back");
+    // The refund leaves the bill's own payments: the mode it went back by first.
+    const cols = { cash: r2(o.cash), upi: r2(o.upi), card: r2(o.card) };
+    const other = parseJson(o.other_payments, []) || [];
+    const slots = [
+        ...Object.keys(cols).map((k) => ({ id: k, get: () => cols[k], set: (v) => { cols[k] = v; } })),
+        ...other.map((p) => ({ id: `name:${String(p.name).trim().toLowerCase()}`, get: () => r2(p.amount), set: (v) => { p.amount = v; } })),
+    ];
+    const first = custom ? `name:${String(custom.name).trim().toLowerCase()}` : modeId;
+    const ordered = [...slots.filter((s) => s.id === first), ...slots.filter((s) => s.id !== first).reverse()];
+    let left = amount;
+    for (const s of ordered) {
+        if (left <= 0) break;
+        const cut = Math.min(s.get(), left);
+        s.set(r2(s.get() - cut));
+        left = r2(left - cut);
+    }
+    const kept = other.filter((p) => Number(p.amount) > 0);
+    await o.update({ ...cols, due: 0, other_payments: kept.length ? JSON.stringify(kept) : null, other_amount: r2(kept.reduce((a, p) => a + Number(p.amount), 0)) }, { transaction: c.t });
+    if (modeId === "cash") await recordCash(c, amount, `Refund · bill ${o.bill_no}`, "Withdraw");
+    await event(c, o.id, `Refund ₹${amount.toFixed(2)} handed back (${custom ? custom.name : modeId === "upi" ? "UPI" : modeId[0].toUpperCase() + modeId.slice(1)})`, "update_order");
+    await audit(c, "Billing", `Refunded ₹${amount} on bill ${o.bill_no}`);
 }
 
 /**
@@ -810,7 +1012,7 @@ async function decideQr(c, qrId, decisions) {
 module.exports = {
     sendKot, holdOrder, setGuests, setCustomer, removeLine, markServed, printBill, requestBill, cancelOrder,
     transferTable, mergeTables, moveKot, setDiscount, applyPromo, setServiceCharge, settle, counterOrder,
-    reopenSettled, sendEbill, markPickupReady, logReprint, kdsAdvance, kdsRecall, decideQr,
+    editSettled, settleRefund, sendEbill, markPickupReady, logReprint, kdsAdvance, kdsRecall, decideQr, billCart,
     // shared with domains
     createOrder, recordCash, event, alert, attachCustomer, findOrder, openOrderOnTable, clockOf, lineState, dietaryText, addonsJson,
 };

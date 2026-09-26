@@ -1,4 +1,4 @@
-const { Op, fn, col } = require("sequelize");
+const { Op, fn, col, literal } = require("sequelize");
 const moment = require("moment-timezone");
 const CryptoJS = require("crypto-js");
 const M = require("../model");
@@ -187,6 +187,7 @@ async function settingsView(hotelId, hotel, setting, tables) {
         financialYearStartMonth: Number(setting?.financial_year_start_month) || 4,
         cashSessionOn: !!setting?.opening_closing_show,
         qrOrdering: setting ? !isOff(setting.qr_ordering) : true,
+        tableGridView: setting?.table_grid_view === "sections" ? "sections" : "tabs",
         supplierPaymentsAsExpense: setting ? !isOff(setting.supplier_payment_expense) : true,
     };
 }
@@ -366,7 +367,7 @@ async function menuView(hotelId) {
     return {
         menus,
         categories: categories.map((c) => ({ id: String(c.id), menuId: menuOf(c), name: c.menu_categ_nm, rank: Number(c.rank) || 0, active: !isOff(c.active) })),
-        variants: variants.map((v) => ({ id: String(v.id), menuId: menuOf(v), name: v.variants_name })),
+        variants: variants.filter((v) => !isOff(v.active)).map((v) => ({ id: String(v.id), menuId: menuOf(v), name: v.variants_name })),
         addonGroups: depts.map((d) => ({
             id: String(d.id), menuId: menuOf(d), name: d.department_name,
             min: Number(d.minimum_allowed_addon) || 0, max: Number(d.maximum_allowed_addon) || 0,
@@ -434,7 +435,7 @@ async function customersView(hotelId) {
         M.User.findAll({ where: { hotel_id: hotelId, isPlaceholder: { [Op.not]: true }, number: { [Op.ne]: "" } }, raw: true }),
         M.Order.findAll({
             where: { hotel_id: hotelId, deleted: false, payment: "success" },
-            attributes: ["UserId", [fn("COUNT", col("id")), "visits"], [fn("SUM", col("grandAmount")), "spent"], [fn("MAX", col("createdAt")), "last"], [fn("SUM", col("due")), "due"]],
+            attributes: ["UserId", [fn("COUNT", col("id")), "visits"], [fn("SUM", col("grandAmount")), "spent"], [fn("MAX", col("createdAt")), "last"], [fn("SUM", literal("CASE WHEN due > 0 THEN due ELSE 0 END")), "due"]],
             group: ["UserId"], raw: true,
         }),
     ]);
@@ -666,6 +667,8 @@ async function load(c) {
             { business_date: { [Op.gte]: since.format("YYYY-MM-DD") } },
             { business_date: null, createdAt: { [Op.gte]: sinceDate } },
             { deleted: false, due: { [Op.gt]: 0 } },
+            // A refund owed stays listed however old it is.
+            { deleted: false, due: { [Op.lt]: 0 } },
         ],
     });
     const openOrders = orders.filter((o) => ["running", "hold", "billed"].includes(o.status));
@@ -708,6 +711,9 @@ async function load(c) {
         queue: queue.map((q) => ({ id: String(q.id), name: q.name, mobile: q.mobile || "", guests: Number(q.guests) || 1, status: q.status, joinedAt: iso(q.joined_at), calledAt: iso(q.called_at), note: q.note || undefined })),
         qrOrders,
         customers,
+        refundsOwed: orders.filter((o) => o.refundOwed > 0).map((o) => ({
+            orderId: o.id, billNo: o.billNo, amount: o.refundOwed, customerName: o.customerName, customerMobile: o.customerMobile, at: o.settledAt || o.createdAt,
+        })),
         dueCollections: dueRows.map((d) => ({
             id: String(d.id), customerMobile: d.hms_user_master?.number || "", customerName: d.hms_user_master?.name || "",
             amount: r2(d.amount), modeId: modeIdFromName(d.payment_mode, payModes), at: iso(d.createdAt), by: names.get(d.settle_by) ?? "",
@@ -732,4 +738,4 @@ async function load(c) {
     };
 }
 
-module.exports = { load, loadOrderViews, loadOrderView, cashView, expensesView, stockView, tableQrUrl, bookingMoment, formatLines, FORMAT_KEYWORD, paymentModesView, BUILT_IN_MODES };
+module.exports = { load, loadOrderViews, loadOrderView, menuView, cashView, expensesView, stockView, tableQrUrl, bookingMoment, formatLines, FORMAT_KEYWORD, paymentModesView, BUILT_IN_MODES };

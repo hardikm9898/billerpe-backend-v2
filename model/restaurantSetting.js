@@ -67,7 +67,9 @@ const RestaurantSetting = sequelize.define("hms_res_setting", {
         defaultValue: null
     },
     supplier_payment_expense: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
-    qr_ordering: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true }
+    qr_ordering: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    // POS App tables screen: "tabs" | "sections" (the Web POS Table grid view).
+    table_grid_view: { type: DataTypes.STRING(10), allowNull: false, defaultValue: "tabs" }
 }, {
     indexes: [
         {

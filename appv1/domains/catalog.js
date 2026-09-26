@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const M = require("../../model");
-const { fail, need, audit } = require("../core");
+const { fail, need, audit, isOff, RuleError } = require("../core");
 const { callController } = require("../legacy");
 const { dietaryText } = require("../orders");
 const menuCtl = require("../exe/controller/menu");
@@ -130,12 +130,100 @@ async function saveVariant(c, v) {
     need(c, "menu", v.id ? "edit" : "create");
     const name = String(v.name || "").trim();
     if (!name) fail("Name is required");
+    // One name per outlet (exe rule). A removed variant with the name is
+    // brought back for a new one; on a rename it steps out of the way.
+    const same = await M.Variants.findOne({ where: { hotel_id: c.hotelId, variants_name: name, ...(v.id ? { id: { [Op.ne]: idOf(v.id) } } : {}) } });
+    if (same && !isOff(same.active)) fail("A variant with this name already exists");
+    if (same && !v.id) {
+        await same.update({ active: true, ...(idOf(v.menuId) ? { menu_catalog_id: idOf(v.menuId) } : {}) });
+        await audit(c, "Menu", `Saved variant ${name}`);
+        return;
+    }
+    if (same) await same.update({ variants_name: `${name} #${same.id}` });
     const body = { variants_name: name, active: true, menu_catalog_id: idOf(v.menuId) || undefined };
     if (v.id) {
         const row = await M.Variants.findOne({ where: { id: idOf(v.id), hotel_id: c.hotelId } });
         if (!row) fail("Variant not found");
         await callController(variantCtl.updatedVariant, c, { body: { ...body, id: row.id } });
     } else await callController(variantCtl.createVariant, c, { body });
+    await audit(c, "Menu", `Saved variant ${name}`);
+}
+
+/**
+ * Web POS menu CSV import into one menu (owner bug list item 15). Missing
+ * categories are created; an item with the same name in this menu is updated
+ * - its variants, add-ons, photo and favourite are kept (the Web POS wiped
+ * them); anything else is added. A bad row is reported, the rest go in.
+ */
+async function importMenu(c, menuId, rows) {
+    need(c, "menu", "create");
+    need(c, "menu", "edit");
+    const mid = String(idOf(menuId) || "");
+    const menu = await M.MenuCatalog.findOne({ where: { id: Number(mid) || 0, hotel_id: c.hotelId } });
+    if (!menu) fail("Menu not found");
+    if (!Array.isArray(rows) || !rows.length) fail("The file has no items");
+    if (rows.length > 2000) fail("Up to 2000 items in one file");
+    const { menuView } = require("../load");
+    let view = await menuView(c.hotelId);
+    const catOf = (name) => view.categories.find((x) => x.menuId === mid && x.name.trim().toLowerCase() === name.toLowerCase());
+    const out = { created: 0, updated: 0, categoriesCreated: 0, failed: [] };
+    const seen = new Set();
+    for (let idx = 0; idx < rows.length; idx++) {
+        const r = rows[idx] || {};
+        const name = String(r.name || "").trim();
+        try {
+            const catName = String(r.category || "").trim();
+            const price = Number(r.price);
+            if (!name) fail("Missing name");
+            if (!catName) fail("Missing category");
+            if (!(price > 0)) fail("Invalid price");
+            if (seen.has(name.toLowerCase())) fail("Same name twice in the file");
+            seen.add(name.toLowerCase());
+            let cat = catOf(catName);
+            if (!cat) {
+                await saveCategory(c, { menuId: mid, name: catName, active: true });
+                view = await menuView(c.hotelId);
+                cat = catOf(catName);
+                if (!cat) fail("Could not create the category");
+                out.categoriesCreated++;
+            }
+            const existing = view.items.find((i) => i.menuId === mid && i.name.trim().toLowerCase() === name.toLowerCase());
+            const code = String(r.shortCode || "").trim().toUpperCase();
+            if (existing) {
+                // A finer food type stays when the Veg column agrees (Jain stays Jain, Egg stays Egg).
+                const vegNow = ["veg", "jain", "vegan", "swaminarayan"].includes(existing.dietary);
+                await saveItem(c, {
+                    ...existing, name, categoryId: cat.id, price, shortCode: code || existing.shortCode,
+                    dietary: (r.veg !== false) === vegNow ? existing.dietary : r.veg !== false ? "veg" : "nonveg",
+                    active: r.active !== false,
+                });
+                out.updated++;
+            } else {
+                await saveItem(c, {
+                    menuId: mid, categoryId: cat.id, name, shortCode: code, price, dietary: r.veg === false ? "nonveg" : "veg",
+                    gstType: "G", description: "", favorite: false, active: r.active !== false, outOfStock: false, variants: [], addonGroupIds: [],
+                });
+                out.created++;
+            }
+        } catch (e) {
+            if (!(e instanceof RuleError)) console.error("[importMenu] row", idx + 1, e);
+            out.failed.push({ line: idx + 1, name, error: e instanceof RuleError ? e.message : "Could not save this row" });
+        }
+    }
+    await audit(c, "Menu", `Imported menu CSV: ${out.created} added, ${out.updated} updated`);
+    return out;
+}
+
+/** Web POS removeVariant: switched off (the exe has no delete), only once no item uses it. */
+async function deleteVariant(c, id) {
+    need(c, "menu", "delete");
+    const row = await M.Variants.findOne({ where: { id: idOf(id), hotel_id: c.hotelId } });
+    if (!row || isOff(row.active)) fail("Variant not found");
+    const liveItems = await M.Menu.findAll({ where: { hotel_id: c.hotelId, is_deleted: { [Op.not]: true } }, attributes: ["id"], raw: true });
+    const used = liveItems.length ? await M.MenuVariants.count({ where: { hotel_id: c.hotelId, variant_id: row.id, menu_id: liveItems.map((i) => i.id) } }) : 0;
+    if (used) fail(`In use by ${used} item(s) — remove it from those items first`);
+    await row.update({ active: false });
+    await audit(c, "Menu", `Deleted variant ${row.variants_name}`);
 }
 
 async function saveAddonGroup(c, g) {
@@ -177,14 +265,27 @@ async function saveSection(c, s) {
     if (!name) fail("Table Category name is required");
     const clash = await M.TableCatagories.findOne({ where: { hotel_id: c.hotelId, table_catag_nm: name, active: true, type: "T", ...(s.id ? { id: { [Op.ne]: idOf(s.id) } } : {}) } });
     if (clash) fail("Table Category Already Available");
+    const rank = s.rank === undefined || s.rank === null ? undefined : Number(s.rank);
+    if (rank !== undefined && !(Number.isInteger(rank) && rank >= 1)) fail("Rank must be a whole number from 1");
+    let row;
     if (s.id) {
-        const row = await M.TableCatagories.findOne({ where: { id: idOf(s.id), hotel_id: c.hotelId, active: true } });
+        row = await M.TableCatagories.findOne({ where: { id: idOf(s.id), hotel_id: c.hotelId, active: true } });
         if (!row) fail("Table Category Not Found");
-        await row.update({ table_catag_nm: name, ...(s.rank !== undefined ? { rank: Number(s.rank) || 0 } : {}) });
-    } else {
-        const maxRank = await M.TableCatagories.max("rank", { where: { hotel_id: c.hotelId, active: true } });
-        await M.TableCatagories.create({ type: "T", table_catag_nm: name, hotel_id: c.hotelId, rank: (maxRank || 0) + 1 });
     }
+    const others = (await M.TableCatagories.findAll({ where: { hotel_id: c.hotelId, active: { [Op.not]: false } } }))
+        .filter((x) => !row || x.id !== row.id)
+        .sort((a, b) => (Number(a.rank) || 0) - (Number(b.rank) || 0) || a.id - b.id);
+    const keep = row ? others.filter((x) => (Number(x.rank) || 0) < (Number(row.rank) || 0)).length + 1 : others.length + 1;
+    if (row) await row.update({ table_catag_nm: name });
+    else row = await M.TableCatagories.create({ type: "T", table_catag_nm: name, hotel_id: c.hotelId, rank: others.length + 1 });
+    // Rank = position (Web POS sort order): the section moves there, the
+    // others shift; ranks stay 1..N with no ties. No rank = keep its place.
+    const at = Math.min(Math.max(rank ?? keep, 1), others.length + 1);
+    others.splice(at - 1, 0, row);
+    for (let i = 0; i < others.length; i++) {
+        if (Number(others[i].rank) !== i + 1) await others[i].update({ rank: i + 1 });
+    }
+    await audit(c, "Tables", `Saved section ${name}`);
 }
 
 async function deleteSection(c, id) {
@@ -284,6 +385,8 @@ module.exports = {
     deleteItem: { fn: deleteItem },
     setOutOfStock: { fn: setOutOfStock },
     saveVariant: { fn: saveVariant },
+    deleteVariant: { fn: deleteVariant },
+    importMenu: { fn: importMenu },
     saveAddonGroup: { fn: saveAddonGroup },
     deleteAddonGroup: { fn: deleteAddonGroup },
     saveSection: { fn: saveSection },

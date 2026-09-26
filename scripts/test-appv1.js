@@ -220,8 +220,6 @@ async function run() {
     const T2 = String(s.tables.T2.id);
     const h = await cap.holdOrder({ type: "dinin", tableId: T2, guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.paneer, 1)] });
     check("hold creates order + table Hold", h.ok && (await tbl("T2")).status === "hold", h);
-    const pb = await cashier.printBill(h.orderId);
-    check("bill blocked while items are held (bill-with-KOT off)", !pb.ok, pb);
     const mergeHeld = await owner.mergeTables(T2, T1);
     check("held table cannot merge", !mergeHeld.ok, mergeHeld);
     await s.hotel.update({ bill_with_kot: "1" });
@@ -230,6 +228,21 @@ async function run() {
     check("T2 bill generated", (await tbl("T2")).status === "billed");
     const kdsHidden = await M.OrderDetails.count({ where: { orderId: Number(h.orderId), kds_hidden: true } });
     check("bill-with-KOT lines never on the KDS", kdsHidden === 1);
+
+    console.log("\nbill without a KOT (Web POS Save / Bill Print)");
+    await s.hotel.update({ bill_with_kot: "3" });
+    const T6b = String(s.tables.T6.id);
+    const direct = await cap.billCart({ type: "dinin", tableId: T6b, guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chai, 2)] });
+    check("bill straight from the cart: order made, billed, no KOT needed", direct.ok && direct.order?.status === "billed" && (await tbl("T6")).status === "billed", direct);
+    check("bill-with-KOT off: nothing extra to print", direct.ok && direct.kotLines.length === 0);
+    const directRows = await M.OrderDetails.findAll({ where: { orderId: Number(direct.order?.id) } });
+    check("its items are on the order, on no kitchen screen", directRows.length === 1 && directRows[0].status === "kot" && directRows[0].kds_hidden === true, directRows.map((r) => r.toJSON()));
+    const directSettle = await cashier.settle(direct.order.id, { payments: [{ modeId: "cash", amount: direct.order.totals.grand }], clientKey: key() });
+    check("and it settles", directSettle.ok && (await tbl("T6")).status === "free", directSettle);
+    const h2 = await cap.holdOrder({ type: "dinin", tableId: T6b, guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chai, 1)] });
+    const h2grand = (await owner.load()).orders.find((o) => o.id === h2.orderId).totals.grand;
+    const settleHeld = await cashier.settle(h2.orderId, { payments: [{ modeId: "upi", amount: h2grand }], clientKey: key() });
+    check("a held order settles directly (items billed without a KOT)", h2.ok && settleHeld.ok && (await tbl("T6")).status === "free", settleHeld);
     const addAfter = await cap.sendKot({ orderId: h.orderId, type: "dinin", tableId: T2, guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chai, 1)] });
     check("new items after the bill reopen it (running)", addAfter.ok && (await tbl("T2")).status === "running", addAfter);
 
@@ -350,19 +363,76 @@ async function run() {
     await qrSession.reload();
     check("settled -> QR visit closed", qrSession.status === "closed");
 
-    console.log("\nreopen & cancel");
-    const reo = await cashier.reopenSettled(r1.orderId);
-    check("cashier cannot reopen a settled bill", !reo.ok, reo);
-    const reo2 = await owner.reopenSettled(r1.orderId);
-    const drawer2 = await M.CashMovement.sum("amount", { where: { cashSessionId: session.id } });
-    check("owner reopens: back to bill generated, cash out of the drawer", reo2.ok && Math.abs(drawer2 - 500 - (await M.Order.findByPk(Number(r1.orderId))).grandAmount * 0) < grand + 0.01 && (await owner.load()).orders.find((o) => o.id === r1.orderId).status === "billed", { reo2, drawer2 });
-    const reversed = await M.StockMovement.count({ where: { hotel_id: s.hid, ref_id: Number(r1.orderId), type: "consumption_reversal" } });
-    check("reopen puts the stock back", reversed === 1, reversed);
+    console.log("\nedit a settled bill");
+    const rnd = (n) => Math.round(n * 100) / 100;
+    const billOf = async () => (await owner.load()).orders.find((o) => o.id === r1.orderId);
+    const totalFrom = (res) => Number((/totals ₹([\d.]+)/.exec(res.error || "") || [])[1]);
+    const drawerSum = () => M.CashMovement.sum("amount", { where: { cashSessionId: session.id } });
+    const eo = await billOf();
+    const eLine = eo.kots.flatMap((k) => k.lines).find((l) => l.name === "Paneer Tikka");
+    const nonCash = (o) => rnd(o.payments.filter((p) => p.modeId !== "cash").reduce((a, p) => a + p.amount, 0));
+    const noPerm = await cashier.editSettled(r1.orderId, { lines: [{ lineId: eLine.id, qty: eLine.qty + 1 }], added: [], discount: null, payments: eo.payments, refundLater: 0, clientKey: key() });
+    check("cashier cannot edit a settled bill", !noPerm.ok, noPerm);
+    const drawer0 = await drawerSum();
+    const reversals0 = await M.StockMovement.count({ where: { hotel_id: s.hid, ref_id: Number(r1.orderId), type: "consumption_reversal" } });
+    const upEdit = { lines: [{ lineId: eLine.id, qty: eLine.qty + 1 }], added: [line(s.items.chai, 1)], discount: null };
+    const probeRes = await owner.editSettled(r1.orderId, { ...upEdit, payments: eo.payments, refundLater: 0, clientKey: key() });
+    const upTotal = totalFrom(probeRes);
+    const stillBill = await billOf();
+    check("payments must add up to the new total; nothing changes when refused", !probeRes.ok && upTotal > eo.totals.grand && stillBill.totals.grand === eo.totals.grand && stillBill.kots.flatMap((k) => k.lines).length === eo.kots.flatMap((k) => k.lines).length && (await drawerSum()) === drawer0, probeRes);
+    const upKey = key();
+    const upRes = await owner.editSettled(r1.orderId, { ...upEdit, payments: [...eo.payments.filter((p) => p.modeId !== "cash"), { modeId: "cash", amount: rnd(upTotal - nonCash(eo)) }], refundLater: 0, clientKey: upKey });
+    const upBill = await billOf();
+    const upTable = (await owner.load()).tables.find((t) => t.id === eo.tableId);
+    check("edit raises the bill: still settled, promo gone, table stays free", upRes.ok && upBill.status === "settled" && upBill.totals.grand === upTotal && !upBill.promoCode && !upBill.discount && upTable.status === "free", { upRes, grand: upBill.totals.grand, table: upTable.status });
+    check("the extra cash goes into the drawer", upRes.ok && upRes.cashIn === rnd(upTotal - eo.totals.grand) && rnd((await drawerSum()) - drawer0) === upRes.cashIn, { upRes, drawer: (await drawerSum()) - drawer0 });
+    const addedRow = await M.OrderDetails.findOne({ where: { orderId: Number(r1.orderId) }, order: [["id", "DESC"]] });
+    check("an item added on the bill is served, on no KDS", addedRow.status === "delivered" && addedRow.kds_hidden === true && addedRow.payment_status === "success", addedRow.toJSON());
+    const reversals1 = await M.StockMovement.count({ where: { hotel_id: s.hid, ref_id: Number(r1.orderId), type: "consumption_reversal" } });
+    const consumed = await M.RawMaterialConsumption.sum("consumed_qty", { where: { hotel_id: s.hid, order_id: Number(r1.orderId), status: "CONSUMED" } });
+    check("stock: the old bill goes back, the new one is deducted", reversals1 > reversals0 && Number(consumed) > 0, { reversals0, reversals1, consumed });
+    const editAgain = await owner.editSettled(r1.orderId, { ...upEdit, payments: [], refundLater: 0, clientKey: upKey });
+    check("same edit retried (clientKey) applies once", editAgain.ok && (await billOf()).kots.flatMap((k) => k.lines).length === upBill.kots.flatMap((k) => k.lines).length);
+
+    // Lower it again: refund now, cash out of the drawer.
+    const downEdit = { lines: [{ lineId: eLine.id, qty: eLine.qty }], added: [], discount: null };
+    const downTotal = totalFrom(await owner.editSettled(r1.orderId, { ...downEdit, payments: upBill.payments, refundLater: 0, clientKey: key() }));
+    const cut = rnd(upTotal - downTotal);
+    const drawer1 = await drawerSum();
+    const cashUp = upBill.payments.find((p) => p.modeId === "cash").amount;
+    const downRes = await owner.editSettled(r1.orderId, { ...downEdit, payments: [...upBill.payments.filter((p) => p.modeId !== "cash"), { modeId: "cash", amount: rnd(cashUp - cut) }], refundLater: 0, clientKey: key() });
+    const lastMove = await M.CashMovement.findOne({ where: { cashSessionId: session.id }, order: [["id", "DESC"]] });
+    check("refund now: the cash comes out of the drawer (signed Withdraw)", downRes.ok && downRes.cashOut === cut && lastMove.type === "Withdraw" && rnd(lastMove.amount) === -cut && rnd((await drawerSum()) - drawer1) === -cut, { downRes, lastMove: lastMove?.toJSON() });
+
+    // Remove the added chai: refund later -> owed, listed, handed back.
+    const dBill = await billOf();
+    const chaiLine = dBill.kots.at(-1).lines[0];
+    const laterEdit = { lines: [{ lineId: chaiLine.id, qty: 0 }], added: [], discount: null };
+    const laterTotal = totalFrom(await owner.editSettled(r1.orderId, { ...laterEdit, payments: [{ modeId: "cash", amount: 1 }], refundLater: 0, clientKey: key() }));
+    const owe = rnd(dBill.totals.grand - laterTotal);
+    const bothWays = await owner.editSettled(r1.orderId, { ...laterEdit, payments: [...dBill.payments, { modeId: "due", amount: 1 }], refundLater: rnd(owe + 1), customerName: "Due Guy", customerMobile: "9876500009", clientKey: key() });
+    check("a bill cannot be both due and owed a refund", !bothWays.ok, bothWays);
+    const laterEdit2 = await owner.editSettled(r1.orderId, { ...laterEdit, payments: dBill.payments, refundLater: owe, clientKey: key() });
+    const ld = await owner.load();
+    const owedBill = ld.orders.find((o) => o.id === r1.orderId);
+    check("refund later: the bill owes the customer, listed under refunds owed", laterEdit2.ok && owedBill.refundOwed === owe && !owedBill.dueOutstanding && ld.refundsOwed.some((r) => r.orderId === r1.orderId && r.amount === owe) && Number((await M.Order.findByPk(Number(r1.orderId))).due) === -owe, { laterEdit2, owed: owedBill?.refundOwed, list: ld.refundsOwed });
+    check("a refund owed is not counted as a due anywhere", !(await owner.listOrders({ status: "due", range: { key: "all" }, page: 0 })).orders.some((o) => o.id === r1.orderId));
+    const drawer2 = await drawerSum();
+    const handBack = await owner.settleRefund(r1.orderId, "cash");
+    const backBill = await billOf();
+    const paidNow = rnd(backBill.payments.reduce((a, p) => a + p.amount, 0));
+    check("hand back in cash: out of the drawer, off the list, payments = bill", handBack.ok && !backBill.refundOwed && rnd((await drawerSum()) - drawer2) === -owe && paidNow === backBill.totals.grand && !(await owner.load()).refundsOwed.length, { handBack, paidNow, grand: backBill.totals.grand });
+    check("no refund left to hand back", !(await owner.settleRefund(r1.orderId, "cash")).ok);
+    check("a discount over the new bill is refused", !(await owner.editSettled(r1.orderId, { lines: [], added: [], discount: { type: "fix", value: 999999, reason: "x" }, payments: backBill.payments, refundLater: 0, clientKey: key() })).ok);
+    const openOne = (await owner.load()).orders.find((o) => ["running", "hold", "billed"].includes(o.status));
+    check("an open bill cannot be edited this way", openOne && !(await owner.editSettled(openOne.id, { lines: [], added: [], discount: null, payments: [], refundLater: 0, clientKey: key() })).ok);
+
+    console.log("\ncancel");
     const hc = await cap.holdOrder({ type: "dinin", tableId: String(s.tables.T6.id), guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chai, 1)] });
     const cancelHeld = await cap.cancelOrder(hc.orderId, "customer left");
     check("nothing sent to the kitchen: captain can cancel", cancelHeld.ok && (await tbl("T6")).status === "free", cancelHeld);
 
-    await runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl });
+    await runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl, kitchenToken: kitT });
 
     console.log("\nisolation");
     const other = await M.Order.findOne({ where: { hotel_id: { [require("sequelize").Op.ne]: s.hid } } });
@@ -377,7 +447,7 @@ async function run() {
 
 /* ------------------------------ domains ------------------------------ */
 
-async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl }) {
+async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl, kitchenToken }) {
     const later = (min) => new Date(Date.now() + min * 60000).toISOString();
     const today = new Date().toISOString().slice(0, 10);
     const rnd = () => `k${Math.random()}`;
@@ -475,7 +545,53 @@ async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl
         await owner.deleteItem(soup.id);
         check("deleted item is gone", !(await owner.load()).items.some((i) => i.id === soup.id));
     }
+    const vName = `Jumbo ${String(Date.now()).slice(-5)}`;
+    const vAdd = await owner.saveVariant({ menuId: String(s.catalog.id), name: vName });
+    const vRow = (await owner.load()).variants.find((v) => v.name === vName);
+    check("variant added", vAdd.ok && !!vRow, vAdd);
+    check("two variants cannot share a name", !(await owner.saveVariant({ menuId: String(s.catalog.id), name: vName })).ok);
+    const vRen = await owner.saveVariant({ id: vRow.id, menuId: String(s.catalog.id), name: `${vName} XL` });
+    check("variant renamed", vRen.ok && (await owner.load()).variants.some((v) => v.id === vRow.id && v.name === `${vName} XL`), vRen);
+    const vItem = await owner.saveItem({ menuId: String(s.catalog.id), categoryId: catId, name: "Jumbo Fries", shortCode: "", price: 0, dietary: "veg", gstType: "G", description: "", favorite: false, active: true, outOfStock: false, variants: [{ variantId: vRow.id, name: `${vName} XL`, price: 150 }], addonGroupIds: [] });
+    const vInUse = await owner.deleteVariant(vRow.id);
+    check("a variant used by an item cannot be deleted", vItem.ok && !vInUse.ok && /In use by 1 item/.test(vInUse.error), vInUse);
+    check("captain cannot delete a variant", !(await cap.deleteVariant(vRow.id)).ok);
+    await owner.deleteItem(vItem.id);
+    const vDel = await owner.deleteVariant(vRow.id);
+    check("unused variant deleted: gone from the menu", vDel.ok && !(await owner.load()).variants.some((v) => v.id === vRow.id), vDel);
+    const vBack = await owner.saveVariant({ menuId: String(s.catalog.id), name: `${vName} XL` });
+    check("a deleted variant's name can be used again", vBack.ok && (await owner.load()).variants.some((v) => v.name === `${vName} XL`), vBack);
+    const impBefore = await owner.load();
+    const paneerNow = impBefore.items.find((i) => i.id === String(s.items.paneer.id));
+    const paneerCat = impBefore.categories.find((x) => x.id === paneerNow.categoryId).name;
+    const imp = await owner.importMenu(String(s.catalog.id), [
+        { name: "CSV Soup", category: "CSV Cat", price: 99, shortCode: "", veg: true, active: true },
+        { name: paneerNow.name.toUpperCase(), category: paneerCat, price: 222, shortCode: "", veg: true, active: true },
+        { name: "", category: "CSV Cat", price: 10, shortCode: "", veg: true, active: true },
+        { name: "CSV Chicken", category: "CSV Cat", price: 250, shortCode: "", veg: false, active: false },
+    ]);
+    const impAfter = await owner.load();
+    const soupRow = impAfter.items.find((i) => i.name === "CSV Soup");
+    const chickenRow = impAfter.items.find((i) => i.name === "CSV Chicken");
+    const paneerAfter = impAfter.items.find((i) => i.id === paneerNow.id);
+    check("CSV import: 2 added, 1 updated, 1 new category, bad row reported", imp.ok && imp.created === 2 && imp.updated === 1 && imp.categoriesCreated === 1 && imp.failed.length === 1 && imp.failed[0].line === 3, imp);
+    check("imported items land in the new category with food type and active", soupRow && soupRow.dietary === "veg" && soupRow.active && soupRow.shortCode && chickenRow && chickenRow.dietary === "nonveg" && !chickenRow.active && impAfter.categories.find((x) => x.id === soupRow.categoryId)?.name === "CSV Cat", { soupRow, chickenRow });
+    check("an updated item keeps its variants and add-ons", paneerAfter.price === 222 && paneerAfter.variants.length === paneerNow.variants.length && paneerAfter.addonGroupIds.length === paneerNow.addonGroupIds.length && paneerAfter.variants.length > 0, { before: paneerNow, after: paneerAfter });
+    check("captain cannot import a menu", !(await cap.importMenu(String(s.catalog.id), [{ name: "X", category: "Y", price: 1, shortCode: "", veg: true, active: true }])).ok);
     check("addon group max above its options refused", !(await owner.saveAddonGroup({ menuId: String(s.catalog.id), name: "Dips", min: 0, max: 3, single: false, active: true, options: [{ id: "", name: "Mint", price: 10, dietary: "veg" }] })).ok);
+    const secOrder = async () => [...(await owner.load()).sections].sort((a, b) => a.rank - b.rank);
+    const secBefore = (await secOrder()).map((x) => x.name);
+    const deckName = `Deck ${String(Date.now()).slice(-5)}`;
+    const deck = await owner.saveSection({ name: deckName, rank: 1 });
+    let secNow = await secOrder();
+    check("new section at rank 1 goes first, the others shift, ranks 1..N", deck.ok && secNow[0].name === deckName && secNow.slice(1).map((x) => x.name).join() === secBefore.join() && secNow.every((x, i) => x.rank === i + 1), { deck, secNow });
+    const deckId = secNow[0].id;
+    const deckLast = await owner.saveSection({ id: deckId, name: deckName, rank: 99 });
+    secNow = await secOrder();
+    check("rank past the end = last", deckLast.ok && secNow.at(-1).id === deckId && secNow.every((x, i) => x.rank === i + 1), secNow);
+    check("rank must be a whole number from 1", !(await owner.saveSection({ name: "Bad Rank", rank: 0 })).ok);
+    await owner.deleteSection(deckId);
+    check("sections come back in rank order", (await secOrder()).map((x) => x.name).join() === secBefore.join());
     const sec = (await owner.load()).sections[0].id;
     const add = await owner.addTables(sec, "G1-G3", 4);
     const again = await owner.addTables(sec, "G1-G4", 4);
@@ -527,6 +643,33 @@ async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl
     const promo = await owner.savePromo({ name: "Flat 20", code: "FLAT20", type: "fix", value: 20, active: true });
     check("promo saved; duplicate code refused", promo.ok && !(await owner.savePromo({ name: "x", code: "FLAT20", type: "fix", value: 5, active: true })).ok, promo);
     check("bad UPI id refused", !(await owner.updateOutlet({ upiId: "bad" })).ok);
+
+    console.log("\norders list (server paging)");
+    for (let i = 0; i < 22; i++) {
+        await cashier.counterOrder({ type: "pickup", lines: [{ key: `p${i}`, itemId: String(s.items.chai.id), name: "Masala Chai", dietary: "veg", addons: [], price: 30, qty: 1, custom: false }], menuId: "", clientKey: `ol-${stamp}-${i}` });
+    }
+    const all0 = await owner.listOrders({ status: "all", range: { key: "all" }, page: 0 });
+    const all1 = await owner.listOrders({ status: "all", range: { key: "all" }, page: 1 });
+    check("All orders, 20 a page, newest first", all0.ok && all0.orders.length === 20 && all0.hasMore && all0.total >= 30 && all0.orders[0].createdAt >= all0.orders[19].createdAt, { total: all0.total, n: all0.orders?.length });
+    check("page 2 continues without repeats", all1.ok && all1.orders.length > 0 && !all1.orders.some((o) => all0.orders.some((p) => p.id === o.id)));
+    const running = await owner.listOrders({ status: "running", range: { key: "all" }, page: 0 });
+    check("Running tab: only open orders, with the badge count", running.ok && running.orders.every((o) => ["running", "hold", "billed"].includes(o.status)) && running.counts.running === running.total, running.counts);
+    const settledToday = await owner.listOrders({ status: "settled", range: { key: "today" }, page: 0 });
+    check("Settled + Today", settledToday.ok && settledToday.orders.every((o) => o.status === "settled"), settledToday.total);
+    const due = await owner.listOrders({ status: "due", range: { key: "all" }, page: 0 });
+    check("Due tab: bills with money owed", due.ok && due.orders.length > 0 && due.orders.every((o) => (o.dueOutstanding ?? 0) > 0), due.total);
+    const month = await owner.listOrders({ status: "all", range: { key: "month" }, page: 0 });
+    check("This month", month.ok && month.total === all0.total);
+    const one = all0.orders[5];
+    const byBill = await owner.listOrders({ status: "all", range: { key: "all" }, search: one.billNo, page: 0 });
+    check("search by bill number", byBill.ok && byBill.orders.some((o) => o.id === one.id), byBill.total);
+    const byMobile = await owner.listOrders({ status: "all", range: { key: "all" }, search: "9876500000", page: 0 });
+    check("search by customer mobile", byMobile.ok && byMobile.orders.length > 0 && byMobile.orders.every((o) => o.customerMobile === "9876500000"), byMobile.total);
+    const custom = await owner.listOrders({ status: "all", range: { key: "custom", from: "2000-01-01", to: "2000-01-02" }, page: 0 });
+    check("custom range with no orders", custom.ok && custom.total === 0);
+    const got = await owner.getOrder(all1.orders[0].id);
+    check("getOrder opens any order", got.ok && got.id === all1.orders[0].id, got);
+    check("kitchen staff cannot list orders", !(await post("/listOrders", { args: [{ status: "all", range: { key: "all" }, page: 0 }] }, kitchenToken)).ok);
 
     console.log("\ndevices & account");
     const printer = (address) => [{ id: "p1", name: "Kitchen", connection: "wifi", address, paperWidth: "80mm", copies: 1, printsKot: true, printsInvoice: false, categoryIds: [], sectionIds: [], orderTypes: [], status: "unknown" }];

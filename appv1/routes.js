@@ -81,11 +81,12 @@ const HANDLERS = {
     sendKot: { write: true, fn: (c, cart) => orders.sendKot(c, cart), key: ([cart]) => cart?.clientKey },
     holdOrder: { write: true, fn: (c, cart) => orders.holdOrder(c, cart), key: ([cart]) => cart?.clientKey },
     setGuests: { write: true, fn: (c, id, guests) => orders.setGuests(c, id, guests) },
-    setCustomer: { write: true, fn: (c, id, name, mobile) => orders.setCustomer(c, id, name, mobile) },
+    setCustomer: { write: true, fn: (c, id, customer) => orders.setCustomer(c, id, customer) },
     removeLine: { write: true, fn: (c, id, lineId, reason) => orders.removeLine(c, id, lineId, reason) },
     markServed: { write: true, fn: (c, id, kotNo) => orders.markServed(c, id, kotNo) },
     requestBill: { write: true, fn: (c, id) => orders.requestBill(c, id) },
     printBill: { write: true, fn: (c, id) => orders.printBill(c, id) },
+    billCart: { write: true, fn: (c, cart, opts) => orders.billCart(c, cart, opts || {}), key: ([cart]) => cart?.clientKey },
     cancelOrder: { write: true, fn: (c, id, reason) => orders.cancelOrder(c, id, reason) },
     transferTable: { write: true, fn: (c, id, to) => orders.transferTable(c, id, to) },
     mergeTables: { write: true, fn: (c, from, to) => orders.mergeTables(c, from, to) },
@@ -95,7 +96,8 @@ const HANDLERS = {
     setServiceCharge: { write: true, fn: (c, id, amount) => orders.setServiceCharge(c, id, amount) },
     settle: { write: true, fn: (c, id, input) => orders.settle(c, id, input), key: ([, input]) => input?.clientKey },
     counterOrder: { write: true, fn: (c, input) => orders.counterOrder(c, input), key: ([input]) => input?.clientKey },
-    reopenSettled: { write: true, fn: (c, id) => orders.reopenSettled(c, id) },
+    editSettled: { write: true, fn: (c, id, edit) => orders.editSettled(c, id, edit || {}), key: ([, edit]) => edit?.clientKey },
+    settleRefund: { write: true, fn: (c, id, modeId) => orders.settleRefund(c, id, modeId) },
     // Calls WhatsApp: never inside the outlet lock.
     sendEbill: { fn: (c, id, mobile) => orders.sendEbill(c, id, mobile) },
     markPickupReady: { write: true, fn: (c, id, ready) => orders.markPickupReady(c, id, ready) },
@@ -113,7 +115,7 @@ function register(handlers) {
     }
 }
 // Domain modules, each { name: handler }:
-for (const mod of ["./domains/frontOfHouse", "./domains/money", "./domains/catalog", "./domains/admin", "./domains/stock", "./domains/reports"]) register(require(mod));
+for (const mod of ["./domains/frontOfHouse", "./domains/money", "./domains/catalog", "./domains/admin", "./domains/stock", "./domains/reports", "./domains/orderList"]) register(require(mod));
 
 /**
  * GET /app/v1/version - a cheap fingerprint of the outlet's live state. The

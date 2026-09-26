@@ -497,6 +497,12 @@ server.listen(PORT, (err) => {
     }
 
     syncDatabase();
+    // Scheduled jobs send real WhatsApp messages: never from a test server
+    // (a *_test database or DISABLE_CRON=1) - test hotels carry made-up
+    // owner numbers that can belong to real people.
+    const jobsOff = process.env.DISABLE_CRON === "1" || /_test$/.test(process.env.DATABASE_NAME || "");
+    if (jobsOff) logger.info("Scheduled jobs are OFF (test database or DISABLE_CRON=1)");
+    else {
     cron.schedule(
         '29 4 * * *',
         () => {
@@ -518,6 +524,7 @@ server.listen(PORT, (err) => {
         console.log("Running timeline cleanup cron... deleted");
 
     });
+    }
     // cron.schedule(
     //     '*/30 * * * *',
     //     async () => {

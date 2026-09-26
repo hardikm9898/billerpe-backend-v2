@@ -65,7 +65,7 @@ const MODULE_LABELS = {
 };
 const SPECIAL_LABELS = {
     "orders.editAfterKot": "edit items after the KOT is sent",
-    "orders.reopenSettled": "reopen a settled bill",
+    "orders.reopenSettled": "edit a settled bill",
     "orders.deleteOrder": "delete orders",
     "tables.mergeTransfer": "move or merge tables",
     "system.remakeOrderSequence": "renumber bills",

@@ -160,6 +160,8 @@ function orderView(o, x) {
         guests: Number(o.guests) || (o.order_type === "dinin" ? 1 : 0),
         customerName: customerIsReal ? x.user.name || undefined : undefined,
         customerMobile: customerIsReal ? x.user.number || undefined : undefined,
+        customerAddress: customerIsReal ? x.user.address || undefined : undefined,
+        customerGstin: customerIsReal ? x.user.gstin || undefined : undefined,
         menuId: o.menu_catalog_id != null ? String(o.menu_catalog_id) : "",
         captainId: o.hotelUserId != null ? String(o.hotelUserId) : "",
         captainName: x.staffNames.get(o.hotelUserId) ?? "",
@@ -191,6 +193,8 @@ function orderView(o, x) {
         },
         payments: status === "settled" ? paymentsOf(o, x.modesByName) : [],
         dueOutstanding: due > 0 ? r2(Math.max(0, due - (x.duePaid || 0))) : undefined,
+        // exe/Web POS: a negative due = a refund owed after an edit lowered a paid bill.
+        refundOwed: status === "settled" && due < 0 ? r2(-due) : undefined,
         billPrintedAt: iso(o.billed_at),
         settledAt: status === "settled" ? iso(settleEvent?.created_Date || o.updatedAt) : undefined,
         settledBy: status === "settled" ? settleEvent?.creator || undefined : undefined,

@@ -102,7 +102,7 @@ async function saveFormat(Model, hotelId, format) {
 
 async function updateSettings(c, patch) {
     const HARDWARE = ["kitchens", "kotFormat"];
-    const EXPERIENCE = ["qrOrdering"];
+    const EXPERIENCE = ["qrOrdering", "tableGridView"];
     for (const k of Object.keys(patch || {})) need(c, HARDWARE.includes(k) ? "ops-hardware" : EXPERIENCE.includes(k) ? "ops-experience" : "ops-billing", "edit");
     if (patch.businessDayStart !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(patch.businessDayStart)) fail("Enter a time like 06:00");
     if (patch.financialYearStartMonth !== undefined && !(patch.financialYearStartMonth >= 1 && patch.financialYearStartMonth <= 12)) fail("Pick a month");
@@ -127,6 +127,10 @@ async function updateSettings(c, patch) {
     if (patch.financialYearStartMonth !== undefined) setting.financial_year_start_month = Number(patch.financialYearStartMonth);
     if (patch.cashSessionOn !== undefined) setting.opening_closing_show = !!patch.cashSessionOn;
     if (patch.qrOrdering !== undefined) setting.qr_ordering = !!patch.qrOrdering;
+    if (patch.tableGridView !== undefined) {
+        if (!["tabs", "sections"].includes(patch.tableGridView)) fail("Pick Tabs or Sections");
+        setting.table_grid_view = patch.tableGridView;
+    }
     if (patch.supplierPaymentsAsExpense !== undefined) setting.supplier_payment_expense = !!patch.supplierPaymentsAsExpense;
     if (Object.keys(setting).length) {
         const row = await M.RestaurantSetting.findOne({ where: { hotel_id: c.hotelId } });
