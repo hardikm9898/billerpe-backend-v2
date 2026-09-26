@@ -119,6 +119,11 @@ app.use(express.static("public"))
 /* ---------------------------------
    5. CORS
 ---------------------------------- */
+// BillerPe POS App (Plan 2): a native WebView (https://localhost) that sends
+// a bearer token, never a cookie - any origin, no credentials. Registered
+// before the cookie-based list below, which would answer its preflight
+// without allowing it.
+app.use("/app/v1", cors({ origin: true, credentials: false }));
 app.use(
     cors({
         origin: [
