@@ -12,14 +12,17 @@ const SECRET = () => process.env.APP_JWT_SECRET || process.env.JWT_SECRET_KEY_AD
 
 const sign = (hotelId, userId, deviceId) => jwt.sign({ typ: "pos-app", hid: hotelId, uid: userId, did: deviceId }, SECRET());
 
-function staffView(u) {
+const digits = (v) => String(v ?? "").replace(/\D/g, "");
+
+/** isOwner: the login whose mobile is the outlet's owner number (exe helpers/ownerAccount.js). */
+function staffView(u, hotel) {
     return {
         id: String(u.id),
         name: u.name,
         mobile: u.number,
         role: resolveRole(u.role_mst?.role_name),
         active: u.active !== false,
-        isOwner: resolveRole(u.role_mst?.role_name) === "Owner",
+        isOwner: !!hotel?.owner_number && digits(u.number) === digits(hotel.owner_number),
     };
 }
 
@@ -59,7 +62,7 @@ async function registerDevice(hotel, user, device) {
 }
 
 async function session(hotel, user, device) {
-    return { ok: true, session: { token: sign(hotel.id, user.id, String(device.deviceId)), user: staffView(user), deviceId: String(device.deviceId) } };
+    return { ok: true, session: { token: sign(hotel.id, user.id, String(device.deviceId)), user: staffView(user, hotel), deviceId: String(device.deviceId) } };
 }
 
 async function loginWithPassword({ mobile, password, device }) {
@@ -112,7 +115,7 @@ async function resume({ token, device }) {
     const gate = outletGate(hotel);
     if (gate) return gate;
     await dev.update({ last_active: new Date() });
-    return { ok: true, session: { token, user: staffView(user), deviceId: String(p.did) } };
+    return { ok: true, session: { token, user: staffView(user, hotel), deviceId: String(p.did) } };
 }
 
 /**

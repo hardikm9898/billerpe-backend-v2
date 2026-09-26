@@ -394,18 +394,29 @@ async function cancelOrder(c, orderId, reason) {
 
 /* ------------------------------ tables ------------------------------ */
 
+// exe controller/table.js#destinationProblem, word for word.
+const HELD_MERGE_MESSAGE = "A held order can't be merged. Transfer it to a free table instead - it stays on hold there.";
+function destinationProblem(source, target) {
+    if (!target || target.id === source.id) return null;
+    if (isBilled(target)) return "The bill for the destination table is already generated - pick another table.";
+    if (isHeldStatus(source)) return HELD_MERGE_MESSAGE;
+    if (isHeldStatus(target)) return "The destination table is on hold - held orders can't be merged. Pick another table.";
+    return null;
+}
+
 /** Transfer to a free table; a held order stays Hold (owner rule). */
 async function transferTable(c, orderId, toTableId) {
     needSpecial(c, "tables.mergeTransfer");
     const o = await findOrder(c, orderId);
     if (!isOpen(o) || o.order_type !== "dinin") fail("Only an open dine-in order can move");
+    if (isBilled(o)) fail("Bill already generated for this order - it can no longer be moved or merged");
     const to = await findTable(c, toTableId);
     if (await openOrderOnTable(c, to.id)) fail(`${to.table_name} is not free — use Merge instead`);
     const fromId = o.TableId;
     await o.update({ TableId: to.id }, { transaction: c.t });
     await OrderDetails.update({ TableId: to.id }, { where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t });
     await setTableStatus(c, fromId, "F", "moved");
-    await setTableStatus(c, to.id, isHeldStatus(o) ? "H" : isBilled(o) ? "P" : "R");
+    await setTableStatus(c, to.id, isHeldStatus(o) ? "H" : "R");
     await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t });
     await event(c, o.id, `Moved to ${to.table_name}`, "update_order");
     await audit(c, "Tables", `Transferred bill ${o.bill_no} to ${to.table_name}`);
@@ -419,13 +430,15 @@ async function mergeTables(c, fromTableId, toTableId) {
     if (!from) fail("The first table has no order");
     if (!to) fail("The second table has no order");
     if (from.id === to.id) fail("Pick a different table");
-    if (isHeldStatus(from) || isHeldStatus(to)) fail("Held tables cannot be merged. Send or clear the held items first.");
+    if (isBilled(from)) fail("Bill already generated for this order - it can no longer be moved or merged");
+    const problem = destinationProblem(from, to);
+    if (problem) fail(problem);
     const offset = (await OrderDetails.max("kotNumber", { where: { orderId: to.id, hotel_id: c.hotelId }, transaction: c.t })) || 0;
     const moving = await OrderDetails.findAll({ where: { orderId: from.id, hotel_id: c.hotelId }, transaction: c.t });
     for (const l of moving) {
         await l.update({ orderId: to.id, TableId: to.TableId, UserId: to.UserId, kotNumber: l.kotNumber ? l.kotNumber + offset : null }, { transaction: c.t });
     }
-    await to.update({ guests: (to.guests || 0) + (from.guests || 0), status: isBilled(to) ? "in-progress" : to.status }, { transaction: c.t });
+    await to.update({ guests: (to.guests || 0) + (from.guests || 0) }, { transaction: c.t });
     await from.update({ deleted: true }, { transaction: c.t });
     await setTableStatus(c, from.TableId, "F", "moved");
     await setTableStatus(c, to.TableId, "R");
@@ -441,16 +454,18 @@ async function moveKot(c, orderId, kotNo, toTableId) {
     needSpecial(c, "tables.mergeTransfer");
     const o = await findOrder(c, orderId);
     if (!isOpen(o)) fail("This order is closed");
-    const lines = await OrderDetails.findAll({ where: { orderId: o.id, hotel_id: c.hotelId, kotNumber: Number(kotNo), status: { [Op.in]: ["kot", "delivered"] } }, transaction: c.t });
+    if (isBilled(o)) fail("Bill already generated for this order - its KOT rounds can no longer be moved");
+    // Only what is still with the kitchen moves (exe: status "kot"); served food stays.
+    const lines = await OrderDetails.findAll({ where: { orderId: o.id, hotel_id: c.hotelId, kotNumber: Number(kotNo), status: "kot" }, transaction: c.t });
     if (!lines.length) fail("KOT not found");
     const to = await findTable(c, toTableId);
     if (to.id === o.TableId) fail("Pick a different table");
     let target = await openOrderOnTable(c, to.id);
-    if (target && isHeldStatus(target)) fail(`${to.table_name} is on hold — a held order cannot take a KOT`);
+    const problem = destinationProblem(o, target);
+    if (problem) fail(problem);
     if (!target) target = await createOrder(c, { type: "dinin", tableId: to.id, guests: 1, menuId: o.menu_catalog_id }, "in-progress");
     const newKot = ((await OrderDetails.max("kotNumber", { where: { orderId: target.id, hotel_id: c.hotelId }, transaction: c.t })) || 0) + 1;
     for (const l of lines) await l.update({ orderId: target.id, TableId: to.id, UserId: target.UserId, kotNumber: newKot }, { transaction: c.t });
-    if (isBilled(target)) await target.update({ status: "in-progress" }, { transaction: c.t });
     await setTableStatus(c, to.id, "R");
     await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t });
     await recomputeOrderTotals(target.id, c.hotelId, { transaction: c.t });
@@ -460,7 +475,7 @@ async function moveKot(c, orderId, kotNo, toTableId) {
     const left = await OrderDetails.count({ where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t });
     if (!left) {
         await o.update({ deleted: true }, { transaction: c.t });
-        await setTableStatus(c, o.TableId, "F");
+        await setTableStatus(c, o.TableId, "F", "moved");
     }
     await audit(c, "Tables", `Moved KOT #${kotNo} to ${to.table_name}`);
 }

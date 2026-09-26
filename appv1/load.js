@@ -7,6 +7,7 @@ const { ROLE_PERMISSION_DEFAULTS, ROLE_SPECIAL_DEFAULTS } = require("../constant
 const { asArray, normaliseOrderType } = require("./engine/billEngine");
 const { toIdList } = require("./engine/routing");
 const { iso, dietaryOf, orderView } = require("./views");
+const { modeIdFromName } = require("./modes");
 
 // GET /app/v1/load - everything the POS App holds for the signed-in outlet
 // (OutletData, BillerPe POS App src/lib/pos/backend/types.ts), read from the
@@ -204,8 +205,15 @@ function roleDefaultsView(saved) {
     return out;
 }
 
+const digits = (v) => String(v ?? "").replace(/\D/g, "");
+
 async function staffView(hotelId) {
-    const users = await M.HotelUser.findAll({ where: { hotel_id: hotelId }, include: M.Role, order: [["id", "ASC"]] });
+    const [users, hotel] = await Promise.all([
+        M.HotelUser.findAll({ where: { hotel_id: hotelId }, include: M.Role, order: [["id", "ASC"]] }),
+        M.Hotel.findOne({ where: { id: hotelId }, attributes: ["owner_number"], raw: true }),
+    ]);
+    // The owner is the login with the outlet's owner number (exe helpers/ownerAccount.js), not a role.
+    const ownerNumber = digits(hotel?.owner_number);
     const out = [];
     for (const u of users) {
         const role = resolveRole(u.role_mst?.role_name);
@@ -215,7 +223,7 @@ async function staffView(hotelId) {
             const p = await loadPermissions(hotelId, u);
             overrides = { modules: p.modules, special: p.special };
         }
-        out.push({ id: String(u.id), name: u.name, mobile: u.number || "", role, active: u.active !== false, isOwner: role === "Owner", overrides });
+        out.push({ id: String(u.id), name: u.name, mobile: u.number || "", role, active: u.active !== false, isOwner: !!ownerNumber && digits(u.number) === ownerNumber, overrides });
     }
     return out;
 }
@@ -485,6 +493,7 @@ async function cashView(hotelId, names) {
 }
 
 async function expensesView(hotelId, names, since) {
+    const modes = await M.PaymentMode.findAll({ where: { hotel_id: hotelId }, raw: true });
     const [heads, entries] = await Promise.all([
         M.ExpenseHead.findAll({ where: { hotel_id: hotelId, deleted: { [Op.not]: true } }, raw: true }),
         M.ExpenseEntry.findAll({ where: { hotel_id: hotelId, deleted: { [Op.not]: true }, createdAt: { [Op.gte]: since } }, order: [["id", "DESC"]], raw: true }),
@@ -492,9 +501,10 @@ async function expensesView(hotelId, names, since) {
     return {
         expenseHeads: heads.map((h) => ({ id: String(h.id), name: h.expense_head_name, type: "Variable", active: true, system: h.expense_head_name === "Supplier payment" || undefined })),
         expenses: entries.map((e) => ({
-            id: String(e.id), headId: str(e.expense_head_id) ?? "", amount: r2(e.amount), modeId: String(e.paymentMode || "cash").toLowerCase(),
+            id: String(e.id), headId: str(e.expense_head_id) ?? "", amount: r2(e.amount), modeId: modeIdFromName(e.paymentMode, modes),
             note: e.reason || "", at: iso(e.createdAt), by: names.get(e.user_id) ?? "",
             fromPurchase: e.purchase_payment_id != null || undefined,
+            fromDrawer: (!!e.addExpense && String(e.paymentMode).toLowerCase() === "cash") || undefined,
         })),
     };
 }
@@ -525,6 +535,10 @@ async function stockView(hotelId, names, since) {
     ]);
     const stockOf = new Map(stocks.map((s) => [s.raw_material_id, s]));
     const conv = new Map(raws.map((r) => [r.id, Number(r.conversion_qty) || 1]));
+    const purchaseUnit = new Map(raws.map((r) => [r.id, Number(r.unit_id)]));
+    const modes = await M.PaymentMode.findAll({ where: { hotel_id: hotelId }, raw: true });
+    const poModeId = (name) => ({ cheque: "cheque", "bank transfer": "bank", online: "bank" })[String(name || "").trim().toLowerCase()] || modeIdFromName(name, modes);
+    const drawerPaid = new Set(poPays.length ? (await M.CashMovement.findAll({ where: { purchase_payment_id: poPays.map((p) => p.id) }, attributes: ["purchase_payment_id", "amount"], raw: true })).filter((m) => Number(m.amount) !== 0).map((m) => m.purchase_payment_id) : []);
     const recipeLine = (r) => (r.raw_material_id ? { kind: "raw", refId: String(r.raw_material_id), qty: Number(r.consumption_qty) || 0 } : { kind: "semi", refId: String(r.semi_finished_item_id), qty: Number(r.consumption_qty) || 0 });
     const recipesByItem = new Map();
     for (const r of recipes) {
@@ -556,13 +570,17 @@ async function stockView(hotelId, names, since) {
         purchases: pos.map((p) => ({
             id: String(p.id), poNo: String(p.Po_no ?? p.id), supplierId: str(p.supplier_id) ?? "", date: String(p.business_date || p.invoice_date || iso(p.createdAt)).slice(0, 10),
             invoiceNo: p.invoice_number || undefined,
-            lines: poLines.filter((l) => l.purchaseOrderId === p.id).map((l) => ({ rawId: String(l.raw_material_id), qty: Number(l.qty) || 0, rate: Number(l.price) || 0, taxPct: (Number(l.cgst) || 0) + (Number(l.sgst) || 0) + (Number(l.igst) || 0) })),
-            discountType: p.discount_type === "percentage" || p.discount_type === "percent" ? "percent" : Number(p.discount_value) ? "flat" : undefined,
+            // cgst/sgst/igst are rupees on the pre-tax line amount (Web POS mapRawPurchaseOrder).
+            lines: poLines.filter((l) => l.purchaseOrderId === p.id).map((l) => ({
+                rawId: String(l.raw_material_id), qty: Number(l.qty) || 0, rate: Number(l.price) || 0,
+                taxPct: Number(l.amount) > 0 ? r2((((Number(l.cgst) || 0) + (Number(l.sgst) || 0) + (Number(l.igst) || 0)) / Number(l.amount)) * 100) : 0,
+            })),
+            discountType: !Number(p.discount_value) ? undefined : p.discount_type === "pr" || p.discount_type === "percent" ? "percent" : "flat",
             discountValue: Number(p.discount_value) || undefined,
             total: r2(p.grandAmount),
             payments: poPays.filter((x) => x.purchaseOrderId === p.id).map((x) => ({
-                id: String(x.id), amount: r2(x.amount), modeId: String(x.payment_mode || "cash").toLowerCase(), date: String(x.paymentDate || x.date || iso(x.createdAt)).slice(0, 10),
-                ref: x.payment_ref_no || undefined, by: names.get(x.userId) ?? "", asExpense: x.expense_entry_id != null, fromDrawer: false,
+                id: String(x.id), amount: r2(x.amount), modeId: poModeId(x.payment_mode), date: String(iso(x.paymentDate || x.date || x.createdAt)).slice(0, 10),
+                ref: x.payment_ref_no || undefined, by: names.get(x.userId) ?? "", asExpense: x.expense_entry_id != null, fromDrawer: drawerPaid.has(x.id),
             })),
             by: names.get(p.userId) ?? "",
         })),
@@ -580,8 +598,10 @@ async function stockView(hotelId, names, since) {
             value: r2(m.value), reference: m.note || (m.ref_type ? `${m.ref_type} ${m.ref_id ?? ""}`.trim() : ""), at: iso(m.createdAt), by: names.get(m.user_id) ?? "",
         })),
         wastage: wastage.map((w) => ({
-            id: String(w.id), refKind: "raw", refId: String(w.raw_material_id), qty: Number(w.qty) || 0, reason: w.reason || w.notes || "",
-            at: iso(w.createdAt), by: names.get(w.user_id) ?? "", cost: r2((Number(w.qty) || 0) * (Number(w.average_price) || 0) / (conv.get(w.raw_material_id) || 1)),
+            // Entered in either unit; average_price holds the total cost (exe wastage.js).
+            id: String(w.id), refKind: "raw", refId: String(w.raw_material_id),
+            qty: r2((Number(w.qty) || 0) * (Number(w.unit_id) === purchaseUnit.get(w.raw_material_id) ? conv.get(w.raw_material_id) || 1 : 1)),
+            reason: w.reason || w.notes || "", at: iso(w.createdAt), by: names.get(w.user_id) ?? "", cost: r2(w.average_price),
         })),
     };
 }
@@ -624,7 +644,7 @@ async function load(c) {
     const today = businessDate(clock);
     const since = moment.tz(today, "YYYY-MM-DD", clock.timeZone).subtract(ORDER_DAYS, "days");
     const sinceDate = since.toDate();
-    const [hotel, sections, tables, staffRows, savedRoles, devices, alerts, audit, tickets, queue, dueRows, otherOutlets] = await Promise.all([
+    const [hotel, sections, tables, staffRows, savedRoles, devices, alerts, audit, tickets, queue, dueRows, otherOutlets, payModes] = await Promise.all([
         M.Hotel.findOne({ where: { id: hotelId }, raw: true }),
         M.TableCatagories.findAll({ where: { hotel_id: hotelId, active: { [Op.not]: false } }, order: [["rank", "ASC"], ["id", "ASC"]], raw: true }),
         M.Table.findAll({ where: { hotel_id: hotelId, active: true }, order: [["id", "ASC"]], raw: true }),
@@ -637,6 +657,7 @@ async function load(c) {
         M.AppQueueEntry.findAll({ where: { hotel_id: hotelId, createdAt: { [Op.gte]: moment().subtract(1, "day").toDate() } }, order: [["id", "ASC"]], raw: true }),
         M.DuePaymentReceive.findAll({ where: { hotel_id: hotelId, deleted: { [Op.not]: true }, createdAt: { [Op.gte]: sinceDate } }, include: [{ model: M.User, attributes: ["name", "number"] }], order: [["id", "DESC"]] }),
         c.user.number ? M.HotelUser.findAll({ where: { number: c.user.number, active: true }, attributes: ["hotel_id"], raw: true }) : [],
+        M.PaymentMode.findAll({ where: { hotel_id: hotelId }, raw: true }),
     ]);
     const names = new Map(staffRows.map((s) => [Number(s.id), s.name]));
     const orders = await loadOrderViews(hotelId, {
@@ -689,7 +710,7 @@ async function load(c) {
         customers,
         dueCollections: dueRows.map((d) => ({
             id: String(d.id), customerMobile: d.hms_user_master?.number || "", customerName: d.hms_user_master?.name || "",
-            amount: r2(d.amount), modeId: String(d.payment_mode || "cash").toLowerCase(), at: iso(d.createdAt), by: names.get(d.settle_by) ?? "",
+            amount: r2(d.amount), modeId: modeIdFromName(d.payment_mode, payModes), at: iso(d.createdAt), by: names.get(d.settle_by) ?? "",
         })),
         ...cash,
         ...money,
@@ -711,4 +732,4 @@ async function load(c) {
     };
 }
 
-module.exports = { load, loadOrderViews, loadOrderView, tableQrUrl, bookingMoment, formatLines, FORMAT_KEYWORD, paymentModesView, BUILT_IN_MODES };
+module.exports = { load, loadOrderViews, loadOrderView, cashView, expensesView, stockView, tableQrUrl, bookingMoment, formatLines, FORMAT_KEYWORD, paymentModesView, BUILT_IN_MODES };

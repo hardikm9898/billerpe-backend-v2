@@ -113,7 +113,7 @@ function register(handlers) {
     }
 }
 // Domain modules, each { name: handler }:
-for (const mod of []) register(require(mod));
+for (const mod of ["./domains/frontOfHouse", "./domains/money", "./domains/catalog", "./domains/admin", "./domains/stock", "./domains/reports"]) register(require(mod));
 
 /**
  * GET /app/v1/version - a cheap fingerprint of the outlet's live state. The

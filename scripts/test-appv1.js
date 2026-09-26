@@ -362,6 +362,8 @@ async function run() {
     const cancelHeld = await cap.cancelOrder(hc.orderId, "customer left");
     check("nothing sent to the kitchen: captain can cancel", cancelHeld.ok && (await tbl("T6")).status === "free", cancelHeld);
 
+    await runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl });
+
     console.log("\nisolation");
     const other = await M.Order.findOne({ where: { hotel_id: { [require("sequelize").Op.ne]: s.hid } } });
     if (other) {
@@ -370,6 +372,181 @@ async function run() {
     }
     const ver = await fetch(`${base}/version`, { headers: { Authorization: `Bearer ${ownerT}` } }).then((r) => r.json());
     check("version fingerprint", ver.ok && typeof ver.result.v === "string");
+}
+
+/* ------------------------------ domains ------------------------------ */
+
+async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl }) {
+    const later = (min) => new Date(Date.now() + min * 60000).toISOString();
+    const today = new Date().toISOString().slice(0, 10);
+    const rnd = () => `k${Math.random()}`;
+
+    console.log("\nreservations & queue");
+    // A table nobody has ordered at yet: an order started in the hold window counts as the guest arriving.
+    await owner.addTables((await owner.load()).sections[0].id, "R1", 4);
+    const R1 = (await owner.load()).tables.find((t) => t.name === "R1").id;
+    const res1 = await mgr.saveReservation({ name: "Mehta", mobile: "9000011111", guests: 4, at: later(20), endAt: later(80), tableIds: [R1], advance: 0 });
+    check("booking saved", res1.ok, res1);
+    check("booked table shows reserved (held 30 min before)", (await tbl("R1")).status === "reserved");
+    const clash = await mgr.saveReservation({ name: "Shah", mobile: "9000022222", guests: 2, at: later(40), endAt: later(100), tableIds: [R1], advance: 0 });
+    check("overlapping booking on the same table refused", !clash.ok && /already booked/.test(clash.error || ""), clash);
+    const ns = await mgr.setReservationStatus(res1.id, "noshow");
+    const rv = (await owner.load()).reservations.find((x) => x.id === res1.id);
+    check("no-show frees the table", ns.ok && rv?.status === "noshow" && (await tbl("R1")).status === "free", rv);
+    check("waitlist needs a mobile", !(await cap.addToQueue({ name: "Rao", mobile: "", guests: 2 })).ok);
+    const q = await cap.addToQueue({ name: "Rao", mobile: "9000033333", guests: 2 });
+    const qc = await cap.setQueueStatus(q.id, "called");
+    check("waitlist add + call", q.ok && qc.ok && (await owner.load()).queue.find((x) => x.id === q.id)?.status === "called", { q, qc });
+
+    console.log("\ncustomers & due");
+    const cust = await owner.saveCustomer({ name: "Kiran", mobile: "9000044444", gstin: "", address: "" });
+    check("customer saved", cust.ok, cust);
+    check("same mobile refused", !(await owner.saveCustomer({ name: "Other", mobile: "9000044444" })).ok);
+    const asha = (await owner.load()).customers.find((c) => c.mobile === "9876500000");
+    check("cashier cannot collect dues (Ledger permission, as in the Web POS)", !(await cashier.collectDue("9876500000", 10, "cash")).ok);
+    const tooMuch = await owner.collectDue("9876500000", asha.dueOutstanding + 1, "cash");
+    check("collecting more than the due refused", !tooMuch.ok, tooMuch);
+    const drawerBefore = await M.CashMovement.sum("amount", { where: { cashSessionId: session.id } });
+    const coll = await owner.collectDue("9876500000", 50, "cash");
+    const d1 = await owner.load();
+    const drawerAfter = await M.CashMovement.sum("amount", { where: { cashSessionId: session.id } });
+    check("part due collected in cash: due down, drawer up", coll.ok && Math.abs(d1.customers.find((c) => c.mobile === "9876500000").dueOutstanding - (asha.dueOutstanding - 50)) < 0.01 && Math.abs(drawerAfter - drawerBefore - 50) < 0.01, coll);
+    check("collection listed with its mode", d1.dueCollections.some((x) => x.amount === 50 && x.modeId === "cash"), d1.dueCollections);
+
+    console.log("\ncash & expenses");
+    const bal = await M.CashMovement.sum("amount", { where: { cashSessionId: session.id } });
+    check("cash out above the drawer refused", !(await cashier.cashMovement("out", bal + 1000, "bank")).ok);
+    check("cash in", (await cashier.cashMovement("in", 100, "change from bank")).ok);
+    const head = await owner.saveExpenseHead({ name: "Gas", type: "Variable", active: true });
+    const headId = (await owner.load()).expenseHeads.find((h) => h.name === "Gas")?.id;
+    const ex = await owner.saveExpense({ headId, amount: 40, modeId: "cash", note: "cylinder", fromDrawer: true });
+    let d2 = await owner.load();
+    const exRow = d2.expenses.find((e) => e.note === "cylinder");
+    check("cash expense from the drawer", head.ok && ex.ok && exRow?.fromDrawer && d2.cashSession.movements.some((m) => m.kind === "expense" && m.amount === 40), { head, ex, exRow });
+    const del = exRow ? await owner.deleteExpense(exRow.id) : { ok: false };
+    d2 = await owner.load();
+    check("deleting it gives the cash back", del.ok && !d2.expenses.some((e) => e.id === exRow?.id), del);
+
+    console.log("\nstock");
+    let st = (await owner.load()).stock;
+    const kg = st.units.find((u) => u.short === "kg");
+    const g = st.units.find((u) => u.short === "g");
+    const raw = await owner.saveRaw({ name: "Tomato", category: "", unitId: g.id, purchaseUnitId: kg.id, conversion: 1000, reorderLevel: 500, active: true, openingStock: 3000, openingRate: 0.05 });
+    st = (await owner.load()).stock;
+    const tomato = st.raw.find((r) => r.name === "Tomato");
+    check("raw material with opening stock (g)", raw.ok && tomato?.stock === 3000 && tomato.rate === 0.05, { raw, tomato });
+    const sup = await owner.saveSupplier({ name: "Fresh Farms", contact: "", phone: "", gstin: "" });
+    const supId = (await owner.load()).stock.suppliers.find((x) => x.name === "Fresh Farms")?.id;
+    const po = await owner.savePurchase({ supplierId: supId, date: today, lines: [{ rawId: tomato.id, qty: 2, rate: 40, taxPct: 5 }], firstPayment: { amount: 50, modeId: "cash", fromDrawer: true } });
+    st = (await owner.load()).stock;
+    const p1 = st.purchases.find((x) => x.supplierId === supId);
+    check("purchase: stock in, total with tax, first payment from the drawer", sup.ok && po.ok && p1?.total === 84 && p1.payments[0]?.amount === 50 && p1.payments[0].fromDrawer && st.raw.find((r) => r.id === tomato.id).stock === 5000, { po, p1 });
+    check("supplier outstanding", st.suppliers.find((x) => x.id === supId)?.outstanding === 34, st.suppliers);
+    const overpay = await owner.addPurchasePayment(p1.id, { amount: 100, modeId: "upi", date: today, fromDrawer: false });
+    check("paying more than is due refused", !overpay.ok, overpay);
+    const upiPay = await owner.addPurchasePayment(p1.id, { amount: 34, modeId: "upi", date: today, fromDrawer: false });
+    check("rest paid by UPI, recorded as expense", upiPay.ok && (await owner.load()).expenses.some((e) => e.fromPurchase), upiPay);
+    const cnt = await owner.stockEntry({ kind: "count", refKind: "raw", refId: tomato.id, qty: 4500, note: "count" });
+    check("stock count adjusts to what is on the shelf", cnt.ok && (await owner.load()).stock.raw.find((r) => r.id === tomato.id).stock === 4500, cnt);
+    check("wastage above stock refused", !(await owner.recordWastage({ refKind: "raw", refId: tomato.id, qty: 99999, reason: "spoilt" })).ok);
+    const w = await owner.recordWastage({ refKind: "raw", refId: tomato.id, qty: 500, reason: "spoilt" });
+    st = (await owner.load()).stock;
+    check("wastage in grams, with its cost", w.ok && st.raw.find((r) => r.id === tomato.id).stock === 4000 && st.wastage.some((x) => x.qty === 500 && x.cost > 0), { w, wastage: st.wastage });
+    const rec = await owner.saveRecipe({ itemId: String(s.items.chai.id), base: [{ kind: "raw", refId: tomato.id, qty: 10 }], byVariant: {}, byAddon: {} });
+    check("recipe saved", rec.ok && (await owner.load()).stock.recipes.some((r) => r.itemId === String(s.items.chai.id)), rec);
+    const semi = await owner.saveSemi({ name: "Tomato puree", unitId: g.id, minStock: 0, components: [{ kind: "raw", refId: tomato.id, qty: 2 }] });
+    const semiId = (await owner.load()).stock.semi.find((x) => x.name === "Tomato puree")?.id;
+    const prod = await owner.produceSemi(semiId, 100, "batch");
+    st = (await owner.load()).stock;
+    check("production uses raw stock, adds the semi-finished item", semi.ok && prod.ok && st.semi.find((x) => x.id === semiId)?.stock === 100 && st.raw.find((r) => r.id === tomato.id).stock === 3800, { semi, prod });
+
+    console.log("\nmenu & tables");
+    const cat = await owner.saveCategory({ menuId: String(s.catalog.id), name: "Soups", rank: 3, active: true });
+    const catId = (await owner.load()).categories.find((x) => x.name === "Soups")?.id;
+    const item = await owner.saveItem({ menuId: String(s.catalog.id), categoryId: catId, name: "Tomato Soup", shortCode: "", price: 90, dietary: "veg", gstType: "G", description: "", favorite: false, active: true, outOfStock: false, variants: [], addonGroupIds: [] });
+    const soup = (await owner.load()).items.find((i) => i.name === "Tomato Soup");
+    check("item saved with a generated short code", cat.ok && item.ok && soup && soup.shortCode.length > 0, { cat, item });
+    if (soup) {
+        await owner.setOutOfStock(soup.id, true);
+        const oos = await cap.sendKot({ type: "dinin", tableId: T3, guests: 1, menuId: "", clientKey: rnd(), lines: [{ key: "x", itemId: soup.id, name: soup.name, dietary: "veg", addons: [], price: 90, qty: 1, custom: false }] });
+        check("out-of-stock item cannot be ordered", !oos.ok, oos);
+        check("a category with items cannot be deleted", !(await owner.deleteCategory(catId)).ok);
+        await owner.deleteItem(soup.id);
+        check("deleted item is gone", !(await owner.load()).items.some((i) => i.id === soup.id));
+    }
+    check("addon group max above its options refused", !(await owner.saveAddonGroup({ menuId: String(s.catalog.id), name: "Dips", min: 0, max: 3, single: false, active: true, options: [{ id: "", name: "Mint", price: 10, dietary: "veg" }] })).ok);
+    const sec = (await owner.load()).sections[0].id;
+    const add = await owner.addTables(sec, "G1-G3", 4);
+    const again = await owner.addTables(sec, "G1-G4", 4);
+    check("bulk add tables; existing names skipped", add.ok && add.added === 3 && again.ok && again.added === 1 && again.skipped.length === 3, { add, again });
+    const g1 = (await owner.load()).tables.find((t) => t.name === "G1");
+    const qr = await owner.newTableQr(g1.id);
+    check("new QR bumps the version", qr.ok && (await owner.load()).tables.find((t) => t.id === g1.id).qrVersion === 2, qr);
+    check("rename + delete a free table", (await owner.editTable(g1.id, { name: "G10" })).ok && (await owner.deleteTable(g1.id)).ok);
+
+    console.log("\nstaff & permissions");
+    const ownerRow = (await owner.load()).staff.find((x) => x.isOwner);
+    check("the owner is the owner-number login", ownerRow && ownerRow.mobile === s.staff.owner.number, ownerRow);
+    check("manager cannot edit the owner", !(await mgr.saveStaff({ id: ownerRow.id, name: "X", mobile: ownerRow.mobile, role: "Owner" })).ok);
+    check("owner cannot be switched off", !(await owner.setStaffActive(ownerRow.id, false)).ok);
+    const newCap = await owner.saveStaff({ name: "Veer", mobile: `8${String(Date.now()).slice(-9)}`, role: "Captain", pin: "4321", password: "secret99" });
+    check("new captain added", newCap.ok, newCap);
+    check("a used mobile is refused", !(await owner.saveStaff({ name: "Dup", mobile: s.staff.captain.number, role: "Captain", pin: "1111", password: "secret99" })).ok);
+    const off = await owner.setStaffActive(String(s.staff.captain2.id), false);
+    const after = await post("/load", { args: [] }, cap2T);
+    check("switched-off staff are signed out at once", off.ok && after.status === 401, { off, status: after.status });
+    await owner.setStaffActive(String(s.staff.captain2.id), true);
+    const rd = await mgr.setRoleDefaults("Captain", (await owner.load()).roleDefaults.Captain);
+    check("manager cannot change role permissions (no special)", !rd.ok, rd);
+    check("owner can", (await owner.setRoleDefaults("Captain", (await owner.load()).roleDefaults.Captain)).ok);
+
+    console.log("\nsettings");
+    const fmt = { header: [{ id: "h1", content: "outlet-name", fontSize: 16 }, { id: "h2", content: "text", text: "Welcome", fontSize: 12 }], footer: [{ id: "f1", content: "phone", fontSize: 12 }] };
+    const us = await owner.updateSettings({ invoiceFormat: fmt, businessDayStart: "05:00", tokens: { tokenFor: "both", billWithKot: "dinin", billWithToken: "off" } });
+    const set = (await owner.load()).settings;
+    check("invoice format + day start + tokens round-trip", us.ok && set.invoiceFormat.header[0]?.content === "outlet-name" && set.invoiceFormat.header[1]?.text === "Welcome" && set.invoiceFormat.footer[0]?.content === "phone" && set.businessDayStart === "05:00" && set.tokens.tokenFor === "both", { us, fmt: set.invoiceFormat });
+    await owner.updateSettings({ businessDayStart: "00:00" });
+    check("bad day start refused", !(await owner.updateSettings({ businessDayStart: "25:00" })).ok);
+    const svc = await owner.saveCharge("service", { active: true, type: "percentage", value: 10, calculationOn: "core", orderTypes: ["dinin"], taxOnCharge: false, condition: "3", threshold: 0 });
+    const withSvc = await cap.sendKot({ type: "dinin", tableId: T3, guests: 1, menuId: "", clientKey: rnd(), lines: [{ key: "y", itemId: String(s.items.paneer.id), name: "Paneer Tikka", dietary: "veg", addons: [], price: 200, qty: 1, custom: false }] });
+    const svcOrder = (await owner.load()).orders.find((o) => o.id === withSvc.orderId);
+    check("automatic 10% service on dine-in", svc.ok && svcOrder?.totals.service === 20, { svc, totals: svcOrder?.totals });
+    check("Cash cannot be renamed", !(await owner.savePaymentMode({ id: "cash", name: "Money", active: true })).ok);
+    check("UPI cannot be removed", !(await owner.removePaymentMode("upi")).ok);
+    const sw = await owner.savePaymentMode({ name: "Swiggy", active: true });
+    check("custom mode added", sw.ok && (await owner.load()).settings.paymentModes.some((m) => m.name === "Swiggy" && m.custom), sw);
+    const kit = await owner.saveKitchen({ name: "Tandoor", categoryIds: [String(s.items.paneer.menu_categ_id)], sectionIds: [sec], orderTypes: ["dinin"] });
+    const tandoor = (await owner.load()).settings.kitchens.find((k) => k.name === "Tandoor");
+    check("kitchen by section / category", kit.ok && tandoor?.sectionIds[0] === sec && tandoor.orderTypes[0] === "dinin", { kit, tandoor });
+    await owner.resetTokens();
+    const tk = await cashier.counterOrder({ type: "pickup", lines: [{ key: "z", itemId: String(s.items.chai.id), name: "Masala Chai", dietary: "veg", addons: [], price: 30, qty: 1, custom: false }], menuId: "", clientKey: rnd() });
+    check("token numbering restarts after a reset", tk.ok && tk.token === 1, tk);
+    const tx = await owner.saveTax({ name: "Cess", type: "pr", rate: 1, active: true, orderTypes: [], sectionIds: [], itemIds: [] });
+    check("tax saved", tx.ok && (await owner.load()).settings.taxes.some((t) => t.name === "Cess"), tx);
+    const promo = await owner.savePromo({ name: "Flat 20", code: "FLAT20", type: "fix", value: 20, active: true });
+    check("promo saved; duplicate code refused", promo.ok && !(await owner.savePromo({ name: "x", code: "FLAT20", type: "fix", value: 5, active: true })).ok, promo);
+    check("bad UPI id refused", !(await owner.updateOutlet({ upiId: "bad" })).ok);
+
+    console.log("\ndevices & account");
+    const printer = (address) => [{ id: "p1", name: "Kitchen", connection: "wifi", address, paperWidth: "80mm", copies: 1, printsKot: true, printsInvoice: false, categoryIds: [], sectionIds: [], orderTypes: [], status: "unknown" }];
+    check("printer with a bad IP refused", !(await owner.saveDevicePrinters("d-owner", printer("1.2.3"), true)).ok);
+    const okPr = await owner.saveDevicePrinters("d-owner", printer("192.168.1.60:9100"), true);
+    check("printers saved per device", okPr.ok && (await owner.load()).devices.find((x) => x.id === "d-owner")?.printers.length === 1, okPr);
+    check("wrong current PIN refused", !(await cap.changePin("0000", "5555")).ok);
+    const tkt = await owner.raiseTicket("Plan change", "Move us to App Pro", "plan-change");
+    check("plan change request raised", tkt.ok && (await owner.load()).tickets.some((x) => x.kind === "plan-change"), tkt);
+    const logout = await owner.logoutDevice("d-cap2");
+    const gone = await post("/load", { args: [] }, cap2T);
+    check("owner logs a phone out: its token stops", logout.ok && gone.status === 401, { logout, status: gone.status });
+
+    console.log("\nreports");
+    const dash = await owner.dashboard({ key: "today" });
+    check("dashboard: sales, bills, modes, top items", dash.ok && dash.net > 0 && dash.bills > 0 && dash.byMode.length > 0 && dash.topItems.length > 0, dash);
+    for (const id of ["day-wise", "item-wise", "category-wise", "tax", "payment-mode", "kot", "staff", "table", "due-collected", "cash-session", "expense", "purchase", "closing-stock", "stock-ledger", "wastage", "discount", "cancelled"]) {
+        const rep = await owner.report(id, { key: "today" }, {});
+        check(`report ${id}`, rep.ok && Array.isArray(rep.rows) && (["cancelled", "discount", "cash-session", "expense"].includes(id) || rep.rows.length > 0), rep.error || rep.rows?.length);
+    }
+    check("captain cannot open reports", !(await cap.report("day-wise", { key: "today" }, {})).ok);
 }
 
 /* ------------------------------ main ------------------------------ */
