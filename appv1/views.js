@@ -1,4 +1,4 @@
-const { parseJson, r2 } = require("./core");
+const { parseJson, r2, isOff } = require("./core");
 const { routeItemsToKitchens } = require("./engine/routing");
 
 // DB rows -> the POS App's shapes (BillerPe POS App src/lib/pos/types.ts).
@@ -41,7 +41,7 @@ function lineStatus(row) {
 
 /** OrderDetails row (+ its Menu row) -> OrderLine. A hidden menu row with shortCode CUSTOM is a custom item. */
 function lineView(row, menu) {
-    const custom = !!menu && menu.shortCode === "CUSTOM" && menu.active === false;
+    const custom = !!menu && menu.shortCode === "CUSTOM" && isOff(menu.active);
     return {
         id: String(row.id),
         itemId: custom || !row.MenuId ? undefined : String(row.MenuId),

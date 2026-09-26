@@ -115,6 +115,10 @@ const restaurantLogin = async (req, res) => {
         if (!validPassword) {
             return res.json(error(MESSAGE.NOT_AUTHORIZE, STATUSCODE.UNAUTHORIZED));
         }
+        // One plan per customer: a POS App (Plan 2) outlet has no Web POS login.
+        if (await require("../appv1/plan").isCloudApp(hotelUser.hotel_id)) {
+            return res.json(error(require("../appv1/plan").PLAN_2_MESSAGE, STATUSCODE.FORBIDDEN));
+        }
 
         const accessToken = jwt.sign({ id: hotelUser.id }, process.env.JWT_SECRET_KEY_ADMIN, { expiresIn: "24h" });
         const refreshToken = jwt.sign({ id: hotelUser.id }, process.env.JWT_SECRET_KEY_ADMIN, { expiresIn: "7d" });

@@ -38,6 +38,10 @@ const registerLocalServer = async (req, res) => {
         if (!hotel) {
             return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.NOT_FOUND));
         }
+        // Plan 2 outlets bill in the POS App on the cloud - no local server.
+        if (hotel.product_plan === "CLOUD_APP") {
+            return res.json(error(require("../appv1/plan").PLAN_2_MESSAGE, STATUSCODE.FORBIDDEN));
+        }
 
         const activeRegistration = await LocalServerRegistration.findOne({
             where: { hotel_id, status: "active" },

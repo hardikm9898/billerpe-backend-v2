@@ -1,7 +1,7 @@
 const crypto = require("crypto")
 const { Op } = require("sequelize")
 const CryptoJS = require("crypto-js")
-const { Hotel, Table, QrOrder, QrSession } = require("../model")
+const { Hotel, Table, QrOrder, QrSession, RestaurantSetting, AppAlert } = require("../model")
 const { emitToDevice } = require("../connection/socket")
 const { STATUSCODE, MESSAGE } = require("../constant/const")
 const { success, error } = require("../responce/res")
@@ -34,6 +34,16 @@ function decryptQrTablePayload(encrypted) {
 }
 
 const MOBILE_PATTERN = /^[0-9]{10}$/
+
+// POS App (Plan 2) outlets can switch QR ordering off in their settings
+// (hms_res_settings.qr_ordering). Plan 1 outlets are not affected.
+const { isCloudApp } = require("../appv1/plan")
+const QR_OFF_MESSAGE = "Ordering from the table is switched off at this restaurant. Please ask a staff member."
+async function qrOrderingOff(hotelId) {
+    if (!(await isCloudApp(hotelId))) return false
+    const setting = await RestaurantSetting.findOne({ where: { hotel_id: hotelId }, attributes: ["qr_ordering"], raw: true })
+    return setting ? setting.qr_ordering === false || setting.qr_ordering === 0 || setting.qr_ordering === "0" : false
+}
 
 // ---------------------------------------------------------------------------
 // Customer sessions (model/qrSession.js). Owner-approved rules, 2026-09-20:
@@ -105,6 +115,7 @@ const startQrSession = async (req, res) => {
         }
         const table = await Table.findOne({ where: { id: payload.tableId, hotel_id: payload.hotelId, active: true } })
         if (!table) return res.json(error(MESSAGE.TABLE_NOT_AVAILABLE, STATUSCODE.BAD_REQUEST))
+        if (await qrOrderingOff(payload.hotelId)) return res.json(error(QR_OFF_MESSAGE, STATUSCODE.BAD_REQUEST))
         if (table.qr_version !== payload.qrVersion) {
             return res.json(error("This menu link is no longer valid - please ask staff for the current one.", STATUSCODE.BAD_REQUEST))
         }
@@ -192,6 +203,7 @@ const createQrOrder = async (req, res) => {
         if (session.bill_ready) {
             return res.json(error("Your bill is ready. Please ask a staff member to add anything more.", 409))
         }
+        if (await qrOrderingOff(session.hotel_id)) return res.json(error(QR_OFF_MESSAGE, STATUSCODE.BAD_REQUEST))
 
         if (!Array.isArray(items) || !items.length) {
             return res.json(error("Your cart is empty.", STATUSCODE.BAD_REQUEST))
@@ -233,6 +245,15 @@ const createQrOrder = async (req, res) => {
         // (billerpe-local-exe/services/cloudLink.js); its 60s heartbeat is
         // only the fallback.
         emitToDevice(session.hotel_id, "qrOrderCreated", { id: qrOrder.id })
+        // POS App (Plan 2) outlets: staff phones see it in their alerts.
+        if (await isCloudApp(session.hotel_id)) {
+            const tableName = (await Table.findByPk(session.table_id, { attributes: ["table_name"] }))?.table_name
+            await AppAlert.create({
+                hotel_id: session.hotel_id, kind: "qr-order", title: `QR order · ${tableName ?? "Table"}`,
+                body: `${items.length} item${items.length === 1 ? "" : "s"} from ${session.customer_name || session.customer_mobile}`,
+                link: "/qr-orders", for_roles: JSON.stringify(["Owner", "Manager", "Cashier", "Captain"]), read_by: "[]",
+            }).catch((e) => console.error("[qrOrder] app alert:", e.message))
+        }
 
         return res.status(STATUSCODE.CREATED).json(success(MESSAGE.SUCCESS, { id: qrOrder.id, ...(await sessionView(session)) }, STATUSCODE.CREATED))
     } catch (err) {

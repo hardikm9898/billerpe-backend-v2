@@ -3,7 +3,7 @@ const {
     Order, OrderDetails, Table, Menu, User, TimeLine, Hotel, PaymentMode, CashSession, CashMovement, KitchenSetting, AppAlert,
     QrSession, QrOrder, MenuVariants, Variants, Addons, AddonDepartment,
 } = require("../model");
-const { fail, need, needSpecial, r2, parseJson, outletClock, businessDate, audit } = require("./core");
+const { fail, need, needSpecial, r2, isOff, parseJson, outletClock, businessDate, audit } = require("./core");
 const { recomputeOrderTotals, nextBillNo, nextToken, tokenApplies } = require("./engine/totals");
 const { routeItemsToKitchens } = require("./engine/routing");
 const { deductStockForOrder, reverseOrderItemStock, reverseAllOrderStock } = require("./engine/stockDeduction");
@@ -573,7 +573,7 @@ async function settle(c, orderId, input) {
     const cols = { cash: 0, upi: 0, card: 0, due: 0 };
     for (const p of rows) {
         const mode = byId(p.modeId);
-        if (mode && mode.active === false) fail(`${mode.name} is switched off`);
+        if (mode && isOff(mode.active)) fail(`${mode.name} is switched off`);
         if (BUILT_IN.includes(p.modeId)) cols[p.modeId] = r2(cols[p.modeId] + p.amount);
         else {
             if (!mode) fail("That payment mode is not set up for this outlet");

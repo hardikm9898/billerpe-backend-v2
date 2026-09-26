@@ -372,6 +372,7 @@ async function run() {
     }
     const ver = await fetch(`${base}/version`, { headers: { Authorization: `Bearer ${ownerT}` } }).then((r) => r.json());
     check("version fingerprint", ver.ok && typeof ver.result.v === "string");
+    await runPlan({ s, owner });
 }
 
 /* ------------------------------ domains ------------------------------ */
@@ -443,7 +444,7 @@ async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl
     check("purchase: stock in, total with tax, first payment from the drawer", sup.ok && po.ok && p1?.total === 84 && p1.payments[0]?.amount === 50 && p1.payments[0].fromDrawer && st.raw.find((r) => r.id === tomato.id).stock === 5000, { po, p1 });
     check("supplier outstanding", st.suppliers.find((x) => x.id === supId)?.outstanding === 34, st.suppliers);
     const overpay = await owner.addPurchasePayment(p1.id, { amount: 100, modeId: "upi", date: today, fromDrawer: false });
-    check("paying more than is due refused", !overpay.ok, overpay);
+    check("paying more than is due refused, with the exe's own message", !overpay.ok && /is due on PO/.test(overpay.error || ""), overpay);
     const upiPay = await owner.addPurchasePayment(p1.id, { amount: 34, modeId: "upi", date: today, fromDrawer: false });
     check("rest paid by UPI, recorded as expense", upiPay.ok && (await owner.load()).expenses.some((e) => e.fromPurchase), upiPay);
     const cnt = await owner.stockEntry({ kind: "count", refKind: "raw", refId: tomato.id, qty: 4500, note: "count" });
@@ -547,6 +548,46 @@ async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl
         check(`report ${id}`, rep.ok && Array.isArray(rep.rows) && (["cancelled", "discount", "cash-session", "expense"].includes(id) || rep.rows.length > 0), rep.error || rep.rows?.length);
     }
     check("captain cannot open reports", !(await cap.report("day-wise", { key: "today" }, {})).ok);
+}
+
+/* ------------------------------ plan guards ------------------------------ */
+
+async function runPlan({ s, owner }) {
+    const { callController } = require("../appv1/legacy");
+    const plan = require("../appv1/plan");
+    const qrCtl = require("../controller/qrOrder");
+    const authCtl = require("../controller/auth");
+    const regCtl = require("../controller/localServerRegistration");
+    const call = (fn, body, hotelId = s.hid) => callController(fn, { hotelId, userId: 1 }, { body }).then((r) => ({ ok: true, r }), (e) => ({ ok: false, error: e.message }));
+
+    console.log("\nplan guards");
+    const web = await call(authCtl.restaurantLogin, { mobile: s.staff.owner.number, password: PW, device_id: "web" });
+    check("Plan 2 outlet has no Web POS login", !web.ok && /POS App/.test(web.error || ""), web);
+    const reg = await call(regCtl.registerLocalServer, { device_id: "pc-1", hostname: "PC" });
+    check("Plan 2 outlet cannot register a local server", !reg.ok && /POS App/.test(reg.error || ""), reg);
+    check("device limit must be 1-100", !(await call(plan.setAppPlan, { hotel_id: s.hid, app_device_limit: 0 })).ok);
+    const lim = await call(plan.setAppPlan, { hotel_id: s.hid, app_device_limit: 6 });
+    check("superadmin changes the device limit", lim.ok && (await owner.load()).outlet.deviceLimit === 6, lim);
+
+    // A customer's QR round on a Plan 2 outlet alerts the staff phones.
+    const tableId = s.tables.T1.id;
+    const t1 = await M.Table.findByPk(tableId);
+    const CryptoJS = require("crypto-js");
+    const salt = CryptoJS.enc.Hex.parse("42696c6c657250655177".padEnd(16, "0").slice(0, 16));
+    process.env.DESECRET_KEY = process.env.DESECRET_KEY || "MySuperSecretKey123";
+    const qrCode = encodeURIComponent(CryptoJS.AES.encrypt(JSON.stringify({ hotelId: s.hid, tableId, qrVersion: t1.qr_version || 1 }), process.env.DESECRET_KEY, { salt }).toString());
+    const sess = await call(qrCtl.startQrSession, { qr: qrCode, customer_mobile: "9111122222", customer_name: "Nina" });
+    const order = sess.ok ? await call(qrCtl.createQrOrder, { session_key: sess.r.session.key, client_key: "c1", items: [{ menuId: s.items.chai.id, itemName: "Masala Chai", qty: 2 }] }) : sess;
+    const qrAlert = (await owner.load()).alerts.find((a) => a.kind === "qr-order" && a.body.includes("Nina"));
+    check("QR round from a customer alerts the staff", order.ok && !!qrAlert, { sess, order });
+    await owner.updateSettings({ qrOrdering: false });
+    const off = await call(qrCtl.startQrSession, { qr: qrCode, customer_mobile: "9111133333", customer_name: "Om" });
+    check("QR ordering switched off: customers are told", !off.ok && /switched off/.test(off.error || ""), off);
+    await owner.updateSettings({ qrOrdering: true });
+
+    const back = await call(plan.setAppPlan, { hotel_id: s.hid, product_plan: "LOCAL_SUITE" });
+    const gone = await owner.load();
+    check("moving back to Plan 1 logs every POS App phone out", back.ok && !gone.ok, gone);
 }
 
 /* ------------------------------ main ------------------------------ */

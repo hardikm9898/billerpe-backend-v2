@@ -15,7 +15,7 @@ function callController(handler, c, { body = {}, query = {}, params = {} } = {})
                 return res;
             },
             json(payload) {
-                if (payload && payload.error) reject(new RuleError(payload.message || "Something went wrong. Please try again."));
+                if (payload && payload.error) reject(new RuleError(payload.message || payload.results?.message || "Something went wrong. Please try again."));
                 else resolve(payload?.results ?? payload);
                 return res;
             },

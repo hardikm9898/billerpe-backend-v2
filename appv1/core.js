@@ -15,6 +15,9 @@ const fail = (msg) => {
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// Rows read with raw: true carry MySQL booleans as 1/0 (or "1"/"0"), never true/false.
+const isOff = (v) => v === false || v === 0 || v === "0";
+
 function parseJson(value, fallback) {
     if (value == null || value === "") return fallback;
     if (typeof value === "object") return value;
@@ -144,4 +147,4 @@ async function audit(c, module, action) {
     ).catch(() => {});
 }
 
-module.exports = { RuleError, fail, r2, parseJson, resolveRole, loadPermissions, need, needSpecial, hasModule, outletClock, businessDate, buildContext, mutate, audit };
+module.exports = { RuleError, fail, r2, isOff, parseJson, resolveRole, loadPermissions, need, needSpecial, hasModule, outletClock, businessDate, buildContext, mutate, audit };

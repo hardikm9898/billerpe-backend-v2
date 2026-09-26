@@ -60,6 +60,10 @@ async function verifyDeviceToken(token) {
     if (registration.installation_id !== decoded.installation_id) {
         return { ok: false, message: "This device's registration was replaced - register it again to resume syncing." };
     }
+    // An outlet moved to the POS App (Plan 2) stops syncing its old exe.
+    if (await require("../appv1/plan").isCloudApp(decoded.hotel_id)) {
+        return { ok: false, message: require("../appv1/plan").PLAN_2_MESSAGE };
+    }
     return { ok: true, hotel_id: decoded.hotel_id, device_id: decoded.device_id, registration };
 }
 

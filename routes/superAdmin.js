@@ -18,6 +18,8 @@ const { sendWhatsappMessage, createWhatsAppTemplate, updateWhatsAppTemplate, sen
 // registered local server - restaurant users have no route to this at all.
 router.post("/device/release", superAdminAuth, releaseLocalServer)
 router.get("/device/list", superAdminAuth, listActiveLocalServers)
+// A customer has one plan: Web POS + Captain via the exe, or the POS App (Plan 2).
+router.post("/appPlan", superAdminAuth, require("../appv1/plan").setAppPlan)
 
 // Standalone utility page - no dedicated SuperAdmin frontend exists in this
 // workspace (same situation as the Captain App), so this small

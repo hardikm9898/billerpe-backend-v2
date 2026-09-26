@@ -214,6 +214,8 @@ server.listen(PORT, (err) => {
         try {
             // Tables that must NOT receive ALTER TABLE (production-safe)
             const TABLES_TO_SKIP_ALTER = [
+                // POS App (Plan 2): schema owned by migration 20260926100000.
+                "app_devices", "app_client_keys", "app_queue_entries", "app_alerts", "hms_stock_movements",
                 "hms_res_settings",
                 'hms_menu_msts',
                 'hms_recipes_msts',

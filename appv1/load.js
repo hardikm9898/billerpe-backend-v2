@@ -2,7 +2,7 @@ const { Op, fn, col } = require("sequelize");
 const moment = require("moment-timezone");
 const CryptoJS = require("crypto-js");
 const M = require("../model");
-const { parseJson, r2, resolveRole, outletClock, businessDate, loadPermissions } = require("./core");
+const { parseJson, r2, isOff, resolveRole, outletClock, businessDate, loadPermissions } = require("./core");
 const { ROLE_PERMISSION_DEFAULTS, ROLE_SPECIAL_DEFAULTS } = require("../constant/rolePermissionDefaults");
 const { asArray, normaliseOrderType } = require("./engine/billEngine");
 const { toIdList } = require("./engine/routing");
@@ -134,11 +134,11 @@ function paymentModesView(rows) {
     const builtIn = BUILT_IN_MODES.map((b) => {
         const row = byName.get(b.id);
         // Cash and Due are always on (owner rule); UPI/Card follow the outlet's row.
-        return { id: b.id, name: b.name, locked: b.locked, active: b.locked ? true : row ? row.active !== false : true, custom: false };
+        return { id: b.id, name: b.name, locked: b.locked, active: b.locked ? true : row ? !isOff(row.active) : true, custom: false };
     });
     const custom = rows
         .filter((r) => !BUILT_IN_MODES.some((b) => b.id === String(r.name).trim().toLowerCase()))
-        .map((r) => ({ id: `pm-${r.id}`, name: r.name, locked: false, active: r.active !== false, custom: true }));
+        .map((r) => ({ id: `pm-${r.id}`, name: r.name, locked: false, active: !isOff(r.active), custom: true }));
     return [...builtIn, ...custom];
 }
 
@@ -161,10 +161,10 @@ async function settingsView(hotelId, hotel, setting, tables) {
         M.KotFormate.findOne({ where: { hotel_id: hotelId }, raw: true }),
     ]);
     return {
-        gstOn: hotel.invoiceFormateIncGst !== false,
+        gstOn: !isOff(hotel.invoiceFormateIncGst),
         taxes: taxes.map((x) => ({
             id: String(x.id), name: x.tax_name, type: x.tax_value === "fix" ? "fix" : "pr", rate: Number(x.amount) || 0,
-            active: x.active !== false, orderTypes: orderTypes(x.order_type), sectionIds: ids(x.table_categ_ids), itemIds: ids(x.menu_ids),
+            active: !isOff(x.active), orderTypes: orderTypes(x.order_type), sectionIds: ids(x.table_categ_ids), itemIds: ids(x.menu_ids),
         })),
         serviceCharge: chargeRule(service, "service"),
         packagingCharge: chargeRule(packaging, "packaging"),
@@ -172,7 +172,7 @@ async function settingsView(hotelId, hotel, setting, tables) {
         promoCodes: promos.map((p) => ({
             id: String(p.id), name: p.promo_code_name || p.promo_code, code: p.promo_code,
             type: p.discount_type === "pr" || /percent/i.test(p.discount_type || "") ? "pr" : "fix",
-            value: Number(p.discount_value) || 0, active: p.status !== false,
+            value: Number(p.discount_value) || 0, active: !isOff(p.status),
         })),
         kitchens: kitchens.map((k) => ({
             id: String(k.id), name: k.kitchen_name, categoryIds: toIdList(k.menu_categ_ids),
@@ -186,8 +186,8 @@ async function settingsView(hotelId, hotel, setting, tables) {
         billReset: ["daily", "financial_year"].includes(setting?.bill_reset_type) ? setting.bill_reset_type : "never",
         financialYearStartMonth: Number(setting?.financial_year_start_month) || 4,
         cashSessionOn: !!setting?.opening_closing_show,
-        qrOrdering: setting ? setting.qr_ordering !== false : true,
-        supplierPaymentsAsExpense: setting ? setting.supplier_payment_expense !== false : true,
+        qrOrdering: setting ? !isOff(setting.qr_ordering) : true,
+        supplierPaymentsAsExpense: setting ? !isOff(setting.supplier_payment_expense) : true,
     };
 }
 
@@ -223,7 +223,7 @@ async function staffView(hotelId) {
             const p = await loadPermissions(hotelId, u);
             overrides = { modules: p.modules, special: p.special };
         }
-        out.push({ id: String(u.id), name: u.name, mobile: u.number || "", role, active: u.active !== false, isOwner: !!ownerNumber && digits(u.number) === ownerNumber, overrides });
+        out.push({ id: String(u.id), name: u.name, mobile: u.number || "", role, active: !isOff(u.active), isOwner: !!ownerNumber && digits(u.number) === ownerNumber, overrides });
     }
     return out;
 }
@@ -359,21 +359,21 @@ async function menuView(hotelId) {
     const variantName = new Map(variants.map((v) => [v.id, v.variants_name]));
     const menus = catalogs.length
         ? catalogs.map((m) => ({
-            id: String(m.id), name: m.name, isDefault: !!m.is_default || m.id === defaultMenu.id, active: m.active !== false,
+            id: String(m.id), name: m.name, isDefault: !!m.is_default || m.id === defaultMenu.id, active: !isOff(m.active),
             sectionIds: ids(m.table_category_ids), orderTypes: orderTypes(m.order_types),
         }))
         : [];
     return {
         menus,
-        categories: categories.map((c) => ({ id: String(c.id), menuId: menuOf(c), name: c.menu_categ_nm, rank: Number(c.rank) || 0, active: c.active !== false })),
+        categories: categories.map((c) => ({ id: String(c.id), menuId: menuOf(c), name: c.menu_categ_nm, rank: Number(c.rank) || 0, active: !isOff(c.active) })),
         variants: variants.map((v) => ({ id: String(v.id), menuId: menuOf(v), name: v.variants_name })),
         addonGroups: depts.map((d) => ({
             id: String(d.id), menuId: menuOf(d), name: d.department_name,
             min: Number(d.minimum_allowed_addon) || 0, max: Number(d.maximum_allowed_addon) || 0,
-            single: !!d.singleSelection, active: d.active !== false,
+            single: !!d.singleSelection, active: !isOff(d.active),
             options: addons.filter((a) => a.department_id === d.id).map((a) => ({ id: String(a.id), name: a.addon_name, price: Number(a.price) || 0, dietary: dietaryOf(a.attributes) })),
         })),
-        items: items.filter((i) => !(i.shortCode === "CUSTOM" && i.active === false)).map((i) => ({
+        items: items.filter((i) => !(i.shortCode === "CUSTOM" && isOff(i.active))).map((i) => ({
             id: String(i.id),
             menuId: menuOf(categById.get(i.menu_categ_id)),
             categoryId: str(i.menu_categ_id) ?? "",
@@ -386,10 +386,10 @@ async function menuView(hotelId) {
             imageUrl: i.foodImage || undefined,
             barcode: i.barcode_value || undefined,
             favorite: !!i.favorite,
-            active: i.active !== false,
+            active: !isOff(i.active),
             outOfStock: !!i.out_of_stock,
             variants: menuVariants.filter((v) => v.menu_id === i.id).map((v) => ({ variantId: String(v.variant_id), name: variantName.get(v.variant_id) ?? "", price: Number(v.variant_price) || 0 })),
-            addonGroupIds: menuAddons.filter((a) => a.menu_id === i.id && a.active !== false).map((a) => String(a.addon_department_id)),
+            addonGroupIds: menuAddons.filter((a) => a.menu_id === i.id && !isOff(a.active)).map((a) => String(a.addon_department_id)),
         })),
     };
 }
@@ -717,7 +717,7 @@ async function load(c) {
         devices: devices.map((d) => ({
             id: d.device_id, name: d.name, make: d.make, model: d.model, android: d.android, appVersion: d.app_version,
             userName: names.get(d.hotel_user_id) ?? "", lastActive: iso(d.last_active) || "", thisDevice: d.device_id === c.deviceId,
-            printers: parseJson(d.printers, []) || [], printKots: d.print_kots !== false,
+            printers: parseJson(d.printers, []) || [], printKots: !isOff(d.print_kots),
         })),
         alerts: alertsView(alerts, c),
         audit: audit.map((a) => ({ id: String(a.id), at: iso(a.createdAt), by: a.user_name || "", role: roleOf.get(a.user_name) || "Cashier", module: a.entity || "", action: a.action || "" })),
