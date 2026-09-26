@@ -383,6 +383,14 @@ let summaryWorkerRunning = false
 const summaryQueue = []
 const summaryQueued = new Set()      // de-dupe key: `${hotelId}-${businessDate}`
 
+// Sent by this server, by the same key. last_summary_sent_date lives on the
+// hotel's hms_res_setting row; a hotel without that row was never marked and
+// got the summary again every minute (2026-09-26: 475 messages to 25 numbers).
+const summarySent = new Set()
+// A send that failed waits before the next try instead of retrying every minute.
+const SUMMARY_RETRY_AFTER_MS = 30 * 60 * 1000
+const summaryRetryAt = new Map()     // key -> time the next try is allowed
+
 const enqueueSummaryJob = (job) => {
     const key = `${job.hotel.id}-${job.businessDate}`
     if (summaryQueued.has(key)) return   // already queued / in-flight
@@ -405,6 +413,8 @@ const processSummaryQueue = async () => {
             }
 
             if (ok) {
+                summarySent.add(job.key)
+                summaryRetryAt.delete(job.key)
                 if (setting) await setting.update({ last_summary_sent_date: businessDate })
                 summaryQueued.delete(job.key)
             } else {
@@ -412,7 +422,8 @@ const processSummaryQueue = async () => {
                 if (job.attempts < SUMMARY_MAX_ATTEMPTS) {
                     summaryQueue.push(job)            // retry later in this same drain
                 } else {
-                    summaryQueued.delete(job.key)     // give up for this run; next cron tick re-enqueues
+                    summaryQueued.delete(job.key)     // give up for this run; tried again after SUMMARY_RETRY_AFTER_MS
+                    summaryRetryAt.set(job.key, Date.now() + SUMMARY_RETRY_AFTER_MS)
                     console.error(`Summary send failed this run for hotel ${hotel.id} (business date ${businessDate})`)
                 }
             }
@@ -456,8 +467,19 @@ const checkAndSendClosingSummaries = async () => {
             // No way to deliver — skip without marking, stays visible as null for follow-up.
             if (!hotel.owner_number) continue
 
+            // Already sent by this server (the only record for a hotel with no
+            // settings row), or a failed send still waiting for its retry time.
+            const key = `${hotel.id}-${businessDate}`
+            if (summarySent.has(key)) continue
+            if ((summaryRetryAt.get(key) || 0) > Date.now()) continue
+
             enqueueSummaryJob({ hotel, timeZone, businessStartTime, businessDate, setting })
         }
+
+        // Keys from past business days are no longer needed.
+        const oldest = moment().subtract(3, 'days').format('YYYY-MM-DD')
+        for (const k of summarySent) if (k.slice(k.indexOf('-') + 1) < oldest) summarySent.delete(k)
+        for (const k of summaryRetryAt.keys()) if (k.slice(k.indexOf('-') + 1) < oldest) summaryRetryAt.delete(k)
 
         // Fire-and-forget; the worker is self-guarded against overlap.
         processSummaryQueue()
