@@ -3773,6 +3773,17 @@ const getBillViewData = async (req, res) => {
     }
 }
 
+// The WhatsApp template's amount line is just "Amount : {{3}}", so the
+// currency travels with the number (owner decision, 2026-09-28): "Rs.221"
+// for the Indian Rupee (as the message always read), "$221" or "AED 221"
+// for an outlet set to another currency (Hotel.currency / currency_code).
+function ebillAmountText(hotel, amount) {
+    const code = String(hotel?.currency_code || "INR").toUpperCase();
+    const symbol = code === "INR" ? "Rs." : (String(hotel?.currency || "").trim() || "Rs.");
+    const gap = /[A-Za-z]$/.test(symbol) ? " " : "";
+    return `${symbol}${gap}${amount || 0}`;
+}
+
 const sentEbill = async (req, res) => {
     try {
         const { mobile, orderId } = req.body
@@ -3837,7 +3848,7 @@ const sentEbill = async (req, res) => {
                         parameters: [
                             { type: "text", text: user?.name || 'User' },
                             { type: "text", text: hotel?.hotel_name || '' },
-                            { type: "text", text: order.grandAmount || "0" },
+                            { type: "text", text: ebillAmountText(hotel, order.grandAmount) },
                             { type: "text", text: `${moment(new Date()).format("DD/MM/YYYY hh:mm a")}` },
                             { type: "text", text: link || "" },
 

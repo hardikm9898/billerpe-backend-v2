@@ -216,6 +216,12 @@ const Hotel = sequelize.define("hotel_registration", {
         type: DataTypes.STRING,
         defaultValue: '₹'
     },
+    // Which currency the symbol above belongs to ("INR" default, "OTHER" =
+    // the owner's own symbol) - set from the outlet exe, migration 20260928130000.
+    currency_code: {
+        type: DataTypes.STRING,
+        defaultValue: 'INR'
+    },
 
     active: {
 

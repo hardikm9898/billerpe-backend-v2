@@ -24,11 +24,12 @@ const models = require("../../model");
 //           cloud wins an exact tie (it is the shared, multi-device copy).
 //   "push"  exe owns it; the cloud only ever receives it (append-only logs).
 //
-// `dependsOn` lists foreign keys whose values arrive as the exe's OWN local
-// ids and must be translated to this database's ids before writing. The
-// order of ENTITIES matters for that reason: a parent must appear before
-// anything that references it, because the exe pushes in this order and
-// each parent's cloud id is what the child's translation looks up.
+// `dependsOn` lists foreign keys to other synced rows. The exe converts them
+// to this database's ids before pushing; the cloud checks each one exists
+// for the hotel (syncController.js#resolveParentId - `legacyLocal` marks a
+// field older exes sent as their own local id). The order of ENTITIES
+// matters: a parent must appear before anything that references it, because
+// the exe pushes in this order and a child waits for its parent's cloud id.
 
 const ENTITIES = [
     // ---- menu domain -------------------------------------------------------
@@ -38,8 +39,13 @@ const ENTITIES = [
     { name: "addonDepartments", Model: models.AddonDepartment, direction: "both", dependsOn: [{ field: "menu_catalog_id", parent: "menuCatalogs" }] },
     { name: "menuItems", Model: models.Menu, direction: "both", dependsOn: [{ field: "menu_categ_id", parent: "menuCategs" }] },
     { name: "addons", Model: models.Addons, direction: "both", dependsOn: [{ field: "department_id", parent: "addonDepartments" }] },
-    { name: "menuVariants", Model: models.MenuVariants, direction: "both", dependsOn: [{ field: "menu_id", parent: "menuItems" }, { field: "variant_id", parent: "variants" }] },
-    { name: "menuAddons", Model: models.MenuAddon, direction: "both", dependsOn: [{ field: "menu_id", parent: "menuItems" }, { field: "addon_department_id", parent: "addonDepartments" }] },
+    // naturalKey: an item's variant / addon-group link is ONE row per pair
+    // (unique index). The exe deletes and re-creates an item's links on every
+    // save, so the new link arrives under a new local id - matched by id it
+    // hit the unique index ("Validation error") and never synced again
+    // (found 2026-09-28). Matching by the pair updates the existing link.
+    { name: "menuVariants", Model: models.MenuVariants, direction: "both", naturalKey: ["menu_id", "variant_id"], dependsOn: [{ field: "menu_id", parent: "menuItems" }, { field: "variant_id", parent: "variants" }] },
+    { name: "menuAddons", Model: models.MenuAddon, direction: "both", naturalKey: ["menu_id", "addon_department_id"], dependsOn: [{ field: "menu_id", parent: "menuItems" }, { field: "addon_department_id", parent: "addonDepartments" }] },
 
     // ---- floor -------------------------------------------------------------
     // table_status is deliberately NOT synced in either direction here: it is
@@ -89,7 +95,17 @@ const ENTITIES = [
 
     // ---- stock master ------------------------------------------------------
     { name: "units", Model: models.Unit, direction: "both" },
-    { name: "rawMaterials", Model: models.RawMaterial, direction: "both", dependsOn: [{ field: "unit_id", parent: "units" }] },
+    // legacyLocal: exes built before 2026-09-28 sent these two as their own
+    // local ids (only unit_id was converted) - see syncController.js
+    // #resolveParentId. Newer exes convert all three.
+    {
+        name: "rawMaterials", Model: models.RawMaterial, direction: "both",
+        dependsOn: [
+            { field: "unit_id", parent: "units" },
+            { field: "consumption_unit", parent: "units", legacyLocal: true },
+            { field: "minimum_stock_level_unit", parent: "units", legacyLocal: true },
+        ],
+    },
     { name: "suppliers", Model: models.Supplier, direction: "both" },
     { name: "semiFinishedItems", Model: models.SemiFinishedItem, direction: "both", dependsOn: [{ field: "unit_id", parent: "units" }] },
     { name: "semiFinishedRecipes", Model: models.SemiFinishedRecipe, direction: "both", dependsOn: [{ field: "semi_finished_item_id", parent: "semiFinishedItems" }, { field: "raw_material_id", parent: "rawMaterials" }] },
@@ -109,7 +125,8 @@ const ENTITIES = [
     { name: "cashMovements", Model: models.CashMovement, direction: "both", scope: "cashSession", dependsOn: [{ field: "cashSessionId", parent: "cashSessions" }] },
     { name: "promoCodes", Model: models.PromoCode, direction: "both" },
     { name: "wastage", Model: models.Westage, direction: "both", dependsOn: [{ field: "raw_material_id", parent: "rawMaterials" }, { field: "unit_id", parent: "units" }] },
-    { name: "purchaseOrders", Model: models.PurchaseOrder, direction: "both", dependsOn: [{ field: "supplier_id", parent: "suppliers" }] },
+    // legacyLocal: older exes never converted supplier_id (newer ones do).
+    { name: "purchaseOrders", Model: models.PurchaseOrder, direction: "both", dependsOn: [{ field: "supplier_id", parent: "suppliers", legacyLocal: true }] },
     { name: "purchaseOrderPayments", Model: models.PurchaseOrderPayment, direction: "both", dependsOn: [{ field: "purchaseOrderId", parent: "purchaseOrders" }] },
 
     // ---- exe-owned, append-only -------------------------------------------

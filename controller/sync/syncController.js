@@ -2,7 +2,7 @@ const { Op, QueryTypes } = require("sequelize");
 const sequelize = require("../../connection/connect");
 const {
     Hotel, QrOrder, TableBooking, LocalServerRegistration,
-    Order, OrderDetails, OrderTax, User, Table, TaxType, Menu,
+    Order, OrderDetails, OrderTax, User, Table, TaxType, Menu, MenuVariants, MenuAddon,
 } = require("../../model");
 const { MESSAGE, STATUSCODE } = require("../../constant/const");
 const { success, error } = require("../../responce/res");
@@ -10,6 +10,7 @@ const {
     ENTITIES, ORDER_ENTITY, getEntity, buildVersionQuery, scopeWhere, pickWritableFields, primaryKeyOf,
 } = require("./syncRegistry");
 const { currentBundleFor } = require("./webBundleController");
+const { decodeJsonColumns, decodeJsonValue } = require("./jsonColumns");
 
 // Sync engine v2. Three endpoints, all behind middleware/deviceAuth.js
 // (req.user = hotel_id). See controller/sync/syncRegistry.js for the entity
@@ -137,7 +138,9 @@ const pull = async (req, res) => {
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, {
             entity: entity.name,
-            rows: page,
+            // JSON columns as their real value, even for a row stored as
+            // encoded text before the fix (controller/sync/jsonColumns.js).
+            rows: page.map((r) => decodeJsonColumns(entity.Model, r)),
             nextCursor,
             // The exe stores this as its high-water mark only once an entity
             // has been fully drained (nextCursor null), so an interrupted
@@ -163,52 +166,72 @@ const pull = async (req, res) => {
 //   every other order in the same tick, and came back in the next tick, and
 //   the next - an outlet could sit unsynced for days behind one row.
 //
-//   Foreign keys translated, not trusted. A value like menu_categ_id
-//   arrives as the EXE's own local id. It is looked up in the parent table
-//   by (hotel_id, local_id) and replaced with the real id here. A parent
-//   that genuinely is not here yet is reported as a retryable row, not a
-//   crash - the exe pushes parents before children, so the next tick fixes
-//   it once the parent lands.
-async function translateForeignKeys(entity, row, hotelId) {
+//   Foreign keys checked, not trusted. The exe converts every foreign key to
+//   OUR id before sending (its services/sync/push.js#translateRow), so a
+//   value like menu_categ_id is normally already a cloud id. This used to be
+//   looked up by local_id FIRST - converting it a second time, so a
+//   category/unit/table whose cloud id happened to equal another row's
+//   local id was silently swapped for that other row (found 2026-09-28: a
+//   raw material's unit 7 stored as 11). Now (see resolveParentId):
+//     - an exe that says so (`fkIds: "cloud"`) is taken at its word: the id
+//       must exist here for this hotel;
+//     - an older exe: cloud id first, local_id only as a fallback - except
+//       the few fields older exes never converted (`legacyLocal` in the
+//       registry), which keep the local_id-first lookup they relied on.
+//   A parent that is not here yet is a retryable row, not a crash.
+async function resolveParentId(parent, hotelId, value, { cloudIds, legacyLocal }) {
+    const parentPk = primaryKeyOf(parent);
+    const hasLocalId = Object.keys(parent.Model.rawAttributes).includes("local_id");
+    const byId = async () => (await parent.Model.findOne({
+        where: { ...scopeWhere(parent, hotelId), [parentPk]: value }, attributes: [parentPk], raw: true,
+    }))?.[parentPk] ?? null;
+    const byLocal = async () => (hasLocalId ? (await parent.Model.findOne({
+        where: { ...scopeWhere(parent, hotelId), local_id: value }, attributes: [parentPk], raw: true,
+    }))?.[parentPk] ?? null : null);
+    if (cloudIds) return byId();
+    if (legacyLocal) return (await byLocal()) ?? byId();
+    return (await byId()) ?? byLocal();
+}
+
+async function translateForeignKeys(entity, row, hotelId, { cloudIds = false } = {}) {
     const unresolved = [];
     const out = { ...row };
     for (const dep of entity.dependsOn || []) {
-        const localValue = row[dep.field];
-        if (localValue == null) continue;
+        const value = row[dep.field];
+        if (value == null) continue;
         const parent = getEntity(dep.parent);
         if (!parent) continue;
-        const parentPk = primaryKeyOf(parent);
-        const parentAttrs = Object.keys(parent.Model.rawAttributes);
-
-        // Rows that reached the exe by PULL keep the cloud's own id as their
-        // local id, so the value may already be a valid cloud id. Rows
-        // CREATED on the exe only resolve via local_id. Try the local_id
-        // match first (unambiguous when present), then fall back to treating
-        // it as a cloud id that already exists here.
-        let resolved = null;
-        if (parentAttrs.includes("local_id")) {
-            const byLocal = await parent.Model.findOne({
-                where: { ...scopeWhere(parent, hotelId), local_id: localValue },
-                attributes: [parentPk],
-                raw: true,
-            });
-            if (byLocal) resolved = byLocal[parentPk];
-        }
+        const resolved = await resolveParentId(parent, hotelId, value, { cloudIds, legacyLocal: !!dep.legacyLocal });
         if (resolved == null) {
-            const byId = await parent.Model.findOne({
-                where: { ...scopeWhere(parent, hotelId), [parentPk]: localValue },
-                attributes: [parentPk],
-                raw: true,
-            });
-            if (byId) resolved = byId[parentPk];
-        }
-        if (resolved == null) {
-            unresolved.push(`${dep.field}=${localValue} (${dep.parent} not synced here yet)`);
+            unresolved.push(`${dep.field}=${value} (${dep.parent} not synced here yet)`);
             continue;
         }
         out[dep.field] = resolved;
     }
     return { row: out, unresolved };
+}
+
+// A menu item pushed with `_links` (its full current variant and addon-group
+// list, already in our ids) drops the links it no longer has. An exe replaces
+// an item's links on every save but only ever sent the new ones, so a variant
+// removed from an item stayed on it here (owner report, 2026-09-28). Without
+// `_links` (an older exe, or a link not synced yet) nothing is removed.
+async function pruneItemLinks(entity, menuId, hotelId, links, t) {
+    if (entity.name !== "menuItems" || !links || typeof links !== "object") return;
+    const variantIds = Array.isArray(links.variant_ids) ? links.variant_ids.map(Number) : null;
+    const addonIds = Array.isArray(links.addon_department_ids) ? links.addon_department_ids.map(Number) : null;
+    if (variantIds) {
+        await MenuVariants.destroy({
+            where: { menu_id: menuId, hotel_id: hotelId, ...(variantIds.length ? { variant_id: { [Op.notIn]: variantIds } } : {}) },
+            transaction: t,
+        });
+    }
+    if (addonIds) {
+        await MenuAddon.destroy({
+            where: { menu_id: menuId, hotel_id: hotelId, ...(addonIds.length ? { addon_department_id: { [Op.notIn]: addonIds } } : {}) },
+            transaction: t,
+        });
+    }
 }
 
 const push = async (req, res) => {
@@ -225,6 +248,12 @@ const push = async (req, res) => {
         const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
         const pk = primaryKeyOf(entity);
         const results = [];
+        // fkIds "cloud": this exe already converted its foreign keys to our ids.
+        // fkRepair: one-time correction after the double-conversion fix - only
+        // the foreign keys of rows we already have are rewritten, whatever
+        // their updatedAt (their other fields are not touched).
+        const cloudIds = req.body?.fkIds === "cloud";
+        const fkRepair = cloudIds && req.body?.fkRepair === true;
 
         for (const incoming of rows) {
             const localId = incoming.local_id ?? incoming.id;
@@ -234,14 +263,16 @@ const push = async (req, res) => {
             }
             const t = await sequelize.transaction();
             try {
-                const { row: translated, unresolved } = await translateForeignKeys(entity, incoming, hotelId);
+                const { row: translated, unresolved } = await translateForeignKeys(entity, incoming, hotelId, { cloudIds });
                 if (unresolved.length) {
                     await t.rollback();
                     results.push({ local_id: localId, ok: false, retryable: true, message: `unresolved: ${unresolved.join(", ")}` });
                     continue;
                 }
 
-                const fields = pickWritableFields(entity, translated);
+                // An exe's JSON columns may arrive as encoded text - stored
+                // as that, they gained a layer each round trip.
+                const fields = decodeJsonColumns(entity.Model, pickWritableFields(entity, translated));
                 if (entity.scope !== "cashSession") fields.hotel_id = hotelId;
                 fields.local_id = localId;
 
@@ -290,6 +321,22 @@ const push = async (req, res) => {
                     });
                 }
 
+                if (fkRepair) {
+                    if (!existing) {
+                        await t.rollback();
+                        results.push({ local_id: localId, ok: true, skipped: "not here" });
+                        continue;
+                    }
+                    const fkFields = Object.fromEntries((entity.dependsOn || [])
+                        .filter((d) => translated[d.field] !== undefined)
+                        .map((d) => [d.field, translated[d.field]]));
+                    const changed = Object.entries(fkFields).filter(([k, v]) => existing[k] !== v);
+                    if (changed.length) await existing.update(Object.fromEntries(changed), { transaction: t });
+                    await t.commit();
+                    results.push({ local_id: localId, ok: true, cloud_id: existing[pk], updatedAt: existing.updatedAt, repaired: changed.map(([k]) => k) });
+                    continue;
+                }
+
                 if (existing) {
                     // Last write wins by updatedAt, cloud wins an exact tie -
                     // the cloud copy is the shared one, so a same-millisecond
@@ -312,6 +359,7 @@ const push = async (req, res) => {
                         continue;
                     }
                     await existing.update(fields, { transaction: t });
+                    await pruneItemLinks(entity, existing[pk], hotelId, incoming._links, t);
                     await t.commit();
                     // updatedAt is echoed back so the exe can advance its own
                     // pull high-water mark for this entity. Without it, the
@@ -321,6 +369,7 @@ const push = async (req, res) => {
                     results.push({ local_id: localId, ok: true, cloud_id: existing[pk], updatedAt: existing.updatedAt });
                 } else {
                     const created = await entity.Model.create(fields, { transaction: t });
+                    await pruneItemLinks(entity, created[pk], hotelId, incoming._links, t);
                     await t.commit();
                     results.push({ local_id: localId, ok: true, cloud_id: created[pk], updatedAt: created.updatedAt });
                 }
@@ -396,13 +445,17 @@ async function resolveCustomer(order, hotelId, t) {
     return created.id;
 }
 
-// TableId / MenuId / hmsTaxTypeMstId all arrive as the exe's local ids.
-async function resolveByLocalId(Model, hotelId, localId, t) {
-    if (localId == null) return null;
-    const byLocal = await Model.findOne({ where: { hotel_id: hotelId, local_id: localId }, attributes: ["id"], raw: true, transaction: t });
-    if (byLocal) return byLocal.id;
-    const byId = await Model.findOne({ where: { hotel_id: hotelId, id: localId }, attributes: ["id"], raw: true, transaction: t });
-    return byId ? byId.id : null;
+// TableId / MenuId / hmsTaxTypeMstId: every exe converts these to OUR ids
+// before pushing an order (billerpe-local-exe services/sync/pushOrders.js
+// #cloudIdFor), so they are looked up as cloud ids first. Looking them up by
+// local_id first converted them a second time and could file an order's
+// lines under another dish (the same bug as translateForeignKeys above).
+async function resolveByLocalId(Model, hotelId, value, t) {
+    if (value == null) return null;
+    const byId = await Model.findOne({ where: { hotel_id: hotelId, id: value }, attributes: ["id"], raw: true, transaction: t });
+    if (byId) return byId.id;
+    const byLocal = await Model.findOne({ where: { hotel_id: hotelId, local_id: value }, attributes: ["id"], raw: true, transaction: t });
+    return byLocal ? byLocal.id : null;
 }
 
 const ORDER_FIELDS = [
@@ -482,7 +535,8 @@ const pushOrders = async (req, res) => {
                         qty: line.qty, price: line.price, order_type: line.order_type,
                         kotNumber: line.kotNumber, totalDiscount: line.totalDiscount || 0,
                         status: line.status, payment_status: line.payment_status,
-                        comment: line.comment || "", addons: line.addons || [],
+                        // An older exe sends addons as TEXT - store the array.
+                        comment: line.comment || "", addons: decodeJsonValue(line.addons) || [],
                         variant_name: line.variant_name || "",
                         TableId: fields.TableId ?? null, UserId: fields.UserId,
                     });

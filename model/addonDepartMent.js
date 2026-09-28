@@ -34,8 +34,14 @@ const AddonDepartment = sequelize.define("hms_addon_department_mst", {
     active: {
         type: DataTypes.BOOLEAN,
         defaultValue: true
-    }
-
+    },
+    // Deleted (gone from every list) vs merely inactive (active:false - still
+    // listed on the outlet's Menu screens, hidden from billing). Written by
+    // the outlet exe, synced both ways - migration 20260928120000.
+    is_deleted: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false
+    },
 })
 
 

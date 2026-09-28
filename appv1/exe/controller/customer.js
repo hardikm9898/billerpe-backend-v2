@@ -23,7 +23,7 @@ const getNumberSuggestion = async (req, res) => {
         // ?search=<digits>: customers whose mobile contains them - the
         // customer form's suggestions as staff type a number, so a regular
         // is found even beyond the first page the POS keeps in memory.
-        const search = String(req.query.search || "").replace(/D/g, "").slice(0, 10);
+        const search = String(req.query.search || "").replace(/\D/g, "").slice(0, 10);
 
         const nonEmptyCondition = {
             [Op.or]: [

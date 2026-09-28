@@ -305,7 +305,11 @@ const updateInvoiceFormate = async (req, res) => {
         if (!hotel) return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
         // console.log(req.body)
         const { gst_no, fssai_no, invoiceFormateIncGst, multiLanguage, bill_with_kot, is_token_on, bill_with_token, service_charge, saveBehave, upiId, invoiceFormateHeaderText, invoiceFormateBottomText } = req.body.hotel
-        await Hotel.update({ gst_no, fssai_no, multiLanguage, saveBehave, service_charge, invoiceFormateIncGst, bill_with_kot, is_token_on, bill_with_token, upiId, invoiceFormateHeaderText, invoiceFormateBottomText }, { where: { id: hotel.id } })
+        // Outlet currency, forwarded by the exe (e-bill + QR menu print it).
+        // An empty symbol is ignored rather than stored.
+        const currency = typeof req.body.hotel.currency === "string" && req.body.hotel.currency.trim() ? req.body.hotel.currency.trim().slice(0, 10) : undefined
+        const currency_code = typeof req.body.hotel.currency_code === "string" && req.body.hotel.currency_code.trim() ? req.body.hotel.currency_code.trim().toUpperCase().slice(0, 10) : undefined
+        await Hotel.update({ gst_no, fssai_no, multiLanguage, saveBehave, service_charge, invoiceFormateIncGst, bill_with_kot, is_token_on, bill_with_token, upiId, invoiceFormateHeaderText, invoiceFormateBottomText, currency, currency_code }, { where: { id: hotel.id } })
         // setImmediate(() => {
 
         await updatedRestaurantToRadis(hotel.id)
