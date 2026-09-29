@@ -359,6 +359,43 @@ async function run() {
     check("the owner signing in on a shared phone takes its pushes", JSON.stringify(await targets("bill-requested")) === JSON.stringify(["tok-mgr", "tok-owner"]), await targets("bill-requested"));
     await owner.setPushToken(null);
 
+    console.log("\nowner alerts");
+    const ownerAlertsOf = async () => (await owner.load()).alerts.filter((a) => a.kind === "owner-alert");
+    check("owner alert defaults: all on, 20%", JSON.stringify((await owner.load()).settings.ownerAlerts) === JSON.stringify({ cancelAfterKot: true, bigDiscount: true, discountPct: 20, cashDifference: true }), (await owner.load()).settings.ownerAlerts);
+    check("manager removing a sent item alerted the owner", (await ownerAlertsOf()).some((a) => /Item removed after KOT/.test(a.title) && /not needed/.test(a.body)), await ownerAlertsOf());
+    check("staff never see owner alerts", !(await cap.load()).alerts.some((a) => a.kind === "owner-alert") && !(await mgr.load()).alerts.some((a) => a.kind === "owner-alert"));
+    check("only the owner changes owner alerts", !(await mgr.updateSettings({ ownerAlerts: { cancelAfterKot: false, bigDiscount: false, discountPct: 20, cashDifference: false } })).ok);
+    check("discount limit must be 1-100%", !(await owner.updateSettings({ ownerAlerts: { cancelAfterKot: true, bigDiscount: true, discountPct: 0, cashDifference: true } })).ok);
+    for (const n of ["OA1", "OA2", "OA3"]) await owner.addTables((await owner.load()).sections[0].id, n, 2);
+    const allTables = (await owner.load()).tables;
+    const oaTables = ["OA1", "OA2", "OA3"].map((n) => allTables.find((t) => t.name === n).id);
+    const discounted = async (tableId, pct) => {
+        const r = await cap.sendKot({ type: "dinin", tableId, guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chicken, 1)] });
+        await mgr.setDiscount(r.orderId, { type: "pr", value: pct, reason: "friend" });
+        const g = (await owner.load()).orders.find((o) => o.id === r.orderId).totals.grand;
+        await cashier.settle(r.orderId, { payments: [{ modeId: "upi", amount: g }], clientKey: key() });
+        return r.orderId;
+    };
+    let before = (await ownerAlertsOf()).length;
+    await discounted(oaTables[0], 50);
+    const big = (await ownerAlertsOf()).filter((a) => /Big discount/.test(a.title));
+    check("50% discount settled -> big discount alert", big.length === 1 && /50%/.test(big[0].body) && /friend/.test(big[0].body), big);
+    const setOa = await owner.updateSettings({ ownerAlerts: { cancelAfterKot: false, bigDiscount: true, discountPct: 60, cashDifference: true } });
+    before = (await ownerAlertsOf()).length;
+    await discounted(oaTables[1], 50);
+    check("owner raises the limit to 60%: a 50% discount is quiet", setOa.ok && (await ownerAlertsOf()).length === before, setOa);
+    const rc = await cap.sendKot({ type: "dinin", tableId: oaTables[2], guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chai, 1)] });
+    const cancelled = await mgr.cancelOrder(rc.orderId, "guest left");
+    check("cancel-after-KOT alert switched off: no alert", cancelled.ok && (await ownerAlertsOf()).length === before, cancelled);
+    await owner.updateSettings({ ownerAlerts: { cancelAfterKot: true, bigDiscount: true, discountPct: 20, cashDifference: true } });
+    const rc2 = await cap.sendKot({ type: "dinin", tableId: oaTables[2], guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chai, 1)] });
+    await mgr.cancelOrder(rc2.orderId, "guest left");
+    check("switched on again: order cancelled after KOT alerts the owner", (await ownerAlertsOf()).some((a) => /Order cancelled after KOT/.test(a.title) && /guest left/.test(a.body)));
+    const ownCancel = await cap.sendKot({ type: "dinin", tableId: oaTables[2], guests: 1, menuId: "", clientKey: key(), lines: [line(s.items.chai, 1)] });
+    before = (await ownerAlertsOf()).length;
+    await owner.cancelOrder(ownCancel.orderId, "owner's own");
+    check("the owner's own actions never alert the owner", (await ownerAlertsOf()).length === before);
+
     console.log("\nQR round");
     const qrSession = await M.QrSession.create({ hotel_id: s.hid, table_id: s.tables.T6.id, customer_mobile: "9123400000", customer_name: "Guest", session_key: `s${stamp}`, status: "open" });
     const qr = await M.QrOrder.create({ hotel_id: s.hid, table_id: s.tables.T6.id, qr_version: 1, customer_name: "Guest", customer_mobile: "9123400000", session_id: qrSession.id, status: "pending", items: [{ menuId: s.items.paneer.id, itemName: "Paneer Tikka", qty: 1, variantId: s.half.id, addonIds: [s.cheese.id] }, { menuId: s.items.chicken.id, itemName: "Chicken Tikka", qty: 1 }] });
@@ -461,7 +498,7 @@ async function run() {
     }
     const ver = await fetch(`${base}/version`, { headers: { Authorization: `Bearer ${ownerT}` } }).then((r) => r.json());
     check("version fingerprint", ver.ok && typeof ver.result.v === "string");
-    await runPlan({ s, owner });
+    await runPlan({ s, owner, cashier });
 }
 
 /* ------------------------------ domains ------------------------------ */
@@ -726,7 +763,7 @@ async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl
 
 /* ------------------------------ plan guards ------------------------------ */
 
-async function runPlan({ s, owner }) {
+async function runPlan({ s, owner, cashier }) {
     const { callController } = require("../appv1/legacy");
     const plan = require("../appv1/plan");
     const qrCtl = require("../controller/qrOrder");
@@ -758,6 +795,14 @@ async function runPlan({ s, owner }) {
     const off = await call(qrCtl.startQrSession, { qr: qrCode, customer_mobile: "9111133333", customer_name: "Om" });
     check("QR ordering switched off: customers are told", !off.ok && /switched off/.test(off.error || ""), off);
     await owner.updateSettings({ qrOrdering: true });
+
+    // Owner alert: cash short at close (last: it closes the drawer).
+    const openNow = await M.CashSession.findOne({ where: { hotel_id: s.hid, status: "Open", deleted: false } });
+    if (openNow) {
+        const shortClose = await cashier.closeCash({ 1: 1 }, "counted twice");
+        const cashAlert = (await owner.load()).alerts.find((a) => a.kind === "owner-alert" && /at close/.test(a.title));
+        check("cash difference at close alerts the owner", shortClose.ok && Boolean(cashAlert) && /short/.test(cashAlert.title) && /counted twice/.test(cashAlert.body), { shortClose, cashAlert });
+    } else check("cash difference at close alerts the owner (needs an open drawer)", false);
 
     const back = await call(plan.setAppPlan, { hotel_id: s.hid, product_plan: "LOCAL_SUITE" });
     const gone = await owner.load();

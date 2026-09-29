@@ -103,7 +103,16 @@ async function saveFormat(Model, hotelId, format) {
 async function updateSettings(c, patch) {
     const HARDWARE = ["kitchens", "kotFormat"];
     const EXPERIENCE = ["qrOrdering", "tableGridView"];
-    for (const k of Object.keys(patch || {})) need(c, HARDWARE.includes(k) ? "ops-hardware" : EXPERIENCE.includes(k) ? "ops-experience" : "ops-billing", "edit");
+    for (const k of Object.keys(patch || {})) {
+        // Owner alerts are the owner's own choice (owner list 2026-09-29 #10).
+        if (k === "ownerAlerts") {
+            if (!c.perms.owner) fail("Only the owner can change owner alerts");
+        } else need(c, HARDWARE.includes(k) ? "ops-hardware" : EXPERIENCE.includes(k) ? "ops-experience" : "ops-billing", "edit");
+    }
+    if (patch.ownerAlerts !== undefined) {
+        const pct = Number(patch.ownerAlerts?.discountPct);
+        if (!(pct >= 1 && pct <= 100)) fail("Discount limit must be 1 to 100%");
+    }
     if (patch.businessDayStart !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(patch.businessDayStart)) fail("Enter a time like 06:00");
     if (patch.financialYearStartMonth !== undefined && !(patch.financialYearStartMonth >= 1 && patch.financialYearStartMonth <= 12)) fail("Pick a month");
     if (patch.billReset !== undefined && !["never", "daily", "financial_year"].includes(patch.billReset)) fail("Pick how bill numbers reset");
@@ -132,6 +141,10 @@ async function updateSettings(c, patch) {
         setting.table_grid_view = patch.tableGridView;
     }
     if (patch.supplierPaymentsAsExpense !== undefined) setting.supplier_payment_expense = !!patch.supplierPaymentsAsExpense;
+    if (patch.ownerAlerts !== undefined) {
+        const a = patch.ownerAlerts;
+        setting.owner_alerts = JSON.stringify({ cancelAfterKot: !!a.cancelAfterKot, bigDiscount: !!a.bigDiscount, discountPct: Math.round(Number(a.discountPct) * 100) / 100, cashDifference: !!a.cashDifference });
+    }
     if (Object.keys(setting).length) {
         const row = await M.RestaurantSetting.findOne({ where: { hotel_id: c.hotelId } });
         if (row) await row.update(setting);

@@ -1,3 +1,4 @@
+const { ownerAlert, discountAlert } = require("./ownerAlerts");
 const { Op } = require("sequelize");
 const {
     Order, OrderDetails, Table, Menu, User, TimeLine, Hotel, PaymentMode, CashSession, CashMovement, KitchenSetting, AppAlert,
@@ -341,6 +342,12 @@ async function removeLine(c, orderId, lineId, reason) {
     await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t });
     await event(c, o.id, `Removed ${line.qty}× ${name}${line.kotNumber ? ` from KOT #${line.kotNumber}` : ""} — ${String(reason).trim()}`, "remove_kot");
     await audit(c, "Orders", `Removed an item from bill ${o.bill_no} — ${String(reason).trim()}`);
+    if (line.status === "kot")
+        await ownerAlert(c, "cancelAfterKot", {
+            title: `Item removed after KOT · bill ${o.bill_no}`,
+            body: `${line.qty}× ${name}${line.kotNumber ? ` (KOT #${line.kotNumber})` : ""} · ${String(reason).trim()}`,
+            link: `/orders/${o.id}`,
+        });
 }
 
 async function markServed(c, orderId, kotNo) {
@@ -444,6 +451,14 @@ async function cancelOrder(c, orderId, reason) {
     await setTableStatus(c, o.TableId, "F", "cancelled");
     await event(c, o.id, `Cancelled — ${String(reason).trim()}`, "delete_order");
     await audit(c, "Orders", `Cancelled bill ${o.bill_no} — ${String(reason).trim()}`);
+    if (fired) {
+        const table = o.TableId ? await Table.findOne({ where: { id: o.TableId }, attributes: ["table_name"], transaction: c.t }) : null;
+        await ownerAlert(c, "cancelAfterKot", {
+            title: `Order cancelled after KOT · bill ${o.bill_no}`,
+            body: `${table?.table_name ?? `Token ${o.token}`} · ₹${Number(o.grandAmount).toFixed(2)} · ${String(reason).trim()}`,
+            link: `/orders/${o.id}`,
+        });
+    }
 }
 
 /* ------------------------------ tables ------------------------------ */
@@ -663,6 +678,7 @@ async function settle(c, orderId, input) {
     // Stock at settle (owner rule); pickup lines already deducted at creation
     // are skipped line by line. Stock may go negative, never blocks a sale.
     await deductStockForOrder(o.id, c.hotelId, c.t, c.userId);
+    await discountAlert(c, await o.reload({ transaction: c.t }));
     return { change: change > 0 ? change : 0, billNo: o.bill_no };
 }
 
@@ -800,6 +816,7 @@ async function editSettled(c, orderId, edit = {}) {
     ].join(" + ");
     await event(c, o.id, `Settled bill edited · ₹${oldGrand.toFixed(2)} → ₹${grand.toFixed(2)} · ${paidText}${refundLater > 0 ? ` · refund owed ₹${refundLater.toFixed(2)}` : ""}`, "update_order");
     await audit(c, "Billing", `Edited settled bill ${o.bill_no}`);
+    await discountAlert(c, await o.reload({ transaction: c.t }), { edited: true });
     return { grand, due: cols.due, refundOwed: refundLater, cashIn: cashDelta > 0 ? cashDelta : 0, cashOut: cashDelta < 0 ? -cashDelta : 0 };
 }
 

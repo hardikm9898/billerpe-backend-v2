@@ -1,3 +1,4 @@
+const { ownerAlert } = require("../ownerAlerts");
 const M = require("../../model");
 const { fail, need, r2, audit } = require("../core");
 const { callController } = require("../legacy");
@@ -37,6 +38,13 @@ async function closeCash(c, denominations, varianceReason) {
     if (Math.abs(counted - expected) > 0.009 && !String(varianceReason || "").trim()) fail("The count does not match. Add a reason for the difference.");
     await callController(cashCtl.closeCashSession, c, { body: { counted_cash: counted, variance_reason: String(varianceReason || "").trim() || null } });
     await audit(c, "Cash session", `Closed · counted ₹${counted} · expected ₹${expected}`);
+    const diff = r2(counted - expected);
+    if (Math.abs(diff) > 0.009)
+        await ownerAlert(c, "cashDifference", {
+            title: `Cash ${diff < 0 ? "short" : "over"} ₹${Math.abs(diff).toFixed(2)} at close`,
+            body: `Counted ₹${counted.toFixed(2)}, expected ₹${expected.toFixed(2)} · ${String(varianceReason || "").trim()}`,
+            link: "/cash",
+        });
     const { cashView } = require("../load");
     const staff = await M.HotelUser.findAll({ where: { hotel_id: c.hotelId }, attributes: ["id", "name"], raw: true });
     const { cashHistory } = await cashView(c.hotelId, new Map(staff.map((x) => [x.id, x.name])));

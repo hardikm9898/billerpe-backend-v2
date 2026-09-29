@@ -8,6 +8,7 @@ const { asArray, normaliseOrderType } = require("./engine/billEngine");
 const { toIdList } = require("./engine/routing");
 const { iso, dietaryOf, orderView } = require("./views");
 const { modeIdFromName } = require("./modes");
+const { OWNER_ALERT_DEFAULTS } = require("./ownerAlerts");
 
 // GET /app/v1/load - everything the POS App holds for the signed-in outlet
 // (OutletData, BillerPe POS App src/lib/pos/backend/types.ts), read from the
@@ -189,6 +190,7 @@ async function settingsView(hotelId, hotel, setting, tables) {
         qrOrdering: setting ? !isOff(setting.qr_ordering) : true,
         tableGridView: setting?.table_grid_view === "sections" ? "sections" : "tabs",
         supplierPaymentsAsExpense: setting ? !isOff(setting.supplier_payment_expense) : true,
+        ownerAlerts: { ...OWNER_ALERT_DEFAULTS, ...(parseJson(setting?.owner_alerts, {}) || {}) },
     };
 }
 
