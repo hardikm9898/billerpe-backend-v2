@@ -764,6 +764,30 @@ async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl
 /* ------------------------------ plan guards ------------------------------ */
 
 async function runPlan({ s, owner, cashier }) {
+    console.log("\nall outlets");
+    // A second POS App outlet the owner owns, and a third where the same mobile is only a cashier.
+    const extraOutlet = async (label, roleName) => {
+        const h = await M.Hotel.create({ hotel_name: `${label} ${stamp}`, owner_name: "Owner", owner_number: s.staff.owner.number, address1: "x", pinCode: 1, hotel_logo: "", password: "x", plan_start_date: new Date(), plan_end_date: moment().add(1, "year").toDate(), product_plan: "CLOUD_APP" });
+        await M.RestaurantSetting.create({ hotel_id: h.id, bill_reset_type: "never" });
+        await M.RolePermissionDefault.bulkCreate(ROLES.map((role) => ({ hotel_id: h.id, role, permissions: ROLE_PERMISSION_DEFAULTS[role], special_permissions: ROLE_SPECIAL_DEFAULTS[role] })));
+        const role = await M.Role.create({ role_name: roleName, hotel_id: h.id });
+        await M.HotelUser.create({ role_cd: role.role_cd, hotel_id: h.id, number: s.staff.owner.number, name: "Owner", email: "", active: true, password: "x" });
+        return h;
+    };
+    const owned2 = await extraOutlet("Owned Two", "A");
+    const staffAt = await extraOutlet("Staff Only", "Cashier");
+    const one = await owner.dashboard({ key: "30d" });
+    const all = await owner.dashboardAll({ key: "30d" });
+    const names = (all.outlets || []).map((o) => o.name);
+    check("all outlets = this + the other owned outlet, not one where they are staff", all.ok && names.length === 2 && names.includes(owned2.hotel_name) && !names.includes(staffAt.hotel_name), names);
+    check("all outlets adds up (the new outlet has no sales yet)", all.net === one.net && all.bills === one.bills && all.avgBill === one.avgBill && all.outlets.find((o) => o.name === owned2.hotel_name).net === 0, { all: all.net, one: one.net });
+    const repOne = await owner.report("day-wise", { key: "30d" }, {});
+    const repAll = await owner.reportAll("day-wise", { key: "30d" });
+    check("all-outlets report: Outlet column, a line per outlet, same total", repAll.ok && repAll.columns[0].key === "outlet" && repAll.outlets.length === 2 && repAll.rows.every((r) => r.outlet) && repAll.totals.sales === repOne.totals.sales, { all: repAll.totals, one: repOne.totals });
+    check("summary adds money lines, drops counts of kinds", repAll.summary[0].label === "Outlets" && repAll.summary.some((x) => x.label === "Net sales") && !repAll.summary.some((x) => x.label === "Days"), repAll.summary);
+    check("staff cannot see all outlets", !(await cashier.dashboardAll({ key: "30d" })).ok);
+    check("stock reports stay per outlet", !(await owner.reportAll("closing-stock", { key: "30d" })).ok);
+
     const { callController } = require("../appv1/legacy");
     const plan = require("../appv1/plan");
     const qrCtl = require("../controller/qrOrder");

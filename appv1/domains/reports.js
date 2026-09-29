@@ -1,7 +1,7 @@
 const { Op } = require("sequelize");
 const moment = require("moment-timezone");
 const M = require("../../model");
-const { need, r2, outletClock, businessDate } = require("../core");
+const { need, fail, r2, outletClock, businessDate, resolveRole, buildContext } = require("../core");
 const L = require("../load");
 const { ledgerSummary } = require("../engine/stockLedger");
 
@@ -391,7 +391,93 @@ async function report(c, id, range, filters = {}) {
     }
 }
 
+/* ------------------------------ all outlets ------------------------------ */
+
+// "All outlets" (owner list 2026-09-29 #14): the dashboard and the sales
+// reports added up over every POS App outlet this person OWNS (same mobile,
+// Owner role there) - never an outlet where they are only staff. Each outlet
+// is computed as usual (its own business day and time zone), then combined.
+
+async function ownedOutlets(c) {
+    if (!c.perms.owner) fail("Only the owner can see all outlets together");
+    const users = c.user.number ? await M.HotelUser.findAll({ where: { number: c.user.number, active: true }, include: M.Role }) : [];
+    const owned = users.filter((u) => resolveRole(u.role_mst?.role_name) === "Owner");
+    const hotels = await M.Hotel.findAll({ where: { id: owned.map((u) => u.hotel_id), product_plan: "CLOUD_APP", active: { [Op.not]: false } }, attributes: ["id", "hotel_name"], raw: true });
+    return hotels.map((h) => ({ id: h.id, name: h.hotel_name, userId: owned.find((u) => u.hotel_id === h.id).id }));
+}
+
+async function perOutlet(c, fn) {
+    const list = await ownedOutlets(c);
+    const out = [];
+    for (const o of list) {
+        const cx = await buildContext(o.id, o.userId, c.deviceId);
+        if (cx) out.push({ outlet: o, result: await fn(cx) });
+    }
+    return out;
+}
+
+const mergeBy = (lists, keyOf, add) => {
+    const map = new Map();
+    for (const x of lists.flat()) {
+        const k = keyOf(x);
+        map.set(k, map.has(k) ? add(map.get(k), x) : { ...x });
+    }
+    return [...map.values()];
+};
+
+async function dashboardAll(c, range) {
+    const parts = await perOutlet(c, (cx) => dashboard(cx, range));
+    const R = parts.map((p) => p.result);
+    const total = (f) => sum(R, f);
+    const net = total((x) => x.net);
+    const bills = total((x) => x.bills);
+    return {
+        net, bills,
+        avgBill: bills ? r2(net / bills) : 0,
+        guests: total((x) => x.guests),
+        runningCount: total((x) => x.runningCount),
+        runningAmount: total((x) => x.runningAmount),
+        cancelledCount: total((x) => x.cancelledCount),
+        cancelledAmount: total((x) => x.cancelledAmount),
+        discounts: total((x) => x.discounts),
+        expenses: total((x) => x.expenses),
+        // Modes by name: each outlet has its own mode ids.
+        byMode: mergeBy(R.map((x) => x.byMode), (m) => m.name.toLowerCase(), (a, b) => ({ ...a, amount: r2(a.amount + b.amount) })).sort((a, b) => b.amount - a.amount),
+        hourly: Array.from({ length: 24 }, (_, hour) => ({ hour, amount: sum(R, (x) => x.hourly[hour]?.amount) })),
+        trend: (R[0]?.trend ?? []).map((t, i) => ({ day: t.day, amount: sum(R, (x) => x.trend[i]?.amount) })),
+        topItems: mergeBy(R.map((x) => x.topItems), (t) => t.name, (a, b) => ({ ...a, qty: r2(a.qty + b.qty), amount: r2(a.amount + b.amount) })).sort((a, b) => b.amount - a.amount).slice(0, 5),
+        byType: (R[0]?.byType ?? []).map((t, i) => ({ label: t.label, amount: sum(R, (x) => x.byType[i]?.amount) })),
+        outlets: parts.map((p) => ({ id: String(p.outlet.id), name: p.outlet.name, net: p.result.net, bills: p.result.bills })),
+    };
+}
+
+// Summary lines that are not a sum over outlets (a count of kinds, a name).
+const NOT_ADDED = new Set(["Days", "Modes", "Tables used", "Staff", "Top", "Items"]);
+
+async function reportAll(c, id, range) {
+    if (STOCK_REPORTS.includes(id)) fail("Stock reports are per outlet");
+    const parts = await perOutlet(c, (cx) => report(cx, id, range, {}));
+    const first = parts[0]?.result ?? { title: TITLES[id] ?? "Report", columns: [], rows: [], summary: [] };
+    const adds = first.columns.filter((col) => col.money || col.num).map((col) => col.key);
+    const rows = parts.flatMap((p) => p.result.rows.map((row) => ({ outlet: p.outlet.name, ...row })));
+    const totals = first.totals ? { outlet: "Total", ...Object.fromEntries(first.columns.map((col) => [col.key, adds.includes(col.key) ? sum(rows, (x) => x[col.key]) : ""])) } : undefined;
+    const headline = first.summary.find((s) => s.money) ?? first.summary[0];
+    return {
+        title: first.title,
+        columns: [{ key: "outlet", label: "Outlet" }, ...first.columns],
+        rows,
+        totals,
+        summary: [
+            { label: "Outlets", value: parts.length },
+            ...first.summary.filter((s) => typeof s.value === "number" && !NOT_ADDED.has(s.label)).map((s) => ({ ...s, value: sum(parts, (p) => p.result.summary.find((x) => x.label === s.label)?.value) })),
+        ],
+        outlets: headline ? parts.map((p) => ({ name: p.outlet.name, label: headline.label, money: Boolean(headline.money), value: Number(p.result.summary.find((x) => x.label === headline.label)?.value) || 0 })) : [],
+    };
+}
+
 module.exports = {
     dashboard: { fn: dashboard },
     report: { fn: report },
+    dashboardAll: { fn: dashboardAll },
+    reportAll: { fn: reportAll },
 };
