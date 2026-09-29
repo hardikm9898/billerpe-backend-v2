@@ -461,6 +461,18 @@ async function runDomains({ s, owner, cap, cashier, mgr, T3, session, cap2T, tbl
     check("booked table shows reserved (held 30 min before)", (await tbl("R1")).status === "reserved");
     const clash = await mgr.saveReservation({ name: "Shah", mobile: "9000022222", guests: 2, at: later(40), endAt: later(100), tableIds: [R1], advance: 0 });
     check("overlapping booking on the same table refused", !clash.ok && /already booked/.test(clash.error || ""), clash);
+    // "Reservation due" alert (appv1/jobs.js, run every minute by server.js).
+    const jobs = require("../appv1/jobs");
+    const sent1 = await jobs.reservationDueFor(s.hid, Date.now());
+    const sent2 = await jobs.reservationDueFor(s.hid, Date.now());
+    const dueAlert = (await cap.load()).alerts.find((a) => a.kind === "reservation-due");
+    check("reservation in its hold window alerts once", sent1 === 1 && sent2 === 0, { sent1, sent2 });
+    check("captain sees 'Reservation due' with table + booking", Boolean(dueAlert) && /R1/.test(dueAlert.title) && /Mehta/.test(dueAlert.body) && dueAlert.link === "/reservations", dueAlert);
+    await owner.addTables((await owner.load()).sections[0].id, "R2", 4);
+    const R2 = (await owner.load()).tables.find((t) => t.name === "R2").id;
+    const res2 = await mgr.saveReservation({ name: "Joshi", mobile: "9000055555", guests: 2, at: later(120), endAt: later(180), tableIds: [R2], advance: 0 });
+    check("booking 2 hours away: no alert yet", res2.ok && (await jobs.reservationDueFor(s.hid, Date.now())) === 0, res2);
+    check("...alerted when its hold window starts", (await jobs.reservationDueFor(s.hid, Date.now() + 95 * 60000)) === 1);
     const ns = await mgr.setReservationStatus(res1.id, "noshow");
     const rv = (await owner.load()).reservations.find((x) => x.id === res1.id);
     check("no-show frees the table", ns.ok && rv?.status === "noshow" && (await tbl("R1")).status === "free", rv);

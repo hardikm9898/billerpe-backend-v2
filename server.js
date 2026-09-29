@@ -520,6 +520,14 @@ server.listen(PORT, (err) => {
             logger.error('Cron: checkAndSendClosingSummaries failed', { err: err.message });
         }
     });
+    // POS App outlets: "Reservation due" alert when a booking's tables start being held.
+    cron.schedule("* * * * *", async () => {
+        try {
+            await require("./appv1/jobs").reservationDueAlerts();
+        } catch (err) {
+            logger.error("Cron: reservationDueAlerts failed", { err: err.message });
+        }
+    });
     cron.schedule("0 3 * * *", async () => {
         console.log("Running timeline cleanup cron...");
         deleteOldTimeline();
