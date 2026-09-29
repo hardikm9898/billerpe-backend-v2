@@ -341,6 +341,17 @@ async function saveDevicePrinters(c, deviceId, printers, printKots) {
     await audit(c, "Printers", `Updated printers on ${d.name}`);
 }
 
+/** This phone's push token (null at logout), so alerts reach it when the app is closed. */
+async function setPushToken(c, token) {
+    const value = token == null || token === "" ? null : String(token).slice(0, 255);
+    const d = await M.AppDevice.findOne({ where: { hotel_id: c.hotelId, device_id: String(c.deviceId), status: "active" } });
+    if (!d) fail("Device not found");
+    // The same phone may have an older row (another login): one row per token.
+    if (value) await M.AppDevice.update({ push_token: null }, { where: { push_token: value, id: { [Op.ne]: d.id } } });
+    // Whoever is signed in now gets this phone's pushes (the app calls this after every login / PIN switch).
+    await d.update({ push_token: value, hotel_user_id: c.userId });
+}
+
 /* ------------------------------ account ------------------------------ */
 
 async function changePin(c, current, next) {
@@ -404,6 +415,7 @@ module.exports = {
     resetTokens: { write: true, fn: resetTokens },
     logoutDevice: { fn: logoutDevice },
     saveDevicePrinters: { fn: saveDevicePrinters },
+    setPushToken: { fn: setPushToken },
     changePin: { fn: changePin },
     changePassword: { fn: changePassword },
     raiseTicket: { fn: raiseTicket },

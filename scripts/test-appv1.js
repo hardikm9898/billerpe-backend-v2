@@ -340,6 +340,25 @@ async function run() {
     const reqAlert = (await cashier.load()).alerts.find((a) => a.kind === "bill-requested");
     check("captain requests the bill -> counter alert", rb.ok && !!reqAlert && (await tbl("T4")).status === "billed", rb);
 
+    console.log("\npush notifications");
+    const push = require("../appv1/push");
+    // Three phones: d-cap (captain), d-owner (cashier signed in by PIN), d-cap2 (manager by PIN).
+    for (const [who, tok] of [[cap, "tok-cap"], [cashier, "tok-cashier"], [mgr, "tok-mgr"]]) await who.setPushToken(tok);
+    const pushRows = await M.AppDevice.findAll({ where: { hotel_id: s.hid, push_token: { [require("sequelize").Op.ne]: null } }, raw: true });
+    check("each phone saves its push token", pushRows.length === 3, pushRows.map((r) => r.push_token));
+    const targets = async (kind) => {
+        const a = await M.AppAlert.findOne({ where: { hotel_id: s.hid, kind }, order: [["id", "DESC"]], raw: true });
+        return (await push.targetsFor(a)).map((d) => d.push_token).sort();
+    };
+    check("food ready is pushed only to the captain who sent it", JSON.stringify(await targets("food-ready")) === JSON.stringify(["tok-cap"]), await targets("food-ready"));
+    check("bill request is pushed to counter roles, not the captain", JSON.stringify(await targets("bill-requested")) === JSON.stringify(["tok-cashier", "tok-mgr"]), await targets("bill-requested"));
+    check("no Firebase key on this server: push is off, nothing breaks", (await push.pushAlert(await M.AppAlert.findOne({ where: { hotel_id: s.hid }, raw: true }))).off === true);
+    await cashier.setPushToken(null);
+    check("logout clears the phone's token", JSON.stringify(await targets("bill-requested")) === JSON.stringify(["tok-mgr"]), await targets("bill-requested"));
+    await owner.setPushToken("tok-owner");
+    check("the owner signing in on a shared phone takes its pushes", JSON.stringify(await targets("bill-requested")) === JSON.stringify(["tok-mgr", "tok-owner"]), await targets("bill-requested"));
+    await owner.setPushToken(null);
+
     console.log("\nQR round");
     const qrSession = await M.QrSession.create({ hotel_id: s.hid, table_id: s.tables.T6.id, customer_mobile: "9123400000", customer_name: "Guest", session_key: `s${stamp}`, status: "open" });
     const qr = await M.QrOrder.create({ hotel_id: s.hid, table_id: s.tables.T6.id, qr_version: 1, customer_name: "Guest", customer_mobile: "9123400000", session_id: qrSession.id, status: "pending", items: [{ menuId: s.items.paneer.id, itemName: "Paneer Tikka", qty: 1, variantId: s.half.id, addonIds: [s.cheese.id] }, { menuId: s.items.chicken.id, itemName: "Chicken Tikka", qty: 1 }] });

@@ -23,6 +23,8 @@ const AppDevice = sequelize.define("app_device", {
     print_kots: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     // active | revoked (logged out by the owner - its token stops working)
     status: { type: DataTypes.STRING(16), allowNull: false, defaultValue: "active" },
+    // Firebase Cloud Messaging token (migration 20260929100000): alerts reach the phone when the app is closed.
+    push_token: { type: DataTypes.STRING(255), allowNull: true },
 }, {
     tableName: "app_devices",
     indexes: [{ unique: true, fields: ["hotel_id", "device_id"], name: "app_devices_hotel_device" }],
@@ -66,5 +68,13 @@ const AppAlert = sequelize.define("app_alert", {
     for_roles: { type: DataTypes.STRING(200), allowNull: true },
     read_by: { type: DataTypes.TEXT, allowNull: true },
 }, { tableName: "app_alerts", indexes: [{ fields: ["hotel_id", "createdAt"] }] });
+
+// Every new alert is also pushed to the phones that should see it (after the
+// transaction commits, so a rolled-back action never notifies anyone).
+AppAlert.addHook("afterCreate", (alert, options) => {
+    const send = () => require("../appv1/push").pushAlert(alert.get({ plain: true })).catch((e) => console.error("[push]", e.message));
+    if (options.transaction) options.transaction.afterCommit(send);
+    else send();
+});
 
 module.exports = { AppDevice, AppClientKey, AppQueueEntry, AppAlert };
