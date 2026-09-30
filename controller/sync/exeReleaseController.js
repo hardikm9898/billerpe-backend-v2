@@ -20,6 +20,14 @@ const LINK_SECONDS = 6 * 60 * 60;
 
 const EXE_ROOT = process.env.EXE_RELEASE_ROOT || path.join(__dirname, "..", "..", "exe-releases");
 
+// Releases are served from this server (no S3 yet), and every outlet is
+// offered a new one within the same minute. 1000 outlets pulling 190MB at
+// once would take the line sync and e-bills need, so only a few downloads
+// run at a time; the rest are told to come back (503) and resume later
+// where they stopped (the exe retries by itself, with a Range request).
+const MAX_DOWNLOADS = Math.max(1, Number(process.env.EXE_RELEASE_MAX_DOWNLOADS) || 8);
+let activeDownloads = 0;
+
 function versionGt(a, b) {
     const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
     const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
@@ -66,7 +74,23 @@ const getFile = async (req, res) => {
         if (!file.startsWith(path.resolve(EXE_ROOT)) || !fs.existsSync(file)) {
             return res.json(error("Release file is missing on the server", STATUSCODE.NOT_FOUND));
         }
-        return res.sendFile(file, { headers: { "Content-Type": "application/octet-stream" } });
+        if (activeDownloads >= MAX_DOWNLOADS) {
+            res.set("Retry-After", "300");
+            return res.status(503).json(error("The server is busy sending this update to other outlets - try again shortly", 503));
+        }
+        activeDownloads++;
+        let released = false;
+        const release = () => {
+            if (released) return;
+            released = true;
+            activeDownloads--;
+        };
+        res.on("close", release);
+        res.on("finish", release);
+        return res.sendFile(file, { headers: { "Content-Type": "application/octet-stream" } }, (err) => {
+            release();
+            if (err && !res.headersSent) res.status(500).end();
+        });
     } catch (err) {
         console.error("[exeRelease] getFile error:", err);
         return res.json(error("Could not send the release", STATUSCODE.INTERNAL_SERVER_ERROR));

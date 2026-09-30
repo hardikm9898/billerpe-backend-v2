@@ -4,9 +4,13 @@
 // 2026-09-30). See controller/sync/exeReleaseController.js.
 //
 //   node scripts/publish-exe-release.js --file /tmp/billerpe-local-exe.exe --version 1.1.0 [--notes "..."]
-//       uploads to S3 (bucket EXE_RELEASE_BUCKET, default bpe-upload-data,
-//       region ap-south-1, this server's IAM role) and makes it live
-//   ... --local        keeps the file on this server's disk instead of S3
+//       keeps the file on THIS server's disk (exe-releases/<version>/, or
+//       EXE_RELEASE_ROOT) and makes it live - outlets download it from
+//       /sync/exe-release/file with their device token. This is the default
+//       (owner, 2026-09-30: no S3 access for now, everything from our server).
+//   ... --s3           uploads to S3 instead (bucket EXE_RELEASE_BUCKET,
+//                      default bpe-upload-data, ap-south-1, this server's
+//                      IAM role); outlets then get a presigned link
 //   node scripts/publish-exe-release.js --withdraw 1.1.0
 //       stops offering it (outlets that have not installed it yet never will)
 //
@@ -45,9 +49,10 @@ const sha256Of = (file) => new Promise((resolve, reject) => {
     const file = arg("file");
     const version = arg("version");
     const notes = arg("notes");
-    const local = arg("local") === true;
+    // --local is still accepted (it was the flag before the default changed).
+    const local = arg("s3") !== true;
     if (!file || !version || file === true || version === true) {
-        console.error("usage: --file <billerpe-local-exe.exe> --version <x.y.z> [--notes ...] [--local] | --withdraw <x.y.z>");
+        console.error("usage: --file <billerpe-local-exe.exe> --version <x.y.z> [--notes ...] [--s3] | --withdraw <x.y.z>");
         process.exitCode = 1;
         return;
     }

@@ -7,9 +7,10 @@ const sequelize = require("../connection/connect");
 // staff press "Restart & update" on the Web POS System page (owner decision,
 // 2026-09-30: 1000+ outlets cannot be updated by hand).
 //
-// The file is in S3 (s3_bucket/s3_key, private; each exe gets a short-lived
-// presigned link) or, for a server without S3, on this server's own disk
-// (local_path, served by controller/sync/exeReleaseController.js#getFile).
+// The file is on this server's own disk (local_path, served by
+// controller/sync/exeReleaseController.js#getFile) - the way it is used now
+// (owner, 2026-09-30: no S3 access yet) - or in S3 (s3_bucket/s3_key,
+// private; each exe gets a short-lived presigned link) when published --s3.
 const ExeRelease = sequelize.define("exe_releases", {
     // The exe's own package.json version. An outlet installs a release only
     // when it is HIGHER than what it runs - never a downgrade (a bad release
