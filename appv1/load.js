@@ -434,7 +434,7 @@ async function qrOrdersView(hotelId) {
 
 async function customersView(hotelId) {
     const [users, stats] = await Promise.all([
-        M.User.findAll({ where: { hotel_id: hotelId, isPlaceholder: { [Op.not]: true }, number: { [Op.ne]: "" } }, raw: true }),
+        M.User.findAll({ where: { hotel_id: hotelId, isPlaceholder: { [Op.not]: true }, deleted_at: null, number: { [Op.ne]: "" } }, raw: true }),
         M.Order.findAll({
             where: { hotel_id: hotelId, deleted: false, payment: "success" },
             attributes: ["UserId", [fn("COUNT", col("id")), "visits"], [fn("SUM", col("grandAmount")), "spent"], [fn("MAX", col("createdAt")), "last"], [fn("SUM", literal("CASE WHEN due > 0 THEN due ELSE 0 END")), "due"]],
