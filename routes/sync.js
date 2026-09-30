@@ -5,6 +5,7 @@ const { deviceAuth } = require("../middleware/deviceAuth");
 const { heartbeat, pull, push, pushOrders, rebaseLocalIds } = require("../controller/sync/syncController");
 const { getManifest, getFile } = require("../controller/sync/webBundleController");
 const { createTicket, listTickets } = require("../controller/sync/supportController");
+const { downloadHistory, linkHistory } = require("../controller/sync/historyController");
 
 // Sync engine v2 - the complete surface a restaurant's local exe uses for
 // background sync, and the only routes that accept a device token
@@ -21,6 +22,10 @@ router.get("/pull", deviceAuth, pull);
 router.post("/push", deviceAuth, push);
 router.post("/push/orders", deviceAuth, pushOrders);
 router.post("/rebase", deviceAuth, rebaseLocalIds);
+// Past orders + customers for a PC that has just registered, and the link
+// back to the local ids it stored them under (controller/sync/historyController.js).
+router.get("/history", deviceAuth, downloadHistory);
+router.post("/history/link", deviceAuth, linkHistory);
 
 // The Web POS frontend an outlet's exe serves off its own disk. Requested
 // only when the heartbeat above reports a version the exe does not already
