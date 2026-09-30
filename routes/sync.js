@@ -6,6 +6,7 @@ const { heartbeat, pull, push, pushOrders, rebaseLocalIds } = require("../contro
 const { getManifest, getFile } = require("../controller/sync/webBundleController");
 const { createTicket, listTickets } = require("../controller/sync/supportController");
 const { downloadHistory, linkHistory } = require("../controller/sync/historyController");
+const { getFile: getExeReleaseFile } = require("../controller/sync/exeReleaseController");
 
 // Sync engine v2 - the complete surface a restaurant's local exe uses for
 // background sync, and the only routes that accept a device token
@@ -33,6 +34,9 @@ router.post("/history/link", deviceAuth, linkHistory);
 // WEB-BUNDLE-DELIVERY-PLAN.md and controller/sync/webBundleController.js.
 router.get("/web-bundle/manifest", deviceAuth, getManifest);
 router.get("/web-bundle/file", deviceAuth, getFile);
+// A new exe kept on this server's disk (when it is not in S3) - see
+// controller/sync/exeReleaseController.js.
+router.get("/exe-release/file", deviceAuth, getExeReleaseFile);
 
 // Support tickets raised from the outlet's Web POS, forwarded by the exe
 // (controller/sync/supportController.js). Only when staff raise one.

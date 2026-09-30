@@ -33,3 +33,4 @@ yarn-error.log*
 # Published frontend bundles are runtime data, not source. In production
 # they live at WEB_BUNDLE_ROOT, outside the app folder entirely.
 /web-bundles/
+/exe-releases/

@@ -31,6 +31,10 @@ const LocalServerRegistration = sequelize.define("local_server_registrations", {
     // memo: only a SuperAdmin can ever clear this field's owning row.
     released_by: { type: DataTypes.INTEGER, allowNull: true },
     last_seen_at: { type: DataTypes.DATE, allowNull: true },
+    // What this outlet reports about its own automatic update on the
+    // heartbeat ("ready 1.2.0", "failed 1.2.0: ..."); app_version above is
+    // kept current from the same heartbeat.
+    update_status: { type: DataTypes.STRING, allowNull: true },
 }, {
     indexes: [
         { fields: ["hotel_id"] },

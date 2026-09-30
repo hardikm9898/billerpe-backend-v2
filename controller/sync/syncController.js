@@ -10,6 +10,7 @@ const {
     ENTITIES, ORDER_ENTITY, getEntity, buildVersionQuery, scopeWhere, pickWritableFields, primaryKeyOf,
 } = require("./syncRegistry");
 const { currentBundleFor } = require("./webBundleController");
+const { exeReleaseFor } = require("./exeReleaseController");
 const { decodeJsonColumns, decodeJsonValue } = require("./jsonColumns");
 
 // Sync engine v2. Three endpoints, all behind middleware/deviceAuth.js
@@ -56,8 +57,17 @@ const heartbeat = async (req, res) => {
         // Proof of life for this device, so "is this restaurant's server
         // online" is derived from real freshness instead of the registration
         // timestamp. Piggybacked here rather than being its own request.
+        // An exe that can update itself says which version it runs and how
+        // its update is going - kept on the registration so central support
+        // can see every outlet's version (older exes send neither).
+        const exeVersion = req.get("x-exe-version") || null;
+        const updateStatus = req.get("x-exe-update-status");
         await LocalServerRegistration.update(
-            { last_seen_at: new Date() },
+            {
+                last_seen_at: new Date(),
+                ...(exeVersion ? { app_version: String(exeVersion).slice(0, 64) } : {}),
+                ...(updateStatus !== undefined ? { update_status: String(updateStatus).slice(0, 255) || null } : {}),
+            },
             { where: { hotel_id: hotelId, device_id: req.deviceId, status: "active" } },
         );
 
@@ -66,6 +76,11 @@ const heartbeat = async (req, res) => {
         // own request every minute. Null while no release is pending, which
         // is the normal case.
         const webBundle = await currentBundleFor("stable").catch(() => null);
+        // A newer exe, only for an exe that runs an older one.
+        const exeRelease = await exeReleaseFor(exeVersion).catch((err) => {
+            console.error("[sync] exe release lookup failed:", err.message);
+            return null;
+        });
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, {
             serverTime: new Date().toISOString(),
@@ -73,6 +88,7 @@ const heartbeat = async (req, res) => {
             pendingQrOrders,
             bookingsVersion: bookingsVersion ? new Date(bookingsVersion).toISOString() : null,
             webBundle,
+            exeRelease,
         }, STATUSCODE.SUCCESS));
     } catch (err) {
         console.error("[sync] heartbeat error:", err);
