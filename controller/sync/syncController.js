@@ -518,7 +518,11 @@ const pushOrders = async (req, res) => {
                 if (!existing && incoming.bill_no) {
                     // Rows pushed before local_id existed were matched by
                     // bill_no; adopt those instead of creating a duplicate.
-                    existing = await Order.findOne({ where: { hotel_id: hotelId, bill_no: incoming.bill_no, local_id: null }, transaction: t });
+                    // Only one in the same cancelled/not-cancelled state: an
+                    // outlet hands a cancelled bill's number to its next
+                    // bill (owner list 2026-09-30 #17), and that new bill
+                    // must not take over the old cancelled one here.
+                    existing = await Order.findOne({ where: { hotel_id: hotelId, bill_no: incoming.bill_no, local_id: null, deleted: Boolean(incoming.deleted) }, transaction: t });
                 }
 
                 let cloudOrderId;
