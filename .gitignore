@@ -34,3 +34,4 @@ yarn-error.log*
 # they live at WEB_BUNDLE_ROOT, outside the app folder entirely.
 /web-bundles/
 /exe-releases/
+/app-downloads/

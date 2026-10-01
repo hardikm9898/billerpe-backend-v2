@@ -13,6 +13,7 @@ const SuperAdminUser = require("./superAdminUser");
 const LocalServerRegistration = require("./localServerRegistration");
 const WebBundle = require("./webBundle");
 const ExeRelease = require("./exeRelease");
+const AppDownload = require("./appDownload");
 
 // ---------- User & Access Management ----------
 const User = require("./user");
@@ -951,6 +952,7 @@ module.exports = {
     LocalServerRegistration,
     WebBundle,
     ExeRelease,
+    AppDownload,
 
     // User & Access
     User,

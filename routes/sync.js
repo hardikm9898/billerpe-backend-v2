@@ -7,6 +7,7 @@ const { getManifest, getFile } = require("../controller/sync/webBundleController
 const { createTicket, listTickets } = require("../controller/sync/supportController");
 const { downloadHistory, linkHistory } = require("../controller/sync/historyController");
 const { getFile: getExeReleaseFile } = require("../controller/sync/exeReleaseController");
+const { listDownloads, getFile: getAppDownloadFile } = require("../controller/sync/appDownloadController");
 
 // Sync engine v2 - the complete surface a restaurant's local exe uses for
 // background sync, and the only routes that accept a device token
@@ -37,6 +38,10 @@ router.get("/web-bundle/file", deviceAuth, getFile);
 // A new exe kept on this server's disk (when it is not in S3) - see
 // controller/sync/exeReleaseController.js.
 router.get("/exe-release/file", deviceAuth, getExeReleaseFile);
+// Installer + Captain App APK offered on the outlet's Web POS (Operations ->
+// Apps & Downloads) - controller/sync/appDownloadController.js.
+router.get("/app-downloads", deviceAuth, listDownloads);
+router.get("/app-downloads/file", deviceAuth, getAppDownloadFile);
 
 // Support tickets raised from the outlet's Web POS, forwarded by the exe
 // (controller/sync/supportController.js). Only when staff raise one.
