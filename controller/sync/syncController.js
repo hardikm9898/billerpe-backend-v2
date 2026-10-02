@@ -427,17 +427,31 @@ const push = async (req, res) => {
 // a NEW number here on first sync and handed it back, which is what forced
 // order creation to make a blocking cloud call before it could tell staff
 // the bill number - the single biggest source of slow billing.
+// What the exe now knows about a customer we already have: every detail it
+// sent that differs. Empty values never blank a saved one. Only name and
+// number used to be updated, so a returning customer's address and GSTIN,
+// given on a later visit, never reached the e-bill (owner list 2026-10-02
+// #7).
+function customerChanges(existing, incoming) {
+    const changes = {};
+    for (const key of ["name", "number", "address", "gstin"]) {
+        const value = incoming[key] || "";
+        if (value && existing[key] !== value) changes[key] = value;
+    }
+    return changes;
+}
+
 async function resolveCustomer(order, hotelId, t) {
     const name = order.customer?.name || "";
     const number = order.customer?.number || "";
     const localId = order.customer?.local_id ?? null;
+    const details = { name, number, address: order.customer?.address || "", gstin: order.customer?.gstin || "" };
 
     if (localId != null) {
         const byLocal = await User.findOne({ where: { hotel_id: hotelId, local_id: localId }, transaction: t });
         if (byLocal) {
-            if ((name && byLocal.name !== name) || (number && byLocal.number !== number)) {
-                await byLocal.update({ name: name || byLocal.name, number: number || byLocal.number }, { transaction: t });
-            }
+            const changes = customerChanges(byLocal, details);
+            if (Object.keys(changes).length) await byLocal.update(changes, { transaction: t });
             return byLocal.id;
         }
     }
@@ -447,8 +461,9 @@ async function resolveCustomer(order, hotelId, t) {
     if (number) {
         const byNumber = await User.findOne({ where: { hotel_id: hotelId, number }, transaction: t });
         if (byNumber) {
-            if (name && byNumber.name !== name) await byNumber.update({ name }, { transaction: t });
-            if (localId != null && byNumber.local_id == null) await byNumber.update({ local_id: localId }, { transaction: t });
+            const changes = customerChanges(byNumber, details);
+            if (localId != null && byNumber.local_id == null) changes.local_id = localId;
+            if (Object.keys(changes).length) await byNumber.update(changes, { transaction: t });
             return byNumber.id;
         }
     }
