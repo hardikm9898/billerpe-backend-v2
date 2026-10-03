@@ -454,6 +454,23 @@ const editTableCatagories = async (req, res) => {
 
     }
 }
+// Tables in use: an order running on them per the same filter getTable uses.
+// table_status alone is a cached flag that can read "F" while an order is
+// still open (on an exe outlet it is a mirror that lags the orders), and a
+// delete that trusted it left running orders on switched-off tables, where
+// the table grid no longer showed them (hotel 6, 2026-10-01).
+const runningTableIdsOf = async (hotelId, tableIds, transaction) => {
+    if (!tableIds.length) return []
+    const rows = await Order.findAll({
+        where: {
+            hotel_id: hotelId, TableId: tableIds, deleted: false, payment: STATUS.PENDING,
+            status: { [Op.in]: [ORDER_TYPE.IN_PROGRESS, ORDER_TYPE.SUCCESS, ORDER_TYPE.HOLD] },
+        },
+        attributes: ["TableId"], group: ["TableId"], raw: true, transaction,
+    })
+    return rows.map((r) => r.TableId)
+}
+
 const removeTableCatagories = async (req, res) => {
     const t = await sequelize.transaction()
     try {
@@ -464,55 +481,37 @@ const removeTableCatagories = async (req, res) => {
             return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
         }
 
-        const { allId } = req.body
-        console.log(allId, req.body.id)
-        if (allId) {
-            for (const id of allId) {
-                let availableCatagories = await TableCatagories.findOne({ where: { id, hotel_id: req.user }, transaction: t })
-
-                if (!availableCatagories) {
-                    await t.rollback()
-                    return res.json(error(MESSAGE.CATAGORIES_NOT_FOUND, STATUSCODE.NOT_FOUND))
-                }
-                await TableCatagories.update({ active: false }, { where: { id, hotel_id: req.user }, transaction: t })
-
-                const findRunningTable = await Table.findOne({ where: { table_catag_id: id, hotel_id: req.user, table_status: { [Op.ne]: "F" } }, transaction: t })
-                if (findRunningTable) {
-                    await t.rollback()
-                    return res.json(error("Some Table Are Running On This Table Category", STATUSCODE.INTERNAL_SERVER_ERROR))
-                }
-                await Table.update({ active: false }, { where: { table_catag_id: id }, transaction: t })
-                // setImmediate(() => {
-
-                await deleteAllTableByCategoryToRedis(id, req.user)
-                await deleteTableCategoryToRedis(id, req.user)
-                // });
+        // One path for a single id and for allId. Every lookup and update is
+        // scoped to this hotel - the single-id path used to find and switch
+        // off a section (and its tables) by id alone, i.e. any hotel's.
+        const bulk = Array.isArray(req.body.allId)
+        const ids = bulk ? req.body.allId : [req.body.id]
+        for (const id of ids) {
+            const availableCatagories = await TableCatagories.findOne({
+                where: { id, hotel_id: req.user, ...(bulk ? {} : { active: true }) }, transaction: t,
+            })
+            if (!availableCatagories) {
+                await t.rollback()
+                return res.json(error(MESSAGE.CATAGORIES_NOT_FOUND, STATUSCODE.NOT_FOUND))
             }
-            await t.commit()
-            return res.status(STATUSCODE.CREATED).json(success(MESSAGE.SUCCESS, { message: MESSAGE.CATAGORIES_DELETED }, STATUSCODE.SUCCESS))
+            const sectionTables = await Table.findAll({ where: { table_catag_id: id, hotel_id: req.user }, attributes: ["id", "table_status"], raw: true, transaction: t })
+            const running = sectionTables.some((tb) => tb.table_status !== "F")
+                || (await runningTableIdsOf(req.user, sectionTables.map((tb) => tb.id), t)).length > 0
+            if (running) {
+                await t.rollback()
+                return res.json(error("Some Table Are Running On This Table Category", STATUSCODE.INTERNAL_SERVER_ERROR))
+            }
+            await TableCatagories.update({ active: false }, { where: { id, hotel_id: req.user }, transaction: t })
+            await Table.update({ active: false }, { where: { table_catag_id: id, hotel_id: req.user }, transaction: t })
         }
-        let availableCatagories = await TableCatagories.findOne({ where: { id: req.body.id, active: true }, transaction: t })
-        console.log(availableCatagories)
-        if (!availableCatagories) {
-            await t.rollback()
-            return res.json(error(MESSAGE.CATAGORIES_NOT_FOUND, STATUSCODE.NOT_FOUND))
-        }
-        await TableCatagories.update({ active: false }, { where: { id: req.body.id }, transaction: t })
-        const findRunningTable = await Table.findOne({ where: { table_catag_id: req.body.id, hotel_id: req.user, table_status: { [Op.ne]: "F" } }, transaction: t })
-
-        if (findRunningTable) {
-            await t.rollback()
-            return res.json(error("Some Table Are Running On This Table Category", STATUSCODE.INTERNAL_SERVER_ERROR))
-        }
-
-        await Table.update({ active: false }, { where: { table_catag_id: req.body.id }, transaction: t })
         await t.commit()
-        // setImmediate(() => {
-
-        await deleteAllTableByCategoryToRedis(req.body.id, req.user)
-        await deleteTableCategoryToRedis(req.body.id, req.user)
-        // });
-        return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: MESSAGE.CATAGORIES_DELETED }, STATUSCODE.SUCCESS))
+        // Cache only after the commit, so a rolled-back delete never
+        // removes live entries.
+        for (const id of ids) {
+            await deleteAllTableByCategoryToRedis(id, req.user)
+            await deleteTableCategoryToRedis(id, req.user)
+        }
+        return res.status(bulk ? STATUSCODE.CREATED : STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: MESSAGE.CATAGORIES_DELETED }, STATUSCODE.SUCCESS))
 
     } catch (err) {
         await t.rollback()
@@ -793,48 +792,33 @@ const removeTable = async (req, res) => {
             return res.json(error(MESSAGE.HOTEL_NOT_FOUND, STATUSCODE.BAD_REQUEST))
         }
 
-        const { allId } = req.body
-        if (allId) {
-            for (const id of allId) {
-                let availableCatagories = await Table.findOne({ where: { id, hotel_id: req.user, active: true }, transaction: t })
-                if (!availableCatagories) return res.json(error(MESSAGE.TABLE_NOT_AVAILABLE, STATUSCODE.NOT_FOUND))
-                const table = await Table.findOne({ where: { id }, transaction: t })
-                if (table.table_status === "F") {
-
-                    await Table.update({ active: false }, { where: { id }, transaction: t })
-                    // setImmediate(() => {
-
-                    await deleteTableToRedis(id, req.user)
-                    // });
-                } else {
-                    await t.rollback()
-                    return res.json(error(MESSAGE.TABLE_NOT_AVAILABLE, STATUSCODE.NOT_FOUND))
-
-                }
+        const bulk = Array.isArray(req.body.allId)
+        const ids = bulk ? req.body.allId : [req.body.id]
+        for (const id of ids) {
+            const table = await Table.findOne({ where: { id, hotel_id: req.user, active: true }, transaction: t })
+            if (!table) {
+                // Rolled back here too - this path used to return with the
+                // transaction (and its pooled connection) left open.
+                await t.rollback()
+                return res.json(error(MESSAGE.TABLE_NOT_AVAILABLE, STATUSCODE.NOT_FOUND))
             }
-            await t.commit()
-            return res.status(STATUSCODE.CREATED).json(success(MESSAGE.SUCCESS, { message: MESSAGE.CATAGORIES_DELETED }, STATUSCODE.SUCCESS))
+            if (table.table_status !== "F") {
+                await t.rollback()
+                return res.json(bulk
+                    ? error(MESSAGE.TABLE_NOT_AVAILABLE, STATUSCODE.NOT_FOUND)
+                    : error(MESSAGE.RESERVED_TABLE_YOU_CAN_NOT_DETELE, STATUSCODE.FORBIDDEN))
+            }
+            if ((await runningTableIdsOf(req.user, [table.id], t)).length) {
+                await t.rollback()
+                return res.json(error(`Table ${table.table_name} has a running order - settle or cancel it before deleting the table`, STATUSCODE.FORBIDDEN))
+            }
+            await Table.update({ active: false }, { where: { id, hotel_id: req.user }, transaction: t })
         }
-        const tables = await Table.findOne({ where: { id: req.body.id, hotel_id: req.user, active: true }, transaction: t })
-        if (!tables) {
-            await t.rollback()
-            return res.json(error(MESSAGE.TABLE_NOT_AVAILABLE, STATUSCODE.NOT_FOUND))
-        }
-
-        if (tables.table_status !== 'F') {
-            await t.rollback()
-            return res.json(error(MESSAGE.RESERVED_TABLE_YOU_CAN_NOT_DETELE, STATUSCODE.FORBIDDEN))
-        }
-        const removeTable = await Table.update({ active: false }, { where: { id: req.body.id, hotel_id: req.user } })
-
-        //TODO remove all Table form hotel const 
-        // removeTable = await Table.destroy({ where: { hotel_id: req.user } })
         await t.commit()
-        // setImmediate(() => {
-
-        await deleteTableToRedis(req.body.id, req.user)
-        // });
-        return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Table Remove" }, STATUSCODE.SUCCESS))
+        for (const id of ids) await deleteTableToRedis(id, req.user)
+        return bulk
+            ? res.status(STATUSCODE.CREATED).json(success(MESSAGE.SUCCESS, { message: MESSAGE.CATAGORIES_DELETED }, STATUSCODE.SUCCESS))
+            : res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { message: "Table Remove" }, STATUSCODE.SUCCESS))
     } catch (err) {
         await t.rollback()
         //createLogFile(req.user, ` removeTable/err Error`, err);

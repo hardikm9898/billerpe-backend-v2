@@ -7,6 +7,8 @@ const { error, success } = require("../responce/res")
 const Hotel = require("../model/hotel")
 const RestaurantSetting = require("../model/restaurantSetting")
 const SalesSummaryLog = require("../model/salesSummaryLog")
+const LocalServerRegistration = require("../model/localServerRegistration")
+const { laterDuePaymentsOnBills, dueReceivedOn, asBilled } = require("../utils/dueReceipts")
 const moment = require("moment-timezone")
 
 const axios = require("axios")
@@ -252,82 +254,54 @@ const dailySendToClientTotalSales = async (req, res) => {
         return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR))
     }
 }
-const getSalesSummaryMetrics = async (hotel_id, startD, endD) => {
-    const totalSale = await Order.sum("grandAmount", {
-        where: {
-            payment: STATUS.SUCCESS, hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
-    const totalInvoice = await Order.count({
-        where: {
-            payment: STATUS.SUCCESS, hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
-    const totalCardPayment = await Order.sum("card", {
-        where: {
-            payment: STATUS.SUCCESS, hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
-    const totalCashPayment = await Order.sum("cash", {
-        where: {
-            payment: STATUS.SUCCESS, hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
-    const totalUpiPayment = await Order.sum("upi", {
-        where: {
-            payment: STATUS.SUCCESS, hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
-    const totalDuePayment = await Order.sum("due", {
-        where: {
-            payment: STATUS.SUCCESS, hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
-    const totalSettleDuePayment = await DuePaymentReceive.sum("amount", {
-        where: {
-            hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
-    const totalDiscount = await Order.sum("totalDiscount", {
-        where: {
-            payment: STATUS.SUCCESS, hotel_id,
-            createdAt: { [Op.between]: [startD, endD] }, deleted: false
-        }
-    })
+// The day's figures by business_date - the same rule as the dashboard
+// (controller/dashBoard.js#salesDashBoardData), so the two always agree.
+// They used to be a createdAt range, and an order's createdAt is not its
+// business day here: the cloud row keeps the time the table was opened
+// (an order is first pushed at its KOT), while the exe moves the order to
+// the day it was SETTLED (billerpe-local-exe/helpers/settleDate.js) and
+// sends that business_date. Owner report 2026-10-03: hotels 2, 3 and 6 got
+// a summary that did not match their dashboard.
+const getSalesSummaryMetrics = async (hotel_id, businessDate) => {
+    const orders = { payment: STATUS.SUCCESS, hotel_id, business_date: businessDate, deleted: false }
+    const [
+        totalSale, totalInvoice, totalCardPayment, totalCashPayment,
+        totalUpiPayment, totalDuePayment, totalSettleDuePayment, totalDiscount,
+    ] = await Promise.all([
+        Order.sum("grandAmount", { where: orders }),
+        Order.count({ where: orders }),
+        Order.sum("card", { where: orders }),
+        Order.sum("cash", { where: orders }),
+        Order.sum("upi", { where: orders }),
+        Order.sum("due", { where: orders }),
+        dueReceivedOn(hotel_id, businessDate),
+        Order.sum("totalDiscount", { where: orders }),
+    ])
+    // Cash / UPI / card / due as the bills were settled; dues collected
+    // count on the day they came in (utils/dueReceipts.js), as on the
+    // dashboard.
+    const billed = asBilled(
+        { cash: totalCashPayment, upi: totalUpiPayment, card: totalCardPayment, due: totalDuePayment },
+        await laterDuePaymentsOnBills(hotel_id, orders),
+    )
 
     return {
-        totalSale, totalInvoice, totalCardPayment, totalCashPayment,
-        totalUpiPayment, totalDuePayment, totalSettleDuePayment, totalDiscount
+        totalSale, totalInvoice, totalCardPayment: billed.card, totalCashPayment: billed.cash,
+        totalUpiPayment: billed.upi, totalDuePayment: billed.due, totalSettleDuePayment, totalDiscount
     }
 }
 
 /** Returns { ok, messageId } or { ok: false, error }. */
-const sendRestaurantSalesSummary = async (hotel, timeZone, businessStartTime, businessDate) => {
+const sendRestaurantSalesSummary = async (hotel, businessDate) => {
     if (!hotel.owner_number) {
         console.warn(`Skipping sales summary for hotel ${hotel.id}: no owner_number`)
         return { ok: false, error: "no owner number" }
     }
-    const [hour, minute, second] = businessStartTime.split(':').map(Number)
-
-    const startD = moment.tz(businessDate, timeZone)
-        .set({ hour, minute, second: second || 0, millisecond: 0 })
-        .toDate()
-    const endD = moment.tz(businessDate, timeZone)
-        .add(1, 'day')
-        .set({ hour, minute, second: second || 0, millisecond: 0 })
-        .toDate()
 
     const {
         totalSale, totalInvoice, totalCardPayment, totalCashPayment,
         totalUpiPayment, totalDuePayment, totalSettleDuePayment, totalDiscount
-    } = await getSalesSummaryMetrics(hotel.id, startD, endD)
+    } = await getSalesSummaryMetrics(hotel.id, businessDate)
 
     const url = `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`;
     const headers = {
@@ -386,7 +360,16 @@ const sendRestaurantSalesSummary = async (hotel, timeZone, businessStartTime, bu
 const SUMMARY_SEND_DELAY_MS = 1500             // gap between WhatsApp sends (rate-limit safety)
 const SUMMARY_RETRY_AFTER_MS = 30 * 60 * 1000  // a failed send waits this long
 const SUMMARY_MAX_ATTEMPTS = 4                 // per outlet per business day
-const SUMMARY_SEND_WINDOW_HOURS = 6            // after closing; later is too late to be "the end of the day"
+const SUMMARY_SEND_WINDOW_HOURS = 14           // after closing; later is too late to be "the end of the day"
+// An outlet with its own server (billerpe-local-exe) bills there and pushes
+// to the cloud every few minutes, so at closing time its last bills may not
+// be here yet - or not until the PC is switched on the next morning. Its
+// summary waits for a heartbeat this long after closing (the exe pushes at
+// least every 3 minutes while it heartbeats every minute, so by then
+// everything settled before closing has been sent), and goes anyway once
+// SUMMARY_WAIT_FOR_OUTLET_HOURS have passed with the PC still off.
+const SUMMARY_SYNC_GRACE_MS = 5 * 60 * 1000
+const SUMMARY_WAIT_FOR_OUTLET_HOURS = 12
 
 let summaryWorkerRunning = false
 const summaryQueue = []
@@ -439,13 +422,13 @@ const processSummaryQueue = async () => {
     try {
         while (summaryQueue.length) {
             const job = summaryQueue.shift()
-            const { hotel, timeZone, businessStartTime, businessDate, setting } = job
+            const { hotel, businessDate, setting } = job
             try {
                 const log = await claimSummary(hotel.id, businessDate)
                 if (!log) continue
                 let result = { ok: false, error: "not sent" }
                 try {
-                    result = await sendRestaurantSalesSummary(hotel, timeZone, businessStartTime, businessDate)
+                    result = await sendRestaurantSalesSummary(hotel, businessDate)
                 } catch (err) {
                     result = { ok: false, error: err?.message || "send failed" }
                 }
@@ -506,9 +489,23 @@ const checkAndSendClosingSummaries = async () => {
             // Sent before the summary log existed.
             if (setting?.last_summary_sent_date === businessDate) continue
 
-            due.push({ hotel, timeZone, businessStartTime, businessDate, setting })
+            due.push({ hotel, timeZone, businessStartTime, businessDate, setting, closedAt: businessStartToday.toDate() })
         }
         if (!due.length) return
+
+        // Outlets billing on their own server: last heartbeat of each.
+        const registrations = await LocalServerRegistration.findAll({
+            where: { hotel_id: due.map((d) => d.hotel.id), status: "active" },
+            attributes: ["hotel_id", "last_seen_at"],
+            raw: true,
+        })
+        const lastSeenOf = new Map(registrations.map((r) => [r.hotel_id, r.last_seen_at ? new Date(r.last_seen_at) : null]))
+        const outletSynced = (d) => {
+            if (!lastSeenOf.has(d.hotel.id)) return true      // bills on the cloud itself
+            const lastSeen = lastSeenOf.get(d.hotel.id)
+            if (lastSeen && lastSeen.getTime() >= d.closedAt.getTime() + SUMMARY_SYNC_GRACE_MS) return true
+            return Date.now() - d.closedAt.getTime() >= SUMMARY_WAIT_FOR_OUTLET_HOURS * 3600 * 1000
+        }
 
         // Already sent / being sent / waiting to retry: one query for all of them.
         const logs = await SalesSummaryLog.findAll({
@@ -524,7 +521,7 @@ const checkAndSendClosingSummaries = async () => {
             if (!logOf.has(k)) logOf.set(k, l)
         }
         for (const d of due) {
-            if (summaryDue(logOf.get(`${d.hotel.id}-${d.businessDate}`))) enqueueSummaryJob(d)
+            if (summaryDue(logOf.get(`${d.hotel.id}-${d.businessDate}`)) && outletSynced(d)) enqueueSummaryJob(d)
         }
 
         // Fire-and-forget; the worker is self-guarded against overlap.
@@ -1142,4 +1139,4 @@ const sendTicketInWhatsApp = async(req,res)=>{
 
 } 
 
-module.exports = { downloadSampleExcel, downloadSampleExcel, deleteWhatsAppTemplate, updateWhatsAppTemplate, createWhatsAppTemplate, sendBulkWhatsappMessage, getAllWhatsappTemplates, sendWhatsappMessage, sendMessageToNajeria, dailySendToClientTotalSales, CustomerFeedBackSendMessage, checkAndSendClosingSummaries }
+module.exports = { downloadSampleExcel, downloadSampleExcel, deleteWhatsAppTemplate, updateWhatsAppTemplate, createWhatsAppTemplate, sendBulkWhatsappMessage, getAllWhatsappTemplates, sendWhatsappMessage, sendMessageToNajeria, dailySendToClientTotalSales, CustomerFeedBackSendMessage, checkAndSendClosingSummaries, getSalesSummaryMetrics }

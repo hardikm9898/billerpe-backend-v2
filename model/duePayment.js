@@ -33,6 +33,13 @@ const DuePaymentReceive = sequelize.define("hms_due_payment_receive", {
     deleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false
+    },
+    // Sync engine v2: the outlet server's own id for a due it collected
+    // (billerpe-local-exe model/dueReceipt.js), the idempotency key for a
+    // repeat push. Migration 20261003100000.
+    local_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
     }
 
 })

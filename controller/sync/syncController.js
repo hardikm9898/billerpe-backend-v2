@@ -291,6 +291,13 @@ const push = async (req, res) => {
                 const fields = decodeJsonColumns(entity.Model, pickWritableFields(entity, translated));
                 if (entity.scope !== "cashSession") fields.hotel_id = hotelId;
                 fields.local_id = localId;
+                // An entity's own checks / derived fields (syncRegistry.js).
+                const notReady = entity.prepare ? await entity.prepare(fields, hotelId, t) : null;
+                if (notReady) {
+                    await t.rollback();
+                    results.push({ local_id: localId, ok: false, retryable: true, message: notReady });
+                    continue;
+                }
 
                 let existing = await entity.Model.findOne({
                     where: { ...scopeWhere(entity, hotelId), local_id: localId },
@@ -548,6 +555,23 @@ const pushOrders = async (req, res) => {
                     const created = await Order.create(fields, { transaction: t });
                     cloudOrderId = created.id;
                 }
+                // Sequelize never writes createdAt on an update, and settling
+                // on the exe moves the order to the settle time
+                // (billerpe-local-exe/helpers/settleDate.js) - so the cloud
+                // row kept the time its table was opened (it is first pushed
+                // at its KOT), and every createdAt-based report put an
+                // overnight or next-day-settled bill on the wrong day.
+                const incomingCreatedAt = incoming.createdAt ? new Date(incoming.createdAt) : null;
+                if (incomingCreatedAt && !Number.isNaN(incomingCreatedAt.getTime())) {
+                    // As a UTC string: a Date replacement is written in the
+                    // server's local time, while Sequelize stores and reads
+                    // DATETIMEs as UTC.
+                    const utc = incomingCreatedAt.toISOString().replace("T", " ").replace("Z", "");
+                    await sequelize.query(
+                        `UPDATE ${Order.getTableName()} SET createdAt = ? WHERE id = ? AND hotel_id = ?`,
+                        { replacements: [utc, cloudOrderId, hotelId], transaction: t },
+                    );
+                }
 
                 // Details and taxes are replaced wholesale: an order's line
                 // set is fully described by every push (the exe rebuilds it
@@ -616,10 +640,20 @@ const pushOrders = async (req, res) => {
         // Table statuses ride along with the order push (they change for the
         // same reasons and in the same moment), so they never need a request
         // of their own. The exe owns this field outright.
+        //
+        // `silent`: updatedAt is what last-write-wins compares, and the exe
+        // never takes table_status from a pull. Bumping it here made every
+        // table look "changed on the cloud" right after each order push, so
+        // the exe's own table edits (deletes, renames) were refused as
+        // "cloud newer" and its old values pulled back over them - deleted
+        // tables reappearing on the grid (hotel 6, 2026-10-01).
         for (const t of req.body?.tableStatuses || []) {
             const realId = await resolveByLocalId(Table, hotelId, t.id, null);
             if (realId != null) {
-                await Table.update({ table_status: t.table_status || "F" }, { where: { id: realId, hotel_id: hotelId } });
+                await Table.update(
+                    { table_status: t.table_status || "F" },
+                    { where: { id: realId, hotel_id: hotelId }, silent: true },
+                );
             }
         }
 

@@ -9,6 +9,7 @@ const moment = require("moment-timezone");
 const Menu_categ = require("../model/menu_categ");
 const ExpenseEntry = require("../model/expenseEnty");
 const { getShiftedDateRange, getBusinessDate } = require("../utils/dateUtils");
+const { laterDuePaymentsOnBills, dueReceivedOn, asBilled } = require("../utils/dueReceipts");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER
@@ -62,7 +63,7 @@ const salesDashBoardData = async (req, res) => {
         const cnt = (where) => Order.count({ where });
 
         // ── Run all independent DB queries in parallel ──────────────────────
-        const [
+        let [
             totalSale,            previousTotalSale,
             totalInvoice,         previousInvoice,
             totalDinInSale,       previousTotalDinInSale,
@@ -94,6 +95,28 @@ const salesDashBoardData = async (req, res) => {
             ExpenseEntry.sum("amount", { where: { hotel_id: req.user, addExpense: true,  business_date: todayBusinessDate, deleted: false } }),
             ExpenseEntry.sum("amount", { where: { hotel_id: req.user, addExpense: false, business_date: todayBusinessDate, deleted: false } }),
         ]);
+
+        // ── Due money counts on the day it was collected (utils/dueReceipts.js)
+        // The bills' cash / upi / card / due as they were settled - not
+        // including dues paid on a later day - and the dues paid in this
+        // range as "Due received". Otherwise a day's figures changed every
+        // time one of its dues was collected, and stopped matching the
+        // WhatsApp summary sent when it closed.
+        const [laterOnCurrent, laterOnPrevious, totalDueReceived] = await Promise.all([
+            laterDuePaymentsOnBills(req.user, base()),
+            laterDuePaymentsOnBills(req.user, prev()),
+            dueReceivedOn(req.user, { [Op.between]: [businessStartDate, businessEndDate] }),
+        ]);
+        const billed = asBilled({ cash: totalCashPayment, upi: totalUpiPayment, card: totalCardPayment, due: totalDuePayment }, laterOnCurrent);
+        const previousBilled = asBilled({ cash: previousTotalCashPayment, upi: previousTotalUpiPayment, card: previousTotalCardPayment, due: previousTotalDuePayment }, laterOnPrevious);
+        totalCashPayment = billed.cash;
+        totalUpiPayment = billed.upi;
+        totalCardPayment = billed.card;
+        totalDuePayment = billed.due;
+        previousTotalCashPayment = previousBilled.cash;
+        previousTotalUpiPayment = previousBilled.upi;
+        previousTotalCardPayment = previousBilled.card;
+        previousTotalDuePayment = previousBilled.due;
 
         // ── Balance calculation ─────────────────────────────────────────────
         const openingBalance = (prevSaleYesterday || 0) - (prevExpenseYesterday || 0) + (prevMoneyInYesterday || 0);
@@ -128,7 +151,9 @@ const salesDashBoardData = async (req, res) => {
             totalCardPayment,
             totalCashPayment,
             totalUpiPayment,
-            totalDuePayment
+            totalDuePayment,
+            // Dues of any day's bills collected in this range.
+            totalDueReceived
         };
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, {
@@ -153,25 +178,40 @@ const salesDashBoardData = async (req, res) => {
 const itemWiseDashBoardData = async (req, res) => {
     try {
         const { start, end } = req.body;
-        const { startD, endD } = await getShiftedDateRange(start, end, req.user);
+        const { businessStartDate, businessEndDate } = await getShiftedDateRange(start, end, req.user);
 
+        // By the order's business_date, like the sales figures above. A line's
+        // own createdAt is when it reached the cloud: an outlet's server
+        // re-sends an order's lines with every push of it
+        // (controller/sync/syncController.js#pushOrders), so a bill synced
+        // late - or reprinted the next day - moved its items to that day.
         const totalItemsSale = await OrderDetails.findAll({
             where: {
                 hotel_id: req.user,
                 status: ORDER_DETAILS_TYPE.DELIVERED,
                 payment_status: STATUS.SUCCESS,
-                createdAt: { [Op.between]: [startD, endD] }
             },
             attributes: ["MenuId", [sequelize.fn("sum", sequelize.col("qty")), "totalQty"]],
             group: "MenuId",
-            include: {
+            include: [{
+                model: Order,
+                as: "order",
+                attributes: [],
+                required: true,
+                where: {
+                    hotel_id: req.user,
+                    payment: STATUS.SUCCESS,
+                    deleted: false,
+                    business_date: { [Op.between]: [businessStartDate, businessEndDate] }
+                }
+            }, {
                 model: Menu,
                 group: "menu_categ_id",
                 include: {
                     model: Menu_categ,
                     attributes: ["menu_categ_nm"]
                 }
-            },
+            }],
             order: [[sequelize.literal("totalQty"), "DESC"]]
         });
 

@@ -132,7 +132,29 @@ const ENTITIES = [
     // ---- exe-owned, append-only -------------------------------------------
     { name: "customers", Model: models.User, direction: "push" },
     { name: "auditLogs", Model: models.AuditLog, direction: "push" },
+    // A due collected on the exe (its model/dueReceipt.js, sent as
+    // { order_id: OUR order id, amount, payment_mode, business_date, bill_no,
+    // settle_by }). The bill must be here already; the customer is taken from
+    // it. The dashboard and the closing summary count the money on this
+    // row's business_date (utils/dueReceipts.js).
+    { name: "dueReceipts", Model: models.DuePaymentReceive, direction: "push", prepare: prepareDueReceipt },
 ];
+
+// Returns why the row cannot be written yet, or null.
+async function prepareDueReceipt(fields, hotelId, transaction) {
+    const order = fields.order_id == null ? null : await models.Order.findOne({
+        where: { id: fields.order_id, hotel_id: hotelId }, attributes: ["id", "UserId", "bill_no"], raw: true, transaction,
+    });
+    if (!order) return `bill ${fields.order_id} not synced here yet`;
+    fields.user_id = order.UserId ?? null;
+    if (!fields.bill_no) fields.bill_no = order.bill_no ?? "";
+    if (fields.settle_by != null) {
+        const staff = await models.HotelUser.findOne({ where: { id: fields.settle_by, hotel_id: hotelId }, attributes: ["id"], raw: true, transaction });
+        // Who took it is a detail; the money must not wait on it.
+        if (!staff) fields.settle_by = null;
+    }
+    return null;
+}
 
 const BY_NAME = new Map(ENTITIES.map((e) => [e.name, e]));
 
