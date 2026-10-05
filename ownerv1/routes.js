@@ -3,6 +3,7 @@ const cors = require("cors");
 const { RuleError } = require("../appv1/core");
 const auth = require("./auth");
 const { outlets } = require("./outlets");
+const watch = require("./watch");
 
 // BillerPe Owner App API (Plan 1 owners): /owner/v1. Same shape as /app/v1:
 // POST /owner/v1/<method> with { args: [...] }, answer { ok: true, result }
@@ -46,6 +47,13 @@ const HANDLERS = {
     logout: (o) => auth.logout(o),
     setPushToken: (o, token) => auth.setPushToken(o, token),
     setLanguage: (o, lang) => auth.setLanguage(o, lang),
+
+    /* phase 1 - watch (view only) */
+    home: (o) => watch.home(o),
+    outlet: (o, outletId, range) => watch.outlet(o, outletId, range),
+    tables: (o, outletId) => watch.tables(o, outletId),
+    bills: (o, query) => watch.bills(o, query || {}),
+    bill: (o, outletId, billId) => watch.bill(o, outletId, billId),
 };
 
 router.post("/:name", (req, res) => {

@@ -2,7 +2,7 @@ const { Op, QueryTypes } = require("sequelize");
 const sequelize = require("../../connection/connect");
 const {
     Hotel, QrOrder, TableBooking, LocalServerRegistration,
-    Order, OrderDetails, OrderTax, User, Table, TaxType, Menu, MenuVariants, MenuAddon,
+    Order, OrderDetails, OrderTax, User, Table, TaxType, Menu, MenuVariants, MenuAddon, HotelUser, TimeLine,
 } = require("../../model");
 const { MESSAGE, STATUSCODE } = require("../../constant/const");
 const { success, error } = require("../../responce/res");
@@ -537,6 +537,8 @@ async function resolveCustomer(order, hotelId, t) {
 // #cloudIdFor), so they are looked up as cloud ids first. Looking them up by
 // local_id first converted them a second time and could file an order's
 // lines under another dish (the same bug as translateForeignKeys above).
+const validDate = (v) => v != null && !Number.isNaN(new Date(v).getTime());
+
 async function resolveByLocalId(Model, hotelId, value, t) {
     if (value == null) return null;
     const byId = await Model.findOne({ where: { hotel_id: hotelId, id: value }, attributes: ["id"], raw: true, transaction: t });
@@ -551,8 +553,49 @@ const ORDER_FIELDS = [
     "discount_reason", "discount_type", "discount_value",
     "service_charge", "delivery_charge", "packaging_charge",
     "cash", "upi", "card", "due", "other_payments", "other_amount", "tip", "billPrintCount", "billed_at",
-    "total_sgst", "total_cgst", "deleted", "token", "business_date", "createdAt",
+    "total_sgst", "total_cgst", "deleted", "token", "business_date", "createdAt", "created_from",
 ];
+
+/** A staff id the exe sent (already the cloud id) -> that id, only if it is this outlet's. */
+async function ownStaffId(hotelId, value, cache, t) {
+    if (value == null) return null;
+    const key = Number(value);
+    if (!Number.isInteger(key)) return null;
+    if (!cache.has(key)) {
+        const row = await HotelUser.findOne({ where: { hotel_id: hotelId, id: key }, attributes: ["id"], raw: true, transaction: t });
+        cache.set(key, row ? row.id : null);
+    }
+    return cache.get(key);
+}
+
+// Exe order events -> readable timeline labels (the Owner App's activity
+// list). The raw action stays in `action`; event_name carries the words.
+const EVENT_LABEL = {
+    place_order: () => "Order opened",
+    save_order: () => "Order saved",
+    kot: (e) => (e.kot ? `KOT ${e.kot} sent` : "KOT sent"),
+    hold: () => "Held",
+    settle: () => "Settled",
+    delete_order: (e) => (e.detail?.reason ? `Cancelled — ${e.detail.reason}` : "Cancelled"),
+    remove_kot: () => "Item removed",
+    decrease_kot_qty: () => "Item quantity reduced",
+    update_order: () => "Edited after settle",
+    update_order_item: () => "Item changed",
+    move_table: (e) => (e.detail?.toTable ? `Moved to ${e.detail.toTable}` : "Moved to another table"),
+    merge_table: (e) => (e.detail?.fromTable ? `Merged with ${e.detail.fromTable}` : "Tables merged"),
+    merged_into: (e) => (e.detail?.intoBill ? `Merged into bill #${e.detail.intoBill}` : "Merged into another bill"),
+    move_kot: () => "KOT moved",
+    kds_stage: (e) => (e.detail?.kotNumber ? `KOT ${e.detail.kotNumber} ready` : "Kitchen update"),
+    kds_reject: () => "Kitchen rejected an item",
+    kds_back: () => "Kitchen undo",
+    bill_print: () => "Bill printed",
+    bill_reprint: () => "Bill printed again",
+    due_collected: () => "Due collected",
+    qr_accept: () => "QR order accepted",
+    customer_removed: () => "Customer removed",
+    free_table: () => "Table freed",
+};
+const eventLabel = (e) => String((EVENT_LABEL[e.action]?.(e)) || e.event || e.action || "Updated").slice(0, 250);
 
 const pushOrders = async (req, res) => {
     try {
@@ -581,6 +624,9 @@ const pushOrders = async (req, res) => {
                 // skip these rows entirely.
                 fields.isOffline = false;
                 fields.UserId = await resolveCustomer(incoming, hotelId, t);
+                const staffIds = new Map();
+                // exe 1.1.7+: the staff member the order belongs to (captain).
+                if (incoming.hotelUserId !== undefined) fields.hotelUserId = await ownStaffId(hotelId, incoming.hotelUserId, staffIds, t);
                 if (incoming.TableId != null) {
                     fields.TableId = await resolveByLocalId(Table, hotelId, incoming.TableId, t);
                 }
@@ -647,6 +693,9 @@ const pushOrders = async (req, res) => {
                         comment: line.comment || "", addons: decodeJsonValue(line.addons) || [],
                         variant_name: line.variant_name || "",
                         TableId: fields.TableId ?? null, UserId: fields.UserId,
+                        // exe 1.1.7+: who sent the KOT and when (else: now).
+                        firedBy: await ownStaffId(hotelId, line.firedBy, staffIds, t),
+                        ...(validDate(line.createdAt) ? { createdAt: new Date(line.createdAt) } : {}),
                     });
                 }
                 if (skippedLines.length) {
@@ -673,6 +722,26 @@ const pushOrders = async (req, res) => {
                     });
                 }
                 if (taxRows.length) await OrderTax.bulkCreate(taxRows, { transaction: t });
+
+                // exe 1.1.7+: the order's activity, replaced wholesale like
+                // the lines. Only rows this sync wrote (from "exe-sync") are
+                // replaced; an older exe sends no timeline and changes nothing.
+                if (Array.isArray(incoming.timeline) && incoming.timeline.length) {
+                    await TimeLine.destroy({ where: { order_id: cloudOrderId, hotel_id: hotelId, from: "exe-sync" }, transaction: t });
+                    const events = [];
+                    for (const e of incoming.timeline.slice(0, 300)) {
+                        if (!e || !validDate(e.at)) continue;
+                        events.push({
+                            hotel_id: hotelId, order_id: cloudOrderId, TableId: fields.TableId ?? null,
+                            hotelUserId: await ownStaffId(hotelId, e.user, staffIds, t),
+                            action: String(e.action || "").slice(0, 60), event_name: eventLabel(e),
+                            creator: String(e.by || "").slice(0, 120), created_Date: new Date(e.at),
+                            from: "exe-sync", device_name: "", items: [],
+                            bill_no: String(incoming.bill_no ?? "0000"), order_type: incoming.order_type || null,
+                        });
+                    }
+                    if (events.length) await TimeLine.bulkCreate(events, { transaction: t });
+                }
 
                 await t.commit();
                 results.push({ local_id: localId, ok: true, cloud_id: cloudOrderId });

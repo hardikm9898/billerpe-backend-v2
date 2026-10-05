@@ -20,7 +20,7 @@ process.env.OWNER_JWT_SECRET = process.env.OWNER_JWT_SECRET || "ownerv1-test-sec
 const http = require("http");
 const express = require("express");
 const bcrypt = require("bcrypt");
-const moment = require("moment");
+const moment = require("moment-timezone");
 const sequelize = require("../connection/connect");
 const M = require("../model");
 
@@ -217,6 +217,148 @@ async function run() {
     const v = pcView(fresh, Date.now());
     check("an outlet whose exe never sent it reads null (app shows '—')", fresh.pending_orders === null && v.pendingOrders === null && v.lastPushAt === null, v);
 
+    console.log("\nwatch (phase 1): bills uploaded by the outlet PC");
+    {
+        const { outletClock, businessDate } = require("../appv1/core");
+        const today = businessDate(await outletClock(h1.id));
+        const lastWeek = moment(today).subtract(7, "days").format("YYYY-MM-DD");
+        const catalog = await M.MenuCatalog.create({ name: "Main Menu", hotel_id: h1.id, is_default: true, enter_by: "t" });
+        const cat = await M.Menu_categ.create({ menu_categ_nm: "Starters", hotel_id: h1.id, rank: 1, menu_catalog_id: catalog.id });
+        const paneer = await M.Menu.create({ item_name: "Paneer Tikka", price: "320", shortCode: "PT", sub_categories: "Regular Veg", menu_categ_id: cat.id, hotel_id: h1.id, active: true });
+        const naan = await M.Menu.create({ item_name: "Butter Naan", price: "60", shortCode: "BN", sub_categories: "Regular Veg", menu_categ_id: cat.id, hotel_id: h1.id, active: true });
+        const hall = await M.TableCatagories.create({ type: "T", table_catag_nm: "AC Hall", hotel_id: h1.id, rank: 1 });
+        const garden = await M.TableCatagories.create({ type: "T", table_catag_nm: "Garden", hotel_id: h1.id, rank: 2 });
+        const T1 = await M.Table.create({ table_name: "T1", type: "T", table_catag_id: hall.id, hotel_id: h1.id, capacity: 4, table_status: "R" });
+        const T2 = await M.Table.create({ table_name: "T2", type: "T", table_catag_id: hall.id, hotel_id: h1.id, capacity: 4, table_status: "F" });
+        await M.Table.create({ table_name: "G1", type: "T", table_catag_id: garden.id, hotel_id: h1.id, capacity: 4, table_status: "F" });
+        await M.Table.create({ table_name: "G9", type: "T", table_catag_id: garden.id, hotel_id: h1.id, capacity: 4, table_status: "F", active: false });
+        const ravi = await makeUser(h1, "Captain", mobile(6), PW, { name: "Ravi Solanki" });
+        const meena = await makeUser(h1, "Cashier", mobile(7), PW, { name: "Meena Joshi" });
+
+        const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
+        const line = (menu, qty, price, kot, atMin, extra = {}) => ({ MenuId: menu.id, qty, price, order_type: "dinin", kotNumber: kot, totalDiscount: 0, status: "kot", payment_status: "pending", comment: "", addons: [], variant_name: "", firedBy: ravi.id, createdAt: ago(atMin), ...extra });
+        const ev = (action, by, atMin, extra = {}) => ({ action, event: action, by: by.name, user: by.id, at: ago(atMin), kot: null, detail: null, ...extra });
+        const order = (localId, billNo, extra) => ({
+            local_id: localId, bill_no: String(billNo), order_type: "dinin", payment: "pending", status: "dispatch", totalAmount: 0, gst: 0, grandAmount: 0, roundOff: 0,
+            totalDiscount: 0, discount_reason: "", discount_type: "fix", discount_value: 0, service_charge: 0, delivery_charge: 0, packaging_charge: 0,
+            cash: 0, upi: 0, card: 0, due: 0, other_payments: "[]", other_amount: 0, tip: 0, billPrintCount: 0, billed_at: null, total_sgst: 0, total_cgst: 0,
+            deleted: false, token: 0, business_date: today, createdAt: ago(30), TableId: null, customer: null, details: [], taxes: [], hotelUserId: ravi.id, created_from: "web", ...extra,
+        });
+        const settled = (extra) => ({ payment: "success", status: "success", ...extra });
+        // Times stay inside today's business day even right after midnight.
+        const sinceDayStart = Math.floor((Date.now() - moment.tz(today, "YYYY-MM-DD", "Asia/Kolkata").valueOf()) / 60000);
+        const cap = (m) => Math.min(m, Math.max(1, sinceDayStart - 1));
+        const payload = [
+            order(9001, 101, settled({ TableId: T2.id, totalAmount: 640, grandAmount: 640, upi: 640, createdAt: ago(cap(30)), details: [line(paneer, 2, 320, 1, cap(70))],
+                timeline: [ev("place_order", ravi, cap(72)), ev("kot", ravi, cap(70), { kot: 1 }), ev("settle", meena, cap(30))] })),
+            order(9002, 102, { TableId: T1.id, totalAmount: 500, grandAmount: 500, createdAt: ago(100), details: [line(paneer, 1, 320, 1, 98), line(naan, 3, 60, 2, 40)],
+                timeline: [ev("place_order", ravi, 100), ev("kot", ravi, 98, { kot: 1 }), ev("kot", ravi, 40, { kot: 2 })] }),
+            order(9003, 103, { TableId: T2.id, deleted: true, totalAmount: 380, grandAmount: 380, createdAt: ago(cap(50)), details: [line(paneer, 1, 320, 1, cap(55)), line(naan, 1, 60, 1, cap(55))],
+                timeline: [ev("place_order", ravi, cap(56)), ev("kot", ravi, cap(55), { kot: 1 }), ev("delete_order", meena, cap(50), { detail: { reason: "Customer left" } })] }),
+            order(9004, 104, settled({ order_type: "pickup", totalAmount: 1000, totalDiscount: 350, discount_type: "pr", discount_value: 35, grandAmount: 650, cash: 650, createdAt: ago(cap(20)), details: [line(paneer, 3, 320, 1, cap(25), { order_type: "pickup" }), line(naan, 1, 40, 1, cap(25), { order_type: "pickup" })],
+                timeline: [ev("place_order", meena, cap(26)), ev("kot", meena, cap(25), { kot: 1 }), ev("settle", meena, cap(20))] })),
+            order(9005, 105, settled({ order_type: "pickup", totalAmount: 120, grandAmount: 120, cash: 120, createdAt: ago(cap(15)), details: [line(naan, 2, 60, 1, cap(18), { order_type: "pickup" })],
+                timeline: [ev("place_order", meena, cap(18)), ev("settle", meena, cap(16)), ev("update_order", meena, cap(15))] })),
+            order(9006, 106, settled({ order_type: "pickup", totalAmount: 200, grandAmount: 200, due: 200, createdAt: ago(cap(10)), customer: { local_id: 77, name: "Rakesh Patel", number: "9824012345", isPlaceholder: false }, details: [line(naan, 2, 100, 1, cap(12), { order_type: "pickup" })],
+                timeline: [ev("place_order", meena, cap(12)), ev("settle", meena, cap(10))] })),
+            order(9007, 90, settled({ order_type: "pickup", business_date: lastWeek, totalAmount: 1000, grandAmount: 1000, cash: 1000, createdAt: moment.tz(lastWeek, "YYYY-MM-DD", "Asia/Kolkata").add(1, "minute").toISOString(), details: [line(naan, 10, 100, 1, 7 * 1440, { order_type: "pickup" })] })),
+        ];
+        const pushOrders = (orders) => fetch(`${syncBase}/push/orders`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${devToken}` }, body: JSON.stringify({ orders }) }).then((x) => x.json());
+        const resultsOf = (pr) => pr?.results?.results || pr?.results || [];
+        let pr = await pushOrders(payload);
+        check("the PC's upload of 7 bills is accepted", resultsOf(pr).length === 7 && resultsOf(pr).every((x) => x.ok), pr);
+        const cloud = Object.fromEntries((await M.Order.findAll({ where: { hotel_id: h1.id }, raw: true })).map((x) => [x.bill_no, x]));
+        check("the captain (staff) of the bill is stored", cloud["102"]?.hotelUserId === ravi.id, cloud["102"]?.hotelUserId);
+        const lines102 = await M.OrderDetails.findAll({ where: { orderId: cloud["102"].id }, order: [["kotNumber", "ASC"]], raw: true });
+        check("KOT time and who sent it are kept per line", lines102.length === 2 && Math.abs(new Date(lines102[1].createdAt) - new Date(payload[1].details[1].createdAt)) < 2000 && lines102[0].firedBy === ravi.id, lines102.map((l) => [l.createdAt, l.firedBy]));
+        let tl = await M.TimeLine.count({ where: { order_id: cloud["102"].id, hotel_id: h1.id } });
+        check("the bill's 3 events are stored", tl === 3, tl);
+        await pushOrders(payload);
+        tl = await M.TimeLine.count({ where: { order_id: cloud["102"].id, hotel_id: h1.id } });
+        check("a second upload replaces the events, never duplicates them", tl === 3, tl);
+        const legacy = order(9008, 107, settled({ order_type: "pickup", totalAmount: 60, grandAmount: 60, cash: 60, createdAt: ago(cap(5)), details: [line(naan, 1, 60, 1, cap(6), { order_type: "pickup" })] }));
+        delete legacy.timeline; delete legacy.hotelUserId; delete legacy.created_from;
+        delete legacy.details[0].firedBy; delete legacy.details[0].createdAt;
+        pr = await pushOrders([legacy]);
+        check("an older PC's upload (no events, no captain) still works", resultsOf(pr)[0]?.ok === true, pr);
+        const strange = order(9009, 108, settled({ order_type: "pickup", totalAmount: 10, grandAmount: 10, cash: 10, hotelUserId: 999999999, timeline: [{ action: "settle", by: "x", at: "not-a-date" }] }));
+        pr = await pushOrders([strange]);
+        const s108 = await M.Order.findOne({ where: { hotel_id: h1.id, bill_no: "108" }, raw: true });
+        check("a staff id of another outlet is dropped, a bad event date skipped", resultsOf(pr)[0]?.ok === true && s108.hotelUserId === null && (await M.TimeLine.count({ where: { order_id: s108.id } })) === 0, s108);
+        await M.Order.update({ deleted: true }, { where: { id: s108.id } }); // keep the figures below simple
+
+        const T = tNew;
+        r = await call("home", T);
+        const hA = r.result?.outlets?.find((x) => x.id === h1.id);
+        check("home: net sales today = settled bills (640+650+120+200+60)", hA?.net === 1670, hA);
+        check("home: 5 bills, 2 cancelled, 1 of 3 tables running with ₹500 open", hA?.bills === 5 && hA?.cancelled === 2 && hA?.runningTables === 1 && hA?.totalTables === 3 && hA?.openAmount === 500, hA);
+        check("home: items sold today (2+4+2+2+1)", hA?.items === 11, hA?.items);
+        check("home: compared with last week's same weekday so far (₹1,000)", hA?.compareNet === 1000 && /^vs last /.test(hA?.compareLabel || ""), hA && [hA.compareNet, hA.compareLabel]);
+        check("home: hourly sales add up to the day's net", Math.abs((hA?.hourly || []).reduce((a, x) => a + x.amount, 0) - 1670) < 0.01, hA?.hourly);
+        check("home: a risky action needs attention", ["edited", "cancel-after-kot", "discount"].includes(r.result?.attention?.kind), r.result?.attention);
+
+        const cs = await M.CashSession.create({ hotel_id: h1.id, opening_float: 2000, status: "Open", opened_at: new Date(Date.now() - 5 * 3600000), deleted: false, hotelUserId: meena.id });
+        await M.CashMovement.bulkCreate([{ cashSessionId: cs.id, amount: 2000, type: "Opening" }, { cashSessionId: cs.id, amount: 770, type: "Sale" }]).catch((e) => console.log("    (cash movement:", e.message, ")"));
+        r = await call("outlet", T, h1.id, { key: "today" });
+        const out = r.result;
+        check("outlet: net, bills, avg bill", out?.net === 1670 && out?.bills === 5 && out?.avgBill === 334, out && [out.net, out.bills, out.avgBill]);
+        check("outlet: discount and cancelled counts", out?.discount === 350 && out?.cancelled === 2, out && [out.discount, out.cancelled]);
+        check("outlet: payment mix by mode name", JSON.stringify(out?.payments?.map((p) => p.name).sort()) === JSON.stringify(["Cash", "Due", "UPI"]), out?.payments);
+        check("outlet: top item is Paneer Tikka", out?.topItems?.[0]?.name === "Paneer Tikka", out?.topItems);
+        check("outlet: open cash drawer = sum of its movements, opened by Meena", out?.cash?.expected === 2770 && out?.cash?.by === "Meena Joshi", out?.cash);
+        r = await call("outlet", T, h1.id, { key: "yesterday" });
+        check("outlet: yesterday has none of today's bills", r.result?.bills === 0 && r.result?.net === 0, r.result && [r.result.bills, r.result.net]);
+        r = await call("outlet", T, h1.id, { key: "7d" });
+        check("outlet: 7 days gives a per-day series ending today", r.result?.daily?.length === 7 && r.result.daily[6].day === today && r.result.daily[6].amount === 1670, r.result?.daily);
+        r = await call("outlet", T, h1.id, { key: "custom", from: "2026-01-01", to: "2026-09-01" });
+        check("outlet: a custom range over 3 months is refused", r.ok === false, r);
+        r = await call("outlet", T, hOther.id, { key: "today" });
+        check("outlet: someone else's outlet is refused", r.ok === false && /do not own/.test(r.error || ""), r);
+
+        r = await call("tables", T, h1.id);
+        const secs = r.result?.sections || [];
+        const all = secs.flatMap((s) => s.tables);
+        const t1v = all.find((t) => t.name === "T1");
+        check("tables: grouped by section (AC Hall, Garden)", secs.map((s) => s.name).join(",") === "AC Hall,Garden", secs.map((s) => s.name));
+        check("tables: T1 running ₹500, captain Ravi, open 100 min = overdue", t1v?.state === "running" && t1v.amount === 500 && t1v.captain === "Ravi Solanki" && t1v.minutes >= 99 && t1v.overdue === true, t1v);
+        check("tables: T2 (settled + cancelled) and G1 are free; switched-off G9 hidden", all.filter((t) => t.state === "free").map((t) => t.name).sort().join(",") === "G1,T2" && !all.some((t) => t.name === "G9"), all);
+        check("tables: 1 running of 3", r.result?.running === 1 && r.result?.total === 3, r.result && [r.result.running, r.result.total]);
+
+        r = await call("bills", T, { range: { key: "today" } });
+        const c = r.result?.counts || {};
+        check("bills: counts per filter", c.all === 8 && c.running === 1 && c.settled === 5 && c.cancelled === 2 && c.edited === 1 && c.due === 1 && c.discount === 1, c);
+        const tagOfBill = (no) => r.result?.bills?.find((b) => b.billNo === no)?.tag?.text;
+        check("bills: tags say what the owner worries about", tagOfBill("103") === "Cancelled after KOT" && tagOfBill("105") === "Edited after settle" && tagOfBill("106") === "Due" && tagOfBill("104") === "35% discount" && tagOfBill("102") === "Running" && tagOfBill("101") === "Settled",
+            r.result?.bills?.map((b) => [b.billNo, b.tag.text]));
+        check("bills: table names include the section", r.result?.bills?.find((b) => b.billNo === "102")?.place === "T1 AC Hall", r.result?.bills?.find((b) => b.billNo === "102"));
+        check("bills: newest first", r.result?.bills?.[0]?.at >= r.result?.bills?.at(-1)?.at, r.result?.bills?.map((b) => [b.billNo, b.at]));
+        r = await call("bills", T, { range: { key: "today" }, filter: "cancelled" });
+        const can = r.result?.bills?.find((b) => b.billNo === "103");
+        check("bills: cancelled filter, says who cancelled", r.result?.bills?.length === 2 && can?.sub === "Meena Joshi", r.result?.bills);
+        r = await call("bills", T, { range: { key: "today" }, search: "98240" });
+        check("bills: search by customer mobile", r.result?.bills?.length === 1 && r.result.bills[0].billNo === "106", r.result?.bills);
+        r = await call("bills", T, { range: { key: "today" }, search: "t1" });
+        check("bills: search by table", r.result?.bills?.map((b) => b.billNo).join(",") === "102", r.result?.bills);
+        r = await call("bills", T, { outletId: hOther.id, range: { key: "today" } });
+        check("bills: someone else's outlet is refused", r.ok === false, r);
+
+        r = await call("bill", T, h1.id, cloud["102"].id);
+        const b2 = r.result;
+        check("bill: 2 KOTs with their own times, sent by Ravi", b2?.kots?.length === 2 && b2.kots[0].by === "Ravi Solanki" && Math.abs(new Date(b2.kots[1].at) - new Date(payload[1].details[1].createdAt)) < 2000, b2?.kots);
+        check("bill: table, section and captain", b2?.table === "T1" && b2?.section === "AC Hall" && b2?.captain === "Ravi Solanki", b2 && [b2.table, b2.section, b2.captain]);
+        check("bill: activity in order with labels and roles", JSON.stringify(b2?.activity?.map((a) => a.label)) === JSON.stringify(["Order opened", "KOT 1 sent", "KOT 2 sent"]) && b2.activity[0].role === "Captain", b2?.activity);
+        r = await call("bill", T, h1.id, cloud["103"].id);
+        const last = r.result?.activity?.at(-1);
+        check("bill: cancel reason and who cancelled", r.result?.cancelReason === "Customer left" && last?.label === "Cancelled — Customer left" && last?.by === "Meena Joshi" && last?.role === "Cashier", r.result && [r.result.cancelReason, r.result.activity]);
+        r = await call("bill", T, h1.id, cloud["101"].id);
+        check("bill: payments and cashier of a settled bill", r.result?.payments?.[0]?.name === "UPI" && r.result?.payments?.[0]?.amount === 640 && r.result?.cashier === "Meena Joshi", r.result && [r.result.payments, r.result.cashier]);
+        r = await call("bill", T, hOther.id, cloud["101"].id);
+        check("bill: through someone else's outlet is refused", r.ok === false, r);
+        const otherOrder = await M.Order.create({ hotel_id: hOther.id, bill_no: "1", order_type: "pickup", business_date: today, payment: "success", grandAmount: 10 });
+        r = await call("bill", T, h1.id, otherOrder.id);
+        check("bill: another outlet's bill id through my outlet is not found", r.ok === false, r);
+    }
+
     console.log("\nthrottle");
     const LOCKME = mobile(5);
     const hl = await makeHotel("Owner Test Lock", LOCKME);
@@ -247,6 +389,16 @@ async function cleanup() {
     const users = await M.HotelUser.findAll({ where: { hotel_id: ids }, attributes: ["id", "role_cd"], raw: true });
     await M.OwnerDevice.destroy({ where: { hotel_user_id: users.map((u) => u.id) } });
     await M.LocalServerRegistration.destroy({ where: { hotel_id: ids } });
+    const orders = await M.Order.findAll({ where: { hotel_id: ids }, attributes: ["id"], raw: true });
+    await M.OrderDetails.destroy({ where: { orderId: orders.map((x) => x.id) } });
+    await M.OrderTax.destroy({ where: { hmsOrderMstId: orders.map((x) => x.id) } });
+    await M.Order.destroy({ where: { hotel_id: ids }, force: true });
+    await M.TimeLine.destroy({ where: { hotel_id: ids } });
+    const sessions = await M.CashSession.findAll({ where: { hotel_id: ids }, attributes: ["id"], raw: true });
+    await M.CashMovement.destroy({ where: { cashSessionId: sessions.map((x) => x.id) } });
+    for (const Model of [M.MenuCatalog, M.AuditLog, M.ExpenseEntry, M.CashSession, M.Table, M.TableCatagories, M.Menu, M.Menu_categ, M.PaymentMode, M.TaxType, M.User]) {
+        await Model.destroy({ where: { hotel_id: ids }, force: true }).catch((e) => console.error("cleanup", Model.name, e.message));
+    }
     await M.HotelUser.destroy({ where: { hotel_id: ids }, force: true });
     await M.Role.destroy({ where: { hotel_id: ids } });
     await M.Hotel.destroy({ where: { id: ids }, force: true });
