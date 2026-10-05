@@ -359,6 +359,90 @@ async function run() {
         check("bill: another outlet's bill id through my outlet is not found", r.ok === false, r);
     }
 
+    console.log("\nreports (phase 2) + stock upload");
+    {
+        const T = tNew;
+        const today = (await call("outlet", T, h1.id, { key: "today" })).result.range.from;
+        const rep = async (id, extra = {}) => (await call("report", T, { id, range: { key: "today" }, ...extra })).result;
+        let r = await call("reportCatalog", T);
+        check("catalog: 14 reports in 3 groups", r.result?.reports?.length === 14 && new Set(r.result.reports.map((x) => x.group)).size === 3, r.result?.reports?.map((x) => x.id));
+
+        let x = await rep("day-wise");
+        check("day wise: today = ₹1,670 over 5 bills, no guests column", x?.rows?.length === 1 && x.rows[0].sales === 1670 && x.rows[0].bills === 5 && !x.columns.some((c) => c.key === "guests"), x);
+        x = await rep("item-wise");
+        check("item wise: by item, merged, visual ranked", x?.view === "item" && x.rows.some((y) => y.name === "Paneer Tikka") && x.visual?.items?.[0]?.value >= x.visual?.items?.[1]?.value, x?.visual);
+        x = await rep("item-wise", { view: "category" });
+        check("item wise: by category", x?.view === "category" && x.rows.length === 1 && x.rows[0].name === "Starters", x?.rows);
+        x = await rep("item-wise", { view: "outlet" });
+        check("item wise: by outlet", x?.rows?.length === 1 && x.rows[0].outlet === h1.hotel_name, x?.rows);
+        x = await rep("payment-mode");
+        const modes = Object.fromEntries((x?.rows || []).map((y) => [y.mode, y.amount]));
+        check("payment mode: UPI 640, Cash 830, Due 200", modes.UPI === 640 && modes.Cash === 830 && modes.Due === 200, x?.rows);
+        x = await rep("hourly");
+        check("hourly: adds up to ₹1,670, in hour order", x?.totals?.sales === 1670 && x.rows.length >= 1, x?.rows);
+        x = await rep("outlets");
+        check("outlet comparison: my one outlet with sales, cancelled, expenses", x?.rows?.length === 1 && x.rows[0].sales === 1670 && x.rows[0].cancelled === 2, x?.rows);
+        x = await rep("cancelled-edited");
+        const c103 = x?.rows?.find((y) => y.bill === "103");
+        check("cancelled: who, after KOT, reason", c103?.by === "Meena Joshi" && c103?.after === "After KOT" && c103?.reason === "Customer left", x?.rows);
+        x = await rep("cancelled-edited", { view: "edited" });
+        check("edited after settle: bill 105 by Meena", x?.rows?.length === 1 && x.rows[0].bill === "105" && x.rows[0].by === "Meena Joshi", x?.rows);
+        x = await rep("discount");
+        check("discount: bill 104 at 35%", x?.rows?.length === 1 && x.rows[0].pct === 35 && x.rows[0].amount === 350, x?.rows);
+        x = await rep("due");
+        check("due now: Rakesh owes ₹200 on bill 106", x?.view === "outstanding" && x.rows.some((y) => y.customer === "Rakesh Patel" && y.amount === 200 && y.bill === "106"), x?.rows);
+        x = await rep("due", { view: "received" });
+        check("due received: a list (none collected yet)", Array.isArray(x?.rows), x);
+        x = await rep("tax");
+        check("tax: answers", Array.isArray(x?.rows), x);
+        x = await rep("cash-session");
+        check("cash sessions: the open session", x?.rows?.length >= 1 && x.rows.some((y) => y.status === "Open"), x?.rows);
+        x = await rep("expense");
+        check("expenses: answers", Array.isArray(x?.rows), x);
+        x = await rep("purchases-wastage");
+        check("purchases: answers", x?.view === "purchases" && Array.isArray(x.rows), x);
+        r = await call("report", T, { id: "day-wise", outletId: hOther.id, range: { key: "today" } });
+        check("someone else's outlet is refused", r.ok === false, r);
+        r = await call("report", T, { id: "nope", range: { key: "today" } });
+        check("an unknown report is refused", r.ok === false, r);
+        r = await call("report", T, { id: "day-wise", range: { key: "custom", from: "2026-01-01", to: "2026-08-01" } });
+        check("more than 3 months is refused", r.ok === false, r);
+
+        // ---- stock, uploaded by the PC ----
+        x = await rep("stock");
+        check("stock before any upload says so", x?.rows?.length === 0 && /1\.1\.7/.test(x?.note || ""), x);
+        const unit = await M.Unit.create({ unit_name: "Gram", shortName: "g", hotel_id: h1.id });
+        const kg = await M.Unit.create({ unit_name: "Kilogram", shortName: "kg", hotel_id: h1.id });
+        const paneerRaw = await M.RawMaterial.create({ raw_material_name: "Paneer", purchase_price: "300", unit_id: kg.id, consumption_unit: unit.id, conversion_qty: 1000, mini_stock_level_qty: 2000, hotel_id: h1.id });
+        const milk = await M.RawMaterial.create({ raw_material_name: "Milk", purchase_price: "60", unit_id: kg.id, consumption_unit: unit.id, conversion_qty: 1000, mini_stock_level_qty: 1000, hotel_id: h1.id });
+        const foreign = await M.RawMaterial.create({ raw_material_name: "Not mine", purchase_price: "1", unit_id: kg.id, hotel_id: hOther.id });
+        const pushStock = (body) => fetch(`${syncBase}/push/stock`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${devToken}` }, body: JSON.stringify(body) }).then((y) => y.json());
+        const yday = moment(today).subtract(1, "day").format("YYYY-MM-DD");
+        const old = moment(today).subtract(10, "day").format("YYYY-MM-DD");
+        const day = (date, id, cols) => ({ date, rows: [{ kind: "raw", id, ...cols }] });
+        let ps = await pushStock({
+            snapshot: [{ kind: "raw", id: paneerRaw.id, qty: 1500, cost: 0.3, value: 450 }, { kind: "raw", id: milk.id, qty: 5000, cost: 0.06, value: 300 }, { kind: "raw", id: foreign.id, qty: 1, cost: 1, value: 1 }],
+            days: [day(old, paneerRaw.id, { opening_entry_qty: 4, opening_entry_value: 1200 }), day(yday, paneerRaw.id, { purchased_qty: 2, purchased_value: 600, used_qty: -3, used_value: -900 }), day(today, paneerRaw.id, { used_qty: -1.5, used_value: -450, wastage_qty: -0.5, wastage_value: -150 })],
+        });
+        check("the PC's stock upload is accepted; another outlet's item dropped", ps?.results?.levels === 2 && ps?.results?.days === 3, ps);
+        x = await rep("stock");
+        const pRow = x?.rows?.find((y) => y.item === "Paneer");
+        check("in hand: Paneer 1500 g, minimum 2000 = Low; Milk OK", pRow?.stock === 1500 && pRow?.unit === "g" && pRow?.status === "Low" && x.rows.find((y) => y.item === "Milk")?.status === "OK" && !x.note, x?.rows);
+        check("in hand: value total and low count", x?.summary?.find((s) => s.label === "Stock value")?.value === 750 && x?.summary?.find((s) => s.label === "Low")?.value === 1, x?.summary);
+        x = await rep("stock", { view: "ledger" });
+        const lRow = x?.rows?.find((y) => y.item === "Paneer");
+        check("ledger today: opening 3000 g, used 1500, wastage 500, closing 1000", lRow?.opening === 3000 && lRow?.used === 1500 && lRow?.wastage === 500 && lRow?.purchased === 0 && lRow?.closing === 1000, lRow);
+        x = (await call("report", T, { id: "stock", view: "ledger", range: { key: "7d" } })).result;
+        const l7 = x?.rows?.find((y) => y.item === "Paneer");
+        check("ledger 7 days: opening 4000, +2000, −4500 used, closing 1000", l7?.opening === 4000 && l7?.purchased === 2000 && l7?.used === 4500 && l7?.closing === 1000, l7);
+        ps = await pushStock({ days: [day(today, paneerRaw.id, { used_qty: -1, used_value: -300 })] });
+        x = await rep("stock", { view: "ledger" });
+        check("a day uploaded again replaces that day (not added)", x?.rows?.find((y) => y.item === "Paneer")?.used === 1000 && x.rows.find((y) => y.item === "Paneer").wastage === 0, x?.rows);
+        ps = await pushStock({ snapshot: [{ kind: "raw", id: paneerRaw.id, qty: 2500, cost: 0.3, value: 750 }] });
+        x = await rep("stock");
+        check("a new snapshot replaces all levels (Milk gone from it)", x?.rows?.length === 1 && x.rows[0].status === "OK", x?.rows);
+    }
+
     console.log("\nthrottle");
     const LOCKME = mobile(5);
     const hl = await makeHotel("Owner Test Lock", LOCKME);
@@ -396,7 +480,9 @@ async function cleanup() {
     await M.TimeLine.destroy({ where: { hotel_id: ids } });
     const sessions = await M.CashSession.findAll({ where: { hotel_id: ids }, attributes: ["id"], raw: true });
     await M.CashMovement.destroy({ where: { cashSessionId: sessions.map((x) => x.id) } });
-    for (const Model of [M.MenuCatalog, M.AuditLog, M.ExpenseEntry, M.CashSession, M.Table, M.TableCatagories, M.Menu, M.Menu_categ, M.PaymentMode, M.TaxType, M.User]) {
+    await M.OwnerStockLevel.destroy({ where: { hotel_id: ids } });
+    await M.OwnerStockDay.destroy({ where: { hotel_id: ids } });
+    for (const Model of [M.RawMaterial, M.Unit, M.MenuCatalog, M.AuditLog, M.ExpenseEntry, M.CashSession, M.Table, M.TableCatagories, M.Menu, M.Menu_categ, M.PaymentMode, M.TaxType, M.User]) {
         await Model.destroy({ where: { hotel_id: ids }, force: true }).catch((e) => console.error("cleanup", Model.name, e.message));
     }
     await M.HotelUser.destroy({ where: { hotel_id: ids }, force: true });

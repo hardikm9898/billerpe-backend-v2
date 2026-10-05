@@ -8,6 +8,7 @@ const { createTicket, listTickets } = require("../controller/sync/supportControl
 const { downloadHistory, linkHistory } = require("../controller/sync/historyController");
 const { getFile: getExeReleaseFile } = require("../controller/sync/exeReleaseController");
 const { listDownloads, getFile: getAppDownloadFile } = require("../controller/sync/appDownloadController");
+const { pushStock } = require("../controller/sync/stockController");
 
 // Sync engine v2 - the complete surface a restaurant's local exe uses for
 // background sync, and the only routes that accept a device token
@@ -23,6 +24,8 @@ router.get("/heartbeat", deviceAuth, heartbeat);
 router.get("/pull", deviceAuth, pull);
 router.post("/push", deviceAuth, push);
 router.post("/push/orders", deviceAuth, pushOrders);
+// Stock levels + daily ledger totals for the Owner App (upload only).
+router.post("/push/stock", deviceAuth, pushStock);
 router.post("/rebase", deviceAuth, rebaseLocalIds);
 // Past orders + customers for a PC that has just registered, and the link
 // back to the local ids it stored them under (controller/sync/historyController.js).

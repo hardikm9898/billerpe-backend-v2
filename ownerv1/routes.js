@@ -4,6 +4,7 @@ const { RuleError } = require("../appv1/core");
 const auth = require("./auth");
 const { outlets } = require("./outlets");
 const watch = require("./watch");
+const reports = require("./reports");
 
 // BillerPe Owner App API (Plan 1 owners): /owner/v1. Same shape as /app/v1:
 // POST /owner/v1/<method> with { args: [...] }, answer { ok: true, result }
@@ -54,6 +55,10 @@ const HANDLERS = {
     tables: (o, outletId) => watch.tables(o, outletId),
     bills: (o, query) => watch.bills(o, query || {}),
     bill: (o, outletId, billId) => watch.bill(o, outletId, billId),
+
+    /* phase 2 - reports */
+    reportCatalog: () => reports.catalog(),
+    report: (o, query) => reports.report(o, query || {}),
 };
 
 router.post("/:name", (req, res) => {
