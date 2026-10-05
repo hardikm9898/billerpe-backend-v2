@@ -29,13 +29,47 @@ const DEFAULT_PULL_LIMIT = 500;
 // poll separately - the old manifest, pending QR orders, reservations, and a
 // session-refresh ping - is folded in here, because each of those was its
 // own request per outlet per tick.
+let warnedMissingBacklog = false;
+
+/**
+ * Plain SQL, never the model (see model/localServerRegistration.js): if the
+ * server runs without migration 20261005110000 this only logs once - the
+ * heartbeat, which drives every outlet's sync, is never affected.
+ */
+async function saveBacklog(hotelId, deviceId, backlog) {
+    const sets = [];
+    const values = [];
+    if (backlog.pending_orders !== undefined) {
+        sets.push("pending_orders = ?");
+        values.push(backlog.pending_orders);
+    }
+    // The database's own UTC clock minus the age: stored the way the models
+    // store dates (UTC), whatever this process's or the PC's time zone.
+    if (backlog.last_push_age !== undefined) {
+        sets.push("last_push_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? SECOND)");
+        values.push(backlog.last_push_age);
+    }
+    if (!sets.length) return;
+    try {
+        await sequelize.query(
+            `UPDATE local_server_registrations SET ${sets.join(", ")} WHERE hotel_id = ? AND device_id = ? AND status = 'active'`,
+            { replacements: [...values, hotelId, deviceId] },
+        );
+    } catch (err) {
+        if (!warnedMissingBacklog) {
+            warnedMissingBacklog = true;
+            console.error("[sync] heartbeat backlog not saved - run migration 20261005110000:", err.message);
+        }
+    }
+}
+
 /** x-exe-pending-orders / x-exe-last-push-age -> registration columns; junk is ignored. */
 function syncBacklog(req) {
     const out = {};
     const pending = req.get("x-exe-pending-orders");
     if (pending !== undefined && /^\d{1,7}$/.test(pending)) out.pending_orders = Number(pending);
     const age = req.get("x-exe-last-push-age");
-    if (age !== undefined && /^\d{1,9}$/.test(age)) out.last_push_at = new Date(Date.now() - Number(age) * 1000);
+    if (age !== undefined && /^\d{1,9}$/.test(age)) out.last_push_age = Number(age);
     return out;
 }
 
@@ -81,10 +115,10 @@ const heartbeat = async (req, res) => {
                 last_seen_at: new Date(),
                 ...(exeVersion ? { app_version: String(exeVersion).slice(0, 64) } : {}),
                 ...(updateStatus !== undefined ? { update_status: String(updateStatus).slice(0, 255) || null } : {}),
-                ...backlog,
             },
             { where: { hotel_id: hotelId, device_id: req.deviceId, status: "active" } },
         );
+        await saveBacklog(hotelId, req.deviceId, backlog);
 
         // Piggybacked for the same reason as everything else in this
         // response: the frontend-update check must not cost an outlet its

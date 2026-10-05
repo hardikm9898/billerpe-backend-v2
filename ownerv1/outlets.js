@@ -1,3 +1,5 @@
+const { QueryTypes } = require("sequelize");
+const sequelize = require("../connection/connect");
 const { LocalServerRegistration } = require("../model");
 
 // The owner's outlets with the state of each outlet PC (the exe). The exe
@@ -24,6 +26,14 @@ function pcView(reg, now) {
 async function outlets(o) {
     const ids = o.owned.map((x) => x.hotel.id);
     const regs = await LocalServerRegistration.findAll({ where: { hotel_id: ids, status: "active" }, raw: true });
+    // The upload backlog lives outside the model (model/localServerRegistration.js);
+    // without its migration the outlets still list, with the backlog unknown.
+    const backlog = ids.length
+        ? await sequelize
+              .query("SELECT hotel_id, pending_orders, last_push_at FROM local_server_registrations WHERE hotel_id IN (:ids) AND status = 'active'", { replacements: { ids }, type: QueryTypes.SELECT })
+              .catch(() => [])
+        : [];
+    for (const r of regs) Object.assign(r, backlog.find((b) => b.hotel_id === r.hotel_id) || {});
     const now = Date.now();
     return {
         serverTime: new Date(now).toISOString(),

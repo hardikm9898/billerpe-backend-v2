@@ -35,11 +35,12 @@ const LocalServerRegistration = sequelize.define("local_server_registrations", {
     // heartbeat ("ready 1.2.0", "failed 1.2.0: ..."); app_version above is
     // kept current from the same heartbeat.
     update_status: { type: DataTypes.STRING, allowNull: true },
-    // Also from the heartbeat (exe 1.1.7+, migration 20261005110000): bills
-    // on the PC not yet in the cloud, and when its last order upload
-    // succeeded (cloud clock). Null for an older exe. Shown in the Owner App.
-    pending_orders: { type: DataTypes.INTEGER, allowNull: true },
-    last_push_at: { type: DataTypes.DATE, allowNull: true },
+    // NOT in this model on purpose: pending_orders / last_push_at (migration
+    // 20261005110000, the Owner App's upload backlog). Every device check on
+    // every sync call reads this model; if a server ran without that
+    // migration, a model column would break ALL outlet sync. They are read
+    // and written with plain SQL that tolerates their absence
+    // (controller/sync/syncController.js, ownerv1/outlets.js).
 }, {
     indexes: [
         { fields: ["hotel_id"] },
