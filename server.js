@@ -124,6 +124,8 @@ app.use(express.static("public"))
 // before the cookie-based list below, which would answer its preflight
 // without allowing it.
 app.use("/app/v1", cors({ origin: true, credentials: false }));
+// BillerPe Owner App: the same kind of WebView client, bearer token only.
+app.use("/owner/v1", cors({ origin: true, credentials: false }));
 app.use(
     cors({
         origin: [
@@ -222,6 +224,8 @@ server.listen(PORT, (err) => {
                 // POS App (Plan 2): schema owned by migration 20260926100000.
                 "app_devices", "app_client_keys", "app_queue_entries", "app_alerts", "hms_stock_movements",
                 "hms_res_settings",
+                // Owner App (Plan 1 owners): schema owned by migration 20261005100000.
+                "owner_devices",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',
