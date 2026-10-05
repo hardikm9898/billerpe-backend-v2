@@ -81,4 +81,20 @@ const OwnerStockDay = sequelize.define("owner_stock_day", {
     indexes: [{ fields: ["hotel_id", "business_date"], name: "owner_stock_days_hotel_date" }],
 });
 
-module.exports = { OwnerDevice, OwnerStockLevel, OwnerStockDay };
+// A change the owner made from the app, until the outlet PC has pulled it
+// (migration 20261005140000). entity = the sync entity name
+// (controller/sync/syncRegistry.js), item_id = this server's row id. The
+// sync pull sets synced_at when it serves that row to the outlet's PC.
+const OwnerChange = sequelize.define("owner_change", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    hotel_id: { type: DataTypes.INTEGER, allowNull: false },
+    entity: { type: DataTypes.STRING(40), allowNull: false },
+    item_id: { type: DataTypes.INTEGER, allowNull: false },
+    label: { type: DataTypes.STRING(120), allowNull: false, defaultValue: "" },
+    synced_at: { type: DataTypes.DATE, allowNull: true },
+}, {
+    tableName: "owner_changes",
+    indexes: [{ fields: ["hotel_id", "entity", "synced_at"], name: "owner_changes_pending" }],
+});
+
+module.exports = { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange };

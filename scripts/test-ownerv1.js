@@ -443,6 +443,40 @@ async function run() {
         check("a new snapshot replaces all levels (Milk gone from it)", x?.rows?.length === 1 && x.rows[0].status === "OK", x?.rows);
     }
 
+    console.log("\nmanage (phase 3): guards");
+    {
+        const T = tNew;
+        let r = await call("manage", T, hOther.id);
+        check("manage: someone else's outlet is refused", r.ok === false && /do not own/.test(r.error || ""), r);
+        r = await call("saveCategory", T, hOther.id, { name: "Hack" });
+        check("a write to someone else's outlet is refused", r.ok === false, r);
+        r = await call("manageStaff", T, h1.id);
+        const ownerRow = r.result?.staff?.find((s) => s.isOwner);
+        check("staff: the owner's own login is flagged", !!ownerRow, r.result?.staff);
+        r = await call("setStaffPermissions", T, h1.id, ownerRow?.id, { modules: {}, special: {} });
+        check("the owner's own permissions cannot be changed", r.ok === false, r);
+        r = await call("setStaffActive", T, h1.id, ownerRow?.id, false);
+        check("the owner's own login cannot be switched off", r.ok === false, r);
+        const menuNow = (await call("manageMenu", T, h1.id)).result;
+        const paneerItem = menuNow.items.find((i) => i.name === "Paneer Tikka");
+        await M.Recipes.create({ hotel_id: h1.id, menu_id: Number(paneerItem.id), consumption_qty: 1 }).catch(() => null);
+        const recipesBefore = await M.Recipes.count({ where: { hotel_id: h1.id, menu_id: Number(paneerItem.id) } });
+        r = await call("deleteItem", T, h1.id, paneerItem.id);
+        const row = await M.Menu.findOne({ where: { id: Number(paneerItem.id) }, raw: true });
+        check("deleting an item only flags it (off + is_deleted), its row stays", r.ok && row && !row.active && (row.is_deleted === true || row.is_deleted === 1), row);
+        check("deleting an item keeps its recipe rows (a delete would never reach the PC)", (await M.Recipes.count({ where: { hotel_id: h1.id, menu_id: Number(paneerItem.id) } })) === recipesBefore, recipesBefore);
+        r = await call("manageMenu", T, h1.id);
+        check("a deleted item is gone from the Owner App menu", !r.result.items.some((i) => i.id === paneerItem.id), r.result.items.map((i) => i.name));
+        const changes = await M.OwnerChange.findAll({ where: { hotel_id: h1.id }, raw: true });
+        check("each change is recorded for the PC", changes.some((c) => c.entity === "menuItems" && c.item_id === Number(paneerItem.id) && c.synced_at === null), changes);
+        r = await call("manage", T, h1.id);
+        check("hub counts what waits for the PC", r.result?.pending >= 1, r.result);
+        r = await call("saveRaw", T, h1.id, { name: "Ghee", unitId: null, purchaseUnitId: null, conversion: 1, reorderLevel: 1, openingStock: 50 });
+        check("no opening stock from the Owner App (refused without units, never stock)", (await M.StockInHand.count({ where: { hotel_id: h1.id } })) === 0, r);
+        r = await call("removePaymentMode", T, h1.id, "pm-1");
+        check("there is no way to delete a payment mode from the Owner App", r.status === 404, r);
+    }
+
     console.log("\nthrottle");
     const LOCKME = mobile(5);
     const hl = await makeHotel("Owner Test Lock", LOCKME);
@@ -481,6 +515,8 @@ async function cleanup() {
     const sessions = await M.CashSession.findAll({ where: { hotel_id: ids }, attributes: ["id"], raw: true });
     await M.CashMovement.destroy({ where: { cashSessionId: sessions.map((x) => x.id) } });
     await M.OwnerStockLevel.destroy({ where: { hotel_id: ids } });
+    await M.OwnerChange.destroy({ where: { hotel_id: ids } });
+    await M.Recipes.destroy({ where: { hotel_id: ids } }).catch(() => {});
     await M.OwnerStockDay.destroy({ where: { hotel_id: ids } });
     for (const Model of [M.RawMaterial, M.Unit, M.MenuCatalog, M.AuditLog, M.ExpenseEntry, M.CashSession, M.Table, M.TableCatagories, M.Menu, M.Menu_categ, M.PaymentMode, M.TaxType, M.User]) {
         await Model.destroy({ where: { hotel_id: ids }, force: true }).catch((e) => console.error("cleanup", Model.name, e.message));

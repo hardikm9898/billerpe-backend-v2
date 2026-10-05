@@ -740,4 +740,4 @@ async function load(c) {
     };
 }
 
-module.exports = { load, loadOrderViews, loadOrderView, menuView, cashView, expensesView, stockView, tableQrUrl, bookingMoment, formatLines, FORMAT_KEYWORD, paymentModesView, BUILT_IN_MODES };
+module.exports = { load, loadOrderViews, loadOrderView, menuView, cashView, expensesView, stockView, tableQrUrl, bookingMoment, formatLines, FORMAT_KEYWORD, paymentModesView, BUILT_IN_MODES, staffView, settingsView, roleDefaultsView };
