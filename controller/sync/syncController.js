@@ -31,6 +31,45 @@ const DEFAULT_PULL_LIMIT = 500;
 // own request per outlet per tick.
 let warnedMissingBacklog = false;
 
+// Same-second writes (found 2026-10-05 with Owner App edits): DATETIME has
+// whole seconds (MariaDB truncates fractions, MySQL rounds them), and the
+// exe's pull mark is "everything up to this instant". A mark set inside a
+// second that can still be written to made every later write of that second
+// look already-seen, so it never reached the PC. Two rules keep the exe's
+// mark (the updatedAt of the last row it got) out of an unfinished second:
+//   - a pull sends every row at once, but a row whose second may still be
+//     written to (one second of margin for rounding) is dated just before
+//     that second, so the next heartbeat brings that second down again once
+//     it is over. Never held back: a PC registering right after the owner's
+//     login (which touches the owner's row) needs that row immediately;
+//   - a push answers the row's time as just before its second started, for
+//     the same reason. The exe uses these times only for its mark.
+const settledCutoff = () => new Date(Math.floor(Date.now() / 1000) * 1000 - 1000);
+const settleStamp = (row, cutoff) => {
+    if (row.updatedAt && new Date(row.updatedAt).getTime() >= cutoff.getTime()) row.updatedAt = markBefore(row.updatedAt);
+    return row;
+};
+const markBefore = (d) => {
+    const t = d ? new Date(d).getTime() : NaN;
+    return Number.isNaN(t) ? d : new Date(Math.floor(t / 1000) * 1000 - 1).toISOString();
+};
+
+/**
+ * Owner App changes served to the PC are delivered. Plain SQL in its own
+ * try: a missing owner_changes table (migration 20261005140000 not run)
+ * must never fail a pull.
+ */
+async function markOwnerChanges(hotelId, entityName, ids) {
+    try {
+        await sequelize.query(
+            "UPDATE owner_changes SET synced_at = UTC_TIMESTAMP() WHERE hotel_id = ? AND entity = ? AND synced_at IS NULL AND item_id IN (?)",
+            { replacements: [hotelId, entityName, ids] },
+        );
+    } catch {
+        // table missing: nothing to mark
+    }
+}
+
 /**
  * Plain SQL, never the model (see model/localServerRegistration.js): if the
  * server runs without migration 20261005110000 this only logs once - the
@@ -194,8 +233,11 @@ const pull = async (req, res) => {
             ...(entity.pullExclude ? { attributes: { exclude: entity.pullExclude } } : {}),
         });
 
+        const cutoff = settledCutoff();
         const hasMore = rows.length > limit;
         const page = hasMore ? rows.slice(0, limit) : rows;
+        // Owner App: these rows are now on the outlet PC (ownerv1/manage.js).
+        if (page.length) await markOwnerChanges(hotelId, entity.name, page.map((r) => r[pk]));
         const last = page[page.length - 1];
         const nextCursor = hasMore && last
             ? `${new Date(last.updatedAt).toISOString()}|${last[pk]}`
@@ -205,7 +247,9 @@ const pull = async (req, res) => {
             entity: entity.name,
             // JSON columns as their real value, even for a row stored as
             // encoded text before the fix (controller/sync/jsonColumns.js).
-            rows: page.map((r) => decodeJsonColumns(entity.Model, r)),
+            // A row of a second that is not over yet goes down at once, but
+            // dated just before that second (see settledCutoff above).
+            rows: page.map((r) => settleStamp(decodeJsonColumns(entity.Model, r), cutoff)),
             nextCursor,
             // The exe stores this as its high-water mark only once an entity
             // has been fully drained (nextCursor null), so an interrupted
@@ -405,7 +449,7 @@ const push = async (req, res) => {
                     const changed = Object.entries(fkFields).filter(([k, v]) => existing[k] !== v);
                     if (changed.length) await existing.update(Object.fromEntries(changed), { transaction: t });
                     await t.commit();
-                    results.push({ local_id: localId, ok: true, cloud_id: existing[pk], updatedAt: existing.updatedAt, repaired: changed.map(([k]) => k) });
+                    results.push({ local_id: localId, ok: true, cloud_id: existing[pk], updatedAt: markBefore(existing.updatedAt), repaired: changed.map(([k]) => k) });
                     continue;
                 }
 
@@ -426,7 +470,7 @@ const push = async (req, res) => {
                         await t.commit();
                         results.push({
                             local_id: localId, ok: true, cloud_id: existing[pk],
-                            updatedAt: existing.updatedAt, skipped: "cloud newer",
+                            updatedAt: markBefore(existing.updatedAt), skipped: "cloud newer",
                         });
                         continue;
                     }
@@ -438,12 +482,12 @@ const push = async (req, res) => {
                     // very act of pushing made the cloud look "newer" on the
                     // next heartbeat and the exe re-downloaded the rows it had
                     // just sent - one wasted pull per entity per cycle.
-                    results.push({ local_id: localId, ok: true, cloud_id: existing[pk], updatedAt: existing.updatedAt });
+                    results.push({ local_id: localId, ok: true, cloud_id: existing[pk], updatedAt: markBefore(existing.updatedAt) });
                 } else {
                     const created = await entity.Model.create(fields, { transaction: t });
                     await pruneItemLinks(entity, created[pk], hotelId, incoming._links, t);
                     await t.commit();
-                    results.push({ local_id: localId, ok: true, cloud_id: created[pk], updatedAt: created.updatedAt });
+                    results.push({ local_id: localId, ok: true, cloud_id: created[pk], updatedAt: markBefore(created.updatedAt) });
                 }
             } catch (rowErr) {
                 await t.rollback().catch(() => {});
