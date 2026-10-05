@@ -29,6 +29,16 @@ const DEFAULT_PULL_LIMIT = 500;
 // poll separately - the old manifest, pending QR orders, reservations, and a
 // session-refresh ping - is folded in here, because each of those was its
 // own request per outlet per tick.
+/** x-exe-pending-orders / x-exe-last-push-age -> registration columns; junk is ignored. */
+function syncBacklog(req) {
+    const out = {};
+    const pending = req.get("x-exe-pending-orders");
+    if (pending !== undefined && /^\d{1,7}$/.test(pending)) out.pending_orders = Number(pending);
+    const age = req.get("x-exe-last-push-age");
+    if (age !== undefined && /^\d{1,9}$/.test(age)) out.last_push_at = new Date(Date.now() - Number(age) * 1000);
+    return out;
+}
+
 const heartbeat = async (req, res) => {
     try {
         const hotelId = req.user;
@@ -62,11 +72,16 @@ const heartbeat = async (req, res) => {
         // can see every outlet's version (older exes send neither).
         const exeVersion = req.get("x-exe-version") || null;
         const updateStatus = req.get("x-exe-update-status");
+        // What the exe still has to upload (Owner App "bills waiting" / "data
+        // synced"). The age is in seconds, so a PC with a wrong clock still
+        // gives the right time. Older exes send neither.
+        const backlog = syncBacklog(req);
         await LocalServerRegistration.update(
             {
                 last_seen_at: new Date(),
                 ...(exeVersion ? { app_version: String(exeVersion).slice(0, 64) } : {}),
                 ...(updateStatus !== undefined ? { update_status: String(updateStatus).slice(0, 255) || null } : {}),
+                ...backlog,
             },
             { where: { hotel_id: hotelId, device_id: req.deviceId, status: "active" } },
         );

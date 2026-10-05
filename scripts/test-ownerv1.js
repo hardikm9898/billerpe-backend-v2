@@ -56,6 +56,7 @@ async function makeUser(hotel, roleName, number, password, extra = {}) {
 }
 
 let base;
+let syncBase;
 async function post(path, body, token) {
     const res = await fetch(`${base}${path}`, {
         method: "POST",
@@ -183,6 +184,37 @@ async function run() {
     r = await call("outlets", t4);
     check("with outlet B's owner login off, only outlet A is listed", r.result?.outlets?.length === 1 && r.result.outlets[0].id === h1.id, r.result);
 
+    console.log("\nheartbeat backlog (exe 1.1.7+)");
+    // The outlet PC reports bills still to upload + the age of its last
+    // upload on the heartbeat; the owner sees them on the outlet's card.
+    const { signDeviceToken } = require("../middleware/deviceAuth");
+    const regA = await M.LocalServerRegistration.findOne({ where: { hotel_id: h1.id, status: "active" } });
+    const devToken = signDeviceToken({ hotel_id: h1.id, device_id: regA.device_id, installation_id: regA.installation_id });
+    const beat = (headers) => fetch(`${syncBase}/heartbeat`, { headers: { Authorization: `Bearer ${devToken}`, "x-exe-version": "1.1.7", ...headers } }).then((x) => x.json());
+    let hb = await beat({ "x-exe-pending-orders": "6", "x-exe-last-push-age": "120" });
+    check("heartbeat with backlog headers answers ok", hb && !hb.error, hb);
+    await regA.reload();
+    check("pending bills stored", regA.pending_orders === 6, regA.pending_orders);
+    const ageMs = Date.now() - new Date(regA.last_push_at).getTime();
+    check("last upload time = cloud now - age (about 2 min)", ageMs > 115000 && ageMs < 130000, ageMs);
+    const tNew = (await post("/login", { mobile: OWNER, password: "changed-at-outlet", device: phone("p1") })).session?.token;
+    r = await call("outlets", tNew);
+    const pcA = r.result?.outlets?.find((x) => x.id === h1.id)?.pc;
+    check("owner sees 6 bills waiting and the last upload", pcA?.pendingOrders === 6 && !!pcA?.lastPushAt, pcA);
+    await beat({ "x-exe-pending-orders": "lots", "x-exe-last-push-age": "-5" });
+    await regA.reload();
+    check("junk header values are ignored (old values kept)", regA.pending_orders === 6, regA.pending_orders);
+    await beat({});
+    await regA.reload();
+    check("a heartbeat without the headers (older exe) changes nothing", regA.pending_orders === 6, regA.pending_orders);
+    await beat({ "x-exe-pending-orders": "0", "x-exe-last-push-age": "3" });
+    await regA.reload();
+    check("a cleared backlog reads 0", regA.pending_orders === 0, regA.pending_orders);
+    const fresh = await M.LocalServerRegistration.findOne({ where: { hotel_id: h2.id, status: "active" }, raw: true });
+    const { pcView } = require("../ownerv1/outlets");
+    const v = pcView(fresh, Date.now());
+    check("an outlet whose exe never sent it reads null (app shows '—')", fresh.pending_orders === null && v.pendingOrders === null && v.lastPushAt === null, v);
+
     console.log("\nthrottle");
     const LOCKME = mobile(5);
     const hl = await makeHotel("Owner Test Lock", LOCKME);
@@ -222,9 +254,11 @@ async function cleanup() {
     const app = express();
     app.use(express.json());
     app.use("/owner/v1", require("../ownerv1/routes"));
+    app.use("/sync", require("../routes/sync"));
     const server = http.createServer(app);
     await new Promise((r) => server.listen(0, r));
     base = `http://127.0.0.1:${server.address().port}/owner/v1`;
+    syncBase = `http://127.0.0.1:${server.address().port}/sync`;
     try {
         await run();
     } catch (e) {

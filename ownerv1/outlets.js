@@ -6,7 +6,7 @@ const { LocalServerRegistration } = require("../model");
 const ONLINE_WINDOW_MS = 3 * 60 * 1000;
 
 function pcView(reg, now) {
-    if (!reg) return { status: "not-registered", lastSeenAt: null, version: null, updateStatus: null, pcName: null, registeredAt: null };
+    if (!reg) return { status: "not-registered", lastSeenAt: null, version: null, updateStatus: null, pcName: null, registeredAt: null, pendingOrders: null, lastPushAt: null };
     const seen = reg.last_seen_at ? new Date(reg.last_seen_at).getTime() : 0;
     return {
         status: seen && now - seen <= ONLINE_WINDOW_MS ? "online" : "offline",
@@ -15,6 +15,9 @@ function pcView(reg, now) {
         updateStatus: reg.update_status || null,
         pcName: reg.hostname || null,
         registeredAt: reg.registered_at ? new Date(reg.registered_at).toISOString() : null,
+        // From the heartbeat of exe 1.1.7+; null = this PC's BillerPe is too old to say.
+        pendingOrders: reg.pending_orders ?? null,
+        lastPushAt: reg.last_push_at ? new Date(reg.last_push_at).toISOString() : null,
     };
 }
 
