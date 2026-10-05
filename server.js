@@ -225,7 +225,7 @@ server.listen(PORT, (err) => {
                 "app_devices", "app_client_keys", "app_queue_entries", "app_alerts", "hms_stock_movements",
                 "hms_res_settings",
                 // Owner App (Plan 1 owners): schema owned by migration 20261005100000.
-                "owner_devices", "owner_stock_levels", "owner_stock_days", "owner_changes",
+                "owner_devices", "owner_stock_levels", "owner_stock_days", "owner_changes", "owner_alerts", "owner_settings", "owner_offline_periods",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',
@@ -522,6 +522,14 @@ server.listen(PORT, (err) => {
             await checkAndSendClosingSummaries();
         } catch (err) {
             logger.error('Cron: checkAndSendClosingSummaries failed', { err: err.message });
+        }
+    });
+    // Owner App (Plan 1 owners): PC offline/online, risky actions, low stock, day summary.
+    cron.schedule("* * * * *", async () => {
+        try {
+            await require("./ownerv1/alerts").runOwnerAlerts();
+        } catch (err) {
+            logger.error("Cron: owner alerts failed", { err: err.message });
         }
     });
     // POS App outlets: "Reservation due" alert when a booking's tables start being held.

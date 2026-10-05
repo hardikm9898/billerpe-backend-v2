@@ -97,4 +97,49 @@ const OwnerChange = sequelize.define("owner_change", {
     indexes: [{ fields: ["hotel_id", "entity", "synced_at"], name: "owner_changes_pending" }],
 });
 
-module.exports = { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange };
+// Owner App alerts (phase 4, migration 20261005150000). One row per owner
+// (10-digit mobile) per event; `ref` makes each event unique per owner, so
+// a re-scan or a late upload never alerts twice. Pushed to the owner's
+// phones when created (ownerv1/push.js).
+const OwnerAlert = sequelize.define("owner_alert", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    owner_mobile: { type: DataTypes.STRING(15), allowNull: false },
+    hotel_id: { type: DataTypes.INTEGER, allowNull: true },
+    // pc-offline | pc-online | cancel-after-kot | discount | edited | cash-diff | low-stock | summary
+    kind: { type: DataTypes.STRING(24), allowNull: false },
+    ref: { type: DataTypes.STRING(120), allowNull: false },
+    title: { type: DataTypes.STRING(160), allowNull: false },
+    body: { type: DataTypes.STRING(400), allowNull: false, defaultValue: "" },
+    link: { type: DataTypes.STRING(160), allowNull: false, defaultValue: "/alerts" },
+    event_at: { type: DataTypes.DATE, allowNull: false },
+    read_at: { type: DataTypes.DATE, allowNull: true },
+    pushed: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+}, {
+    tableName: "owner_alerts",
+    indexes: [
+        { unique: true, fields: ["owner_mobile", "ref"], name: "owner_alerts_owner_ref" },
+        { fields: ["owner_mobile", "event_at"], name: "owner_alerts_owner_time" },
+    ],
+});
+
+// The owner's alert rules (one row per owner mobile; JSON, defaults in
+// ownerv1/alerts.js RULE_DEFAULTS).
+const OwnerSetting = sequelize.define("owner_setting", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    owner_mobile: { type: DataTypes.STRING(15), allowNull: false, unique: "owner_settings_mobile" },
+    rules: { type: DataTypes.TEXT, allowNull: true },
+}, { tableName: "owner_settings" });
+
+// An outlet PC's offline spells (no heartbeat for over 3 minutes), for the
+// PC screen's history and the offline / back-online alerts.
+const OwnerOfflinePeriod = sequelize.define("owner_offline_period", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    hotel_id: { type: DataTypes.INTEGER, allowNull: false },
+    started_at: { type: DataTypes.DATE, allowNull: false },
+    ended_at: { type: DataTypes.DATE, allowNull: true },
+}, {
+    tableName: "owner_offline_periods",
+    indexes: [{ fields: ["hotel_id", "started_at"], name: "owner_offline_hotel_start" }],
+});
+
+module.exports = { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange, OwnerAlert, OwnerSetting, OwnerOfflinePeriod };

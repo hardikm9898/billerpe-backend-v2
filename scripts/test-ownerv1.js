@@ -477,6 +477,103 @@ async function run() {
         check("there is no way to delete a payment mode from the Owner App", r.status === 404, r);
     }
 
+    console.log("\nalerts (phase 4)");
+    {
+        const A = require("../ownerv1/alerts");
+        A._resetForTests();
+        const T = tNew;
+        await M.OwnerAlert.destroy({ where: { owner_mobile: OWNER } });
+        const ownAlerts = (where = {}) => M.OwnerAlert.findAll({ where: { owner_mobile: OWNER, ...where }, raw: true });
+        const now0 = new Date();
+        const sc = await A.scope();
+        check("scope: this owner (logged in) with outlet A", sc.some((x) => x.mobile === OWNER && x.hotels.some((h) => h.id === h1.id)), sc.map((x) => x.mobile));
+
+        // ---- the PC goes offline and comes back ----
+        await M.LocalServerRegistration.update({ last_seen_at: new Date(now0 - 20 * 60000) }, { where: { hotel_id: h1.id } });
+        let out = await A.runOwnerAlerts(now0);
+        let offl = await ownAlerts({ kind: "pc-offline" });
+        check("PC silent 20 min (rule 10): one 'offline' alert", offl.length === 1 && /PC is offline/.test(offl[0].title) && /No contact for 20 min/.test(offl[0].body), offl);
+        await A.runOwnerAlerts(new Date(now0.getTime() + 60000));
+        check("the next minute does not alert again", (await ownAlerts({ kind: "pc-offline" })).length === 1);
+        const back = new Date(now0.getTime() + 2 * 60000);
+        await M.LocalServerRegistration.update({ last_seen_at: back }, { where: { hotel_id: h1.id } });
+        await A.runOwnerAlerts(new Date(back.getTime() + 5000));
+        const onl = await ownAlerts({ kind: "pc-online" });
+        check("heartbeat again: one 'back online' alert", onl.length === 1 && /back online/.test(onl[0].title) && /Was offline 22 min/.test(onl[0].body), onl);
+        let r = await call("pcHistory", T, h1.id);
+        check("PC screen history lists the offline spell", r.result?.periods?.length === 1 && r.result.periods[0].minutes === 22, r.result);
+        r = await call("saveAlertRules", T, { pcOffline: { minutes: 30 } });
+        check("rule: offline after 30 min saved", r.result?.rules?.pcOffline?.minutes === 30, r);
+        await M.LocalServerRegistration.update({ last_seen_at: new Date(back.getTime() - 20 * 60000 + 5 * 60000) }, { where: { hotel_id: h1.id } });
+        await A.runOwnerAlerts(new Date(back.getTime() + 5 * 60000));
+        check("a 20-min spell under the 30-min rule is not alerted", (await ownAlerts({ kind: "pc-offline" })).length === 1);
+        await M.LocalServerRegistration.update({ last_seen_at: new Date() }, { where: { hotel_id: h1.id } });
+        await A.runOwnerAlerts(new Date(Date.now() + 1000));
+        check("no 'back online' for a spell that was never alerted", (await ownAlerts({ kind: "pc-online" })).length === 1);
+        r = await call("saveAlertRules", T, { pcOffline: { minutes: 7 } });
+        check("rule values are checked (7 min refused)", r.ok === false, r);
+
+        // ---- risky actions from the bills uploaded earlier in this test ----
+        A._resetForTests();
+        out = await A.runOwnerAlerts(new Date());
+        const kinds = (await ownAlerts()).map((a) => a.kind);
+        const cancelA = (await ownAlerts({ kind: "cancel-after-kot" })).find((a) => /#103/.test(a.title));
+        check("cancelled after KOT: who, role, reason", cancelA && /Meena Joshi \(Cashier\)/.test(cancelA.body) && /Customer left/.test(cancelA.body) && cancelA.link.startsWith(`/bill/${h1.id}/`), cancelA);
+        const discA = (await ownAlerts({ kind: "discount" })).find((a) => /#104/.test(a.title));
+        check("35% discount over the 20% limit", discA && /^35% discount on bill #104/.test(discA.title) && /₹350 off/.test(discA.body), discA);
+        check("settled bill edited", kinds.includes("edited") && (await ownAlerts({ kind: "edited" })).some((a) => /#105/.test(a.title)), kinds);
+        const before = (await ownAlerts()).length;
+        A._resetForTests();
+        await A.runOwnerAlerts(new Date());
+        check("looking again never repeats an alert", (await ownAlerts()).length === before, before);
+
+        // ---- cash difference at closing ----
+        const cs = await M.CashSession.create({ hotel_id: h1.id, opening_float: 1000, status: "Closed", opened_at: new Date(Date.now() - 6 * 3600000), closed_at: new Date(), counted_cash: 800, variance: -200, variance_reason: "Change given wrong", deleted: false });
+        await A.runOwnerAlerts(new Date());
+        const cashA = await ownAlerts({ kind: "cash-diff" });
+        check("cash short ₹200 at closing", cashA.length === 1 && /short by ₹200/.test(cashA[0].title) && /Change given wrong/.test(cashA[0].body), cashA);
+        await cs.destroy();
+
+        // ---- low stock, from a stock upload ----
+        const paneerRaw = await M.RawMaterial.findOne({ where: { hotel_id: h1.id, raw_material_name: "Paneer" }, raw: true });
+        await fetch(`${syncBase}/push/stock`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${devToken}` }, body: JSON.stringify({ snapshot: [{ kind: "raw", id: paneerRaw.id, qty: 1500, cost: 0.3, value: 450 }] }) });
+        await A.runOwnerAlerts(new Date());
+        await A.runOwnerAlerts(new Date(Date.now() + 60000));
+        const lowA = await ownAlerts({ kind: "low-stock" });
+        check("low stock: once per item per day", lowA.length === 1 && /Paneer is running low/.test(lowA[0].title) && /1,500 g left · minimum 2,000 g/.test(lowA[0].body), lowA);
+        await call("saveAlertRules", T, { lowStock: { on: false } });
+
+        // ---- the nightly day summary at the owner's time ----
+        const ist = moment.tz("Asia/Kolkata");
+        r = await call("saveAlertRules", T, { summary: { time: ist.clone().subtract(1, "minute").format("HH:mm") } });
+        check("summary time saved", !!r.result?.rules?.summary?.time, r);
+        if (ist.format("HH:mm") !== "00:00") {
+            await A.runOwnerAlerts(new Date());
+            await A.runOwnerAlerts(new Date(Date.now() + 60000));
+            const sumA = await ownAlerts({ kind: "summary" });
+            check("one day summary, sent at the owner's time", sumA.length === 1 && /^Day summary · /.test(sumA[0].title) && /across 1 outlet/.test(sumA[0].body) && sumA[0].link.startsWith("/summary/"), sumA);
+            const date = sumA[0]?.link.split("/").pop();
+            r = await call("daySummary", T, date);
+            check("day summary: net, bills, the outlet, things worth a look", r.result?.net === 1670 && r.result.bills === 5 && r.result.outlets.length === 1 && r.result.look.cancelled === 2 && r.result.look.cancelledAfterKot === 1 && r.result.look.edited.length === 1, r.result);
+        }
+        await call("saveAlertRules", T, { summary: { time: "23:30" } });
+
+        // ---- the Alerts screen ----
+        r = await call("alerts", T, {});
+        check("alerts list, newest first, with unread count", r.result?.alerts?.length >= 7 && r.result.unread === r.result.alerts.length && r.result.alerts[0].at >= r.result.alerts.at(-1).at, r.result && [r.result.unread, r.result.alerts.length]);
+        r = await call("alerts", T, { filter: "risky" });
+        check("filter: risky actions only", r.result?.alerts?.every((a) => ["cancel-after-kot", "discount", "edited", "cash-diff"].includes(a.kind)) && r.result.alerts.length >= 3, r.result?.alerts?.map((a) => a.kind));
+        r = await call("markAlertsRead", T, [r.result.alerts[0].id]);
+        const c1 = (await call("alertCount", T)).result.unread;
+        r = await call("markAlertsRead", T, "all");
+        check("mark one, then all read", c1 >= 6 && r.result?.unread === 0, [c1, r.result]);
+        const otherT = (await post("/login", { mobile: OTHER_OWNER, password: PW, device: phone("po") })).session?.token;
+        r = await call("alerts", otherT, {});
+        check("another owner sees none of these alerts", r.ok && r.result.alerts.every((a) => a.outletId !== h1.id), r);
+        r = await call("pcHistory", T, hOther.id);
+        check("PC history of someone else's outlet is refused", r.ok === false, r);
+    }
+
     console.log("\nthrottle");
     const LOCKME = mobile(5);
     const hl = await makeHotel("Owner Test Lock", LOCKME);
@@ -516,6 +613,8 @@ async function cleanup() {
     await M.CashMovement.destroy({ where: { cashSessionId: sessions.map((x) => x.id) } });
     await M.OwnerStockLevel.destroy({ where: { hotel_id: ids } });
     await M.OwnerChange.destroy({ where: { hotel_id: ids } });
+    await M.OwnerAlert.destroy({ where: { hotel_id: ids } });
+    await M.OwnerOfflinePeriod.destroy({ where: { hotel_id: ids } });
     await M.Recipes.destroy({ where: { hotel_id: ids } }).catch(() => {});
     await M.OwnerStockDay.destroy({ where: { hotel_id: ids } });
     for (const Model of [M.RawMaterial, M.Unit, M.MenuCatalog, M.AuditLog, M.ExpenseEntry, M.CashSession, M.Table, M.TableCatagories, M.Menu, M.Menu_categ, M.PaymentMode, M.TaxType, M.User]) {

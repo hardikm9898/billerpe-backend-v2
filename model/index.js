@@ -926,7 +926,7 @@ SyncIndexDB.belongsTo(Hotel, { foreignKey: 'hotel_id', onDelete: 'CASCADE', onUp
 // ============================================================================
 
 const { AppDevice, AppClientKey, AppQueueEntry, AppAlert } = require("./appV1");
-const { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange } = require("./ownerApp");
+const { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange, OwnerAlert, OwnerSetting, OwnerOfflinePeriod } = require("./ownerApp");
 const StockMovement = require("./stockMovement");
 StockMovement.belongsTo(RawMaterial, { foreignKey: "raw_material_id" });
 StockMovement.belongsTo(HotelUser, { foreignKey: "user_id" });
@@ -944,6 +944,9 @@ module.exports = {
     OwnerStockLevel,
     OwnerStockDay,
     OwnerChange,
+    OwnerAlert,
+    OwnerSetting,
+    OwnerOfflinePeriod,
 
     RestaurantSetting,
     UserSession,

@@ -6,6 +6,7 @@ const { outlets } = require("./outlets");
 const watch = require("./watch");
 const reports = require("./reports");
 const manage = require("./manage");
+const alerts = require("./alerts");
 
 // BillerPe Owner App API (Plan 1 owners): /owner/v1. Same shape as /app/v1:
 // POST /owner/v1/<method> with { args: [...] }, answer { ok: true, result }
@@ -84,6 +85,15 @@ const HANDLERS = {
     saveRaw: (o, outletId, r) => manage.saveRaw(o, outletId, r || {}),
     saveSupplier: (o, outletId, s) => manage.saveSupplier(o, outletId, s || {}),
     saveUnit: (o, outletId, u) => manage.saveUnit(o, outletId, u || {}),
+
+    /* phase 4 - alerts */
+    alerts: (o, q) => alerts.alerts(o, q || {}),
+    alertCount: (o) => alerts.alertCount(o),
+    markAlertsRead: (o, ids) => alerts.markAlertsRead(o, ids ?? "all"),
+    alertRules: (o) => alerts.rules(o),
+    saveAlertRules: (o, r) => alerts.saveRules(o, r || {}),
+    daySummary: (o, date) => alerts.daySummary(o, date),
+    pcHistory: (o, outletId) => alerts.pcHistory(o, outletId),
 
     /* phase 2 - reports */
     reportCatalog: () => reports.catalog(),
