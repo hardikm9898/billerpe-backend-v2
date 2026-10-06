@@ -347,7 +347,8 @@ async function sendSummaries(now, owners) {
         if (await raise(owner.mobile, {
             ref, kind: "summary", at: now,
             title: `Day summary · ${moment(date).format("ddd, D MMM")}`,
-            body: `${money(s.net)} across ${s.outlets.length} outlet${s.outlets.length === 1 ? "" : "s"} · ${s.bills} bills${worth.length ? ` · ${worth.join(", ")}` : ""}`,
+            // " · " between the parts, so a Hindi / Gujarati phone gets each part translated.
+            body: `${money(s.net)} across ${s.outlets.length} outlet${s.outlets.length === 1 ? "" : "s"} · ${s.bills} bills${worth.length ? ` · ${worth.join(" · ")}` : ""}`,
             link: `/summary/${date}`,
         })) raised++;
     }

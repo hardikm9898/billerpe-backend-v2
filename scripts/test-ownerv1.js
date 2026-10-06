@@ -574,6 +574,19 @@ async function run() {
         check("PC history of someone else's outlet is refused", r.ok === false, r);
     }
 
+    console.log("\npush language (phase 5)");
+    // Push texts go out in each phone's language (ownerv1/i18n.js, the app's dictionaries).
+    const { tr } = require("../ownerv1/i18n");
+    check("push in Hindi: PC offline title", tr("SG Hwy PC is offline", "hi") === "SG Hwy का PC ऑफ़लाइन है", tr("SG Hwy PC is offline", "hi"));
+    check("push in Gujarati: cancel after KOT title", tr("Bill #1482 cancelled after KOT", "gu") === "બિલ #1482 KOT પછી રદ", tr("Bill #1482 cancelled after KOT", "gu"));
+    const offBody = "No contact for 14 min · 6 bills waiting to upload · billing keeps working at the outlet";
+    check("push in Hindi: offline body with a count inside", tr(offBody, "hi") === "14 मिनट से संपर्क नहीं · 6 बिल अपलोड के इंतज़ार में · आउटलेट पर बिलिंग चलती रहती है", tr(offBody, "hi"));
+    check("push in Hindi: a discount '₹620 off' is not 'switched off'", tr("₹620 off · above your limit · CG Road · Arjun (Manager)", "hi") === "₹620 की छूट · आपकी सीमा से ऊपर · CG Road · Arjun (मैनेजर)", tr("₹620 off · above your limit · CG Road · Arjun (Manager)", "hi"));
+    check("push in Gujarati: day summary date", tr("Day summary · Tue, 6 Oct", "gu") === "દિવસનો સારાંશ · મંગળવાર, 6 ઑક્ટો", tr("Day summary · Tue, 6 Oct", "gu"));
+    check("push in English stays English", tr("SG Hwy PC is offline", "en") === "SG Hwy PC is offline");
+    check("an unknown language stays English", tr("SG Hwy PC is offline", "xx") === "SG Hwy PC is offline");
+    check("a name is never translated", tr("Paneer is running low", "hi") === "Paneer कम हो रहा है", tr("Paneer is running low", "hi"));
+
     console.log("\nthrottle");
     const LOCKME = mobile(5);
     const hl = await makeHotel("Owner Test Lock", LOCKME);

@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const { OwnerDevice } = require("../model");
+const { tr } = require("./i18n");
 
 // Push notifications to owners' phones. The Owner App has its OWN Firebase
 // project (billerpeowner), separate from the POS App's, so it runs as a
@@ -37,27 +38,43 @@ const DEAD_TOKEN = /registration-token-not-registered|invalid-registration-token
 
 /**
  * Sends one notification to every phone this owner (10-digit mobile) is
- * logged in on. link = the app route to open when tapped.
+ * logged in on. link = the app route to open when tapped. Each phone gets
+ * it in its own language (owner_devices.language, set from the app).
  */
 async function pushToOwner(mobile, { title, body, link, kind }) {
     const m = fcm();
     if (!m) return { sent: 0, off: true };
     const devices = await OwnerDevice.findAll({
         where: { owner_mobile: String(mobile), status: "active", push_token: { [Op.ne]: null } },
-        attributes: ["id", "push_token"],
+        attributes: ["id", "push_token", "language"],
         raw: true,
     });
     if (!devices.length) return { sent: 0 };
-    const res = await m.sendEachForMulticast({
-        tokens: devices.map((d) => d.push_token),
-        notification: { title, body: body || "" },
-        data: { link: link || "/alerts", kind: kind || "" },
-        android: { priority: "high", notification: { channelId: "alerts", sound: "default" } },
-    });
-    // A token Firebase no longer knows (app uninstalled / data cleared) is forgotten.
-    const dead = res.responses.map((r, i) => (!r.success && DEAD_TOKEN.test(r.error?.code || "") ? devices[i].id : null)).filter(Boolean);
+    const byLang = new Map();
+    for (const d of devices) {
+        const lang = ["hi", "gu"].includes(d.language) ? d.language : "en";
+        if (!byLang.has(lang)) byLang.set(lang, []);
+        byLang.get(lang).push(d);
+    }
+    let sent = 0;
+    let failed = 0;
+    const dead = [];
+    for (const [lang, group] of byLang) {
+        const res = await m.sendEachForMulticast({
+            tokens: group.map((d) => d.push_token),
+            notification: { title: tr(title, lang), body: tr(body || "", lang) || "" },
+            data: { link: link || "/alerts", kind: kind || "" },
+            android: { priority: "high", notification: { channelId: "alerts", sound: "default" } },
+        });
+        sent += res.successCount;
+        failed += res.failureCount;
+        // A token Firebase no longer knows (app uninstalled / data cleared) is forgotten.
+        res.responses.forEach((r, i) => {
+            if (!r.success && DEAD_TOKEN.test(r.error?.code || "")) dead.push(group[i].id);
+        });
+    }
     if (dead.length) await OwnerDevice.update({ push_token: null }, { where: { id: dead } });
-    return { sent: res.successCount, failed: res.failureCount };
+    return { sent, failed };
 }
 
 module.exports = { pushToOwner, fcm };
