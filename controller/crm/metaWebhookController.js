@@ -1,7 +1,7 @@
 const crypto = require("crypto")
-const { CrmLead, CrmMetaLeadSyncLog } = require("../../model")
-const { logActivity } = require("../../services/crm/leadActivityLogger")
+const { CrmMetaLeadSyncLog } = require("../../model")
 const { fetchLeadData, mapFieldData } = require("../../services/crm/metaGraphApi")
+const intake = require("../../adminv1/crm/intake")
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN
 const APP_SECRET = process.env.META_APP_SECRET
@@ -20,7 +20,12 @@ const verifyWebhook = (req, res) => {
 // Meta signs every POST body with the App Secret — reject anything that doesn't match
 // so randoms can't forge lead-creation requests against this public endpoint.
 const isValidSignature = (req) => {
-    if (!APP_SECRET) return true // signature checking is opt-in until the secret is configured
+    // No secret configured = refuse: an unsigned public endpoint would let
+    // anyone create leads (design doc: security fixes).
+    if (!APP_SECRET) {
+        console.error("[Meta Webhook] META_APP_SECRET is not set - lead ignored")
+        return false
+    }
     const signature = req.get("x-hub-signature-256") || ""
     const expected = "sha256=" + crypto.createHmac("sha256", APP_SECRET).update(req.rawBody || Buffer.alloc(0)).digest("hex")
     if (signature.length !== expected.length) return false
@@ -49,20 +54,30 @@ const processLeadgenChange = async (change, pageId) => {
 
     const leadData = await fetchLeadData(leadgenId)
     const { name, phone_number, email } = mapFieldData(leadData.field_data)
-    if (!phone_number) return // CrmLead requires phone_number; nothing usable to create
+    if (!phone_number) return // nothing usable to create
 
-    const lead = await CrmLead.create({
+    // Every other answer on the form (city, restaurant, ...) goes into the message.
+    const known = new Set(["full_name", "first_name", "last_name", "phone_number", "phone", "email"])
+    const extra = (leadData.field_data || []).filter((f) => !known.has(String(f.name || "").toLowerCase()) && f.values && f.values.length)
+        .map((f) => `${String(f.name).replace(/_/g, " ")}: ${f.values.join(", ")}`).join(" · ")
+
+    // SuperAdmin sales CRM (phase 2): a known number joins its lead.
+    const r = await intake.receive({
+        source: "meta",
+        externalId: `meta:${leadgenId}`,
         name,
-        phone_number,
+        phone: phone_number,
         email,
-        source: leadData.platform === "instagram" ? "meta_instagram" : "meta_facebook",
-        campaign_name: leadData.campaign_name || null,
-        adset_name: leadData.adset_name || null,
-        ad_name: leadData.ad_name || null,
-        lead_form_name: leadData.form_id || null,
-        source_lead_id: leadgenId,
-        status: "NEW",
-        priority: "P3",
+        message: extra,
+        receivedAt: leadData.created_time || new Date(),
+        sourceDetail: {
+            platform: leadData.platform === "instagram" ? "instagram" : "facebook",
+            campaign: leadData.campaign_name || null,
+            adset: leadData.adset_name || null,
+            ad: leadData.ad_name || null,
+            formId: leadData.form_id || null,
+            leadgenId,
+        },
     })
 
     await syncLog.update({
@@ -73,10 +88,8 @@ const processLeadgenChange = async (change, pageId) => {
         ad_id: leadData.ad_id || syncLog.ad_id,
         raw_payload: { ...change, leadData },
         processed: true,
-        crm_lead_id: lead.id,
+        crm_lead_id: r ? r.leadId : null,
     })
-
-    await logActivity(lead.id, null, "system", { description: "Lead received from Meta Ads", metadata: { leadgen_id: leadgenId, source: lead.source } })
 }
 
 // ─── POST /crm/meta/webhook  (Incoming leadgen notifications from Meta) ─────

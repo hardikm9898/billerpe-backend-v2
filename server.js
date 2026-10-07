@@ -230,6 +230,8 @@ server.listen(PORT, (err) => {
                 "owner_devices", "owner_stock_levels", "owner_stock_days", "owner_changes", "owner_alerts", "owner_settings", "owner_offline_periods",
                 // BillerPe SuperAdmin (/admin/v1): schema owned by migration 20261008100000.
                 "adm_roles", "adm_teams", "adm_users", "adm_leaves", "adm_sessions", "adm_audit_log", "adm_settings", "crm_events", "crm_jobs",
+                // SuperAdmin sales CRM: schema owned by migration 20261008120000.
+                "crm_stages", "crm_lost_reasons", "crm_outcomes", "crm_leads", "crm_inquiries", "crm_tasks", "crm_activities", "crm_calls", "crm_assignments", "adm_notifications", "adm_breaks",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',

@@ -1,6 +1,6 @@
 const { MESSAGE, STATUSCODE } = require("../../constant/const")
 const webSiteUserData = require("../../model/webSiteUserData")
-const { CrmLead } = require("../../model")
+const intake = require("../../adminv1/crm/intake")
 const { error, success } = require("../../responce/res")
 const axios = require("axios")
 
@@ -96,17 +96,10 @@ const storeWebsiteUserData = async (req, res) => {
             checkUserAvailable = await webSiteUserData.create({ name, phone_number, email, message })
             await sendWhatsAppMessage(name, phone_number)
             sendAdminNotifications(name, phone_number, email, message)
-            await CrmLead.create({
-                name,
-                phone_number,
-                email,
-                message,
-                source: "website",
-                status: "NEW",
-                priority: "P3",
-                website_user_id: checkUserAvailable.id,
-            })
         }
+        // SuperAdmin sales CRM: every inquiry, first or repeat. A known
+        // number joins its lead (and reopens it if it was lost).
+        await intake.receiveSafely({ source: "website", name, phone: phone_number, email, message, sourceDetail: { websiteUserId: checkUserAvailable.id, page: req.body.page || null } })
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { user: checkUserAvailable, message: "User Data Stored Succssefully" }, STATUSCODE.SUCCESS))
 

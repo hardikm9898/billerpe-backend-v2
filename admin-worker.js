@@ -17,6 +17,8 @@ if (jobsOff && process.env.ADMIN_WORKER_FORCE !== "1") {
 }
 
 const worker = require("./services/admin/worker");
+// Job handlers and schedules of each SuperAdmin module.
+require("./adminv1/crm/jobs");
 
 const log = { info: (...a) => logger.info(a.join(" ")), error: (...a) => logger.error(a.join(" ")) };
 worker.start(Number(process.env.ADMIN_WORKER_INTERVAL_MS) || 2000, log);

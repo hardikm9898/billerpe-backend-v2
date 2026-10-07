@@ -33,6 +33,22 @@ function subscribe(type, subscriber) {
     eventSubscribers.get(type).push(subscriber);
 }
 
+// Repeating jobs: every `everySeconds` one job of `kind` is queued, once per
+// time slot across all workers (the slot is the job's dedupe key).
+const schedules = new Map();
+function registerSchedule(kind, everySeconds) {
+    schedules.set(kind, { every: Math.max(30, Number(everySeconds) || 300), lastSlot: null });
+}
+async function queueSchedules(now = Date.now()) {
+    const { enqueue } = require("./queue");
+    for (const [kind, sch] of schedules) {
+        const slot = Math.floor(now / 1000 / sch.every);
+        if (sch.lastSlot === slot) continue;
+        await enqueue({ kind, dedupeKey: `sched:${kind}:${slot}`, maxAttempts: 2 });
+        sch.lastSlot = slot;
+    }
+}
+
 // Built-in job used by the panel's "Test the worker" button and the tests.
 registerJob("system.ping", async (payload) => `pong${payload && payload.note ? `: ${String(payload.note).slice(0, 80)}` : ""}`);
 
@@ -119,6 +135,7 @@ async function heartbeat(force = false) {
 
 /** One pass: events first (they may enqueue jobs), then due jobs. */
 async function runOnce() {
+    await queueSchedules();
     const events = await processEvents();
     const jobs = await processJobs();
     await heartbeat();
@@ -173,4 +190,4 @@ async function status() {
     };
 }
 
-module.exports = { registerJob, subscribe, processEvents, processJobs, runOnce, start, stop, status, heartbeat, WORKER };
+module.exports = { registerSchedule, queueSchedules, registerJob, subscribe, processEvents, processJobs, runOnce, start, stop, status, heartbeat, WORKER };

@@ -6,6 +6,10 @@ const staff = require("./staff");
 const settings = require("./settings");
 const worker = require("../services/admin/worker");
 const queue = require("../services/admin/queue");
+const crmConfig = require("./crm/config");
+const leads = require("./crm/leads");
+const myday = require("./crm/myday");
+const notifications = require("./crm/notify");
 
 // BillerPe SuperAdmin API (admin.billerpe.in and the sales app): /admin/v1.
 // Same shape as /owner/v1: POST /admin/v1/<method> with { args: [...] },
@@ -71,6 +75,33 @@ const HANDLERS = {
     settings: () => settings.all(),
     settingSave: (s, key, value) => settings.save(s, key, value),
     auditLog: (s, query) => settings.auditLog(s, query || {}),
+
+    /* sales CRM (phase 2) */
+    crmConfig: () => crmConfig.view(),
+    crmStageSave: (s, input) => crmConfig.saveStage(s, input || {}),
+    crmOutcomeSave: (s, input) => crmConfig.saveOutcome(s, input || {}),
+    crmReasonSave: (s, input) => crmConfig.saveReason(s, input || {}),
+    myDay: (s) => myday.myDay(s),
+    pipeline: (s, query) => myday.pipeline(s, query || {}),
+    breakStart: (s, kind) => myday.startBreak(s, kind),
+    breakEnd: (s) => myday.endBreak(s),
+    leads: (s, query) => leads.list(s, query || {}),
+    lead: (s, id) => leads.detail(s, id),
+    leadCreate: (s, input) => leads.create(s, input || {}),
+    leadUpdate: (s, id, input) => leads.update(s, id, input || {}),
+    leadOutcome: (s, id, input) => leads.logOutcome(s, id, input || {}),
+    leadStage: (s, id, input) => leads.moveStage(s, id, input || {}),
+    leadWon: (s, id, input) => leads.markWon(s, id, input || {}),
+    leadLost: (s, id, input) => leads.markLost(s, id, input || {}),
+    leadReopen: (s, id, input) => leads.reopen(s, id, input || {}),
+    leadNote: (s, id, text) => leads.addNote(s, id, text),
+    leadAssign: (s, id, toId, reason) => leads.reassign(s, id, toId, reason),
+    leadTaskAdd: (s, id, input) => leads.addLeadTask(s, id, input || {}),
+    taskUpdate: (s, taskId, input) => leads.updateTask(s, taskId, input || {}),
+    leadMerge: (s, fromId, intoId) => leads.merge(s, fromId, intoId),
+    notifications: (s, query) => notifications.list(s, query || {}),
+    notificationCount: (s) => notifications.unreadCount(s),
+    notificationsRead: (s, ids) => notifications.markRead(s, ids ?? "all"),
 
     /* worker */
     workerStatus: (s) => {
