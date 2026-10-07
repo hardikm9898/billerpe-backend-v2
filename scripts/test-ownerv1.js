@@ -610,6 +610,68 @@ async function run() {
     check("an unknown language stays English", tr("SG Hwy PC is offline", "xx") === "SG Hwy PC is offline");
     check("a name is never translated", tr("Paneer is running low", "hi") === "Paneer कम हो रहा है", tr("Paneer is running low", "hi"));
 
+    console.log("\nfranchise outlets (owner 2026-10-07)");
+    // Taj's owner is the franchise owner of The Lila; The Lila keeps its own
+    // owner at the outlet, but only Taj's owner sees it in the Owner App.
+    const TAJ = mobile(6);
+    const LILA = mobile(7);
+    const hTaj = await makeHotel("Owner Test Taj", TAJ);
+    const hLila = await makeHotel("Owner Test Lila", LILA);
+    await makeUser(hTaj, "Owner", TAJ, PW);
+    const lilaOwner = await makeUser(hLila, "Owner", LILA, "lila-pass");
+    await makeUser(hLila, "Cashier", mobile(8), "lila-cashier");
+    await reg(hLila, 30 * 1000);
+    r = await post("/login", { mobile: LILA, password: "lila-pass", device: phone("lila-phone") });
+    const tLila = r.session?.token;
+    check("before the link The Lila's own owner opens the app", !!tLila, r);
+    const { execFileSync } = require("child_process");
+    const fr = (...a) => execFileSync(process.execPath, ["scripts/owner-franchise.js", ...a], { env: process.env, encoding: "utf8" });
+    let out = fr("link", TAJ, String(hLila.id), "test franchise");
+    check("link without --yes is a dry run", /Dry run/.test(out) && !(await M.OwnerOutletLink.findOne({ where: { hotel_id: hLila.id } })), out);
+    let refused = "";
+    try {
+        fr("link", TAJ, String(hPlan2.id), "--yes");
+    } catch (e) {
+        refused = String(e.stderr);
+    }
+    check("link refuses a Plan 2 outlet", /not a Plan 1/.test(refused), refused);
+    out = fr("link", TAJ, String(hLila.id), "test franchise", "--yes");
+    check("link --yes saves the franchise link", /Saved/.test(out) && (await M.OwnerOutletLink.findOne({ where: { hotel_id: hLila.id }, raw: true }))?.owner_mobile === TAJ, out);
+    check("find shows the outlet as a franchise", new RegExp(`FRANCHISE of ${TAJ}`).test(fr("find", "Owner Test Lila")));
+
+    r = await post("/login", { mobile: TAJ, password: PW, device: phone("taj-phone") });
+    const tTaj = r.session?.token;
+    check("Taj's owner logs in with Taj's own password", !!tTaj && r.session.owner.mobile === TAJ, r);
+    r = await call("outlets", tTaj);
+    check("Taj's owner sees Taj and The Lila", JSON.stringify((r.result?.outlets || []).map((x) => x.id)) === JSON.stringify([hTaj.id, hLila.id]), r.result);
+    check("The Lila's PC state comes along", r.result?.outlets?.find((x) => x.id === hLila.id)?.pc?.status === "online", r.result);
+    r = await post("/login", { mobile: TAJ, password: "lila-pass", device: phone("taj-phone-2") });
+    check("The Lila owner's password never opens Taj's login", r.ok === false && r.error === "wrong-password", r);
+    r = await call("outlets", tLila);
+    check("The Lila's own owner is logged out of the app once linked", r.status === 401, r);
+    r = await post("/login", { mobile: LILA, password: "lila-pass", device: phone("lila-phone") });
+    check("The Lila's own owner gets the franchise message", r.ok === false && r.error === "franchise", r);
+    r = await call("outlet", tTaj, hLila.id, { key: "today" });
+    check("Taj's owner opens The Lila's live page", r.ok === true && r.result?.id === hLila.id, r);
+    r = await call("bills", tTaj, { outletId: hLila.id, range: { key: "today" }, filter: "all" });
+    check("Taj's owner opens The Lila's bills", r.ok === true, r);
+    r = await call("report", tTaj, { id: "day-wise", outletId: "all", range: { key: "7d" } });
+    check("all-outlet reports include The Lila", r.ok === true && (r.result?.outlets || []).some((n) => /Lila/.test(n)), r.result?.outlets);
+    r = await call("manageStaff", tTaj, hLila.id);
+    check("The Lila's staff list keeps its own owner as owner", r.ok === true && r.result.staff.find((x) => x.isOwner)?.id === String(lilaOwner.id), r.result?.staff);
+    r = await call("saveSection", tTaj, hLila.id, { name: `Franchise ${stamp}` });
+    const sec = await M.TableCatagories.findOne({ where: { hotel_id: hLila.id }, raw: true });
+    check("Taj's owner manages The Lila (a new section is saved there)", r.ok === true && !!sec, r);
+    r = await call("manageStaff", tTaj, hOther.id);
+    check("Taj's owner still cannot open someone else's outlet", r.ok === false && /do not own/.test(r.error || ""), r);
+
+    out = fr("unlink", String(hLila.id), "--yes");
+    check("unlink removes the link", /Removed/.test(out) && !(await M.OwnerOutletLink.findOne({ where: { hotel_id: hLila.id } })), out);
+    r = await call("outlets", tTaj);
+    check("after unlink Taj's owner sees only Taj", JSON.stringify((r.result?.outlets || []).map((x) => x.id)) === JSON.stringify([hTaj.id]), r.result);
+    r = await post("/login", { mobile: LILA, password: "lila-pass", device: phone("lila-phone") });
+    check("after unlink The Lila's own owner opens the app again", r.ok === true, r);
+
     console.log("\nthrottle");
     const LOCKME = mobile(5);
     const hl = await makeHotel("Owner Test Lock", LOCKME);
@@ -651,6 +713,7 @@ async function cleanup() {
     await M.OwnerChange.destroy({ where: { hotel_id: ids } });
     await M.OwnerAlert.destroy({ where: { hotel_id: ids } });
     await M.OwnerOfflinePeriod.destroy({ where: { hotel_id: ids } });
+    await M.OwnerOutletLink.destroy({ where: { hotel_id: ids } });
     await M.Recipes.destroy({ where: { hotel_id: ids } }).catch(() => {});
     await M.OwnerStockDay.destroy({ where: { hotel_id: ids } });
     for (const Model of [M.RawMaterial, M.Unit, M.MenuCatalog, M.AuditLog, M.ExpenseEntry, M.CashSession, M.Table, M.TableCatagories, M.Menu, M.Menu_categ, M.PaymentMode, M.TaxType, M.User]) {

@@ -142,4 +142,20 @@ const OwnerOfflinePeriod = sequelize.define("owner_offline_period", {
     indexes: [{ fields: ["hotel_id", "started_at"], name: "owner_offline_hotel_start" }],
 });
 
-module.exports = { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange, OwnerAlert, OwnerSetting, OwnerOfflinePeriod };
+// Franchise outlets (owner 2026-10-07): an outlet run by a franchisee is
+// shown in the Owner App / Owner Dashboard of its franchise owner, not of the
+// person in its own owner_number. One franchise owner per outlet. The outlet's
+// own owner keeps their owner rights at the outlet (Web POS / Captain / exe)
+// untouched. Added with scripts/owner-franchise.js (migration 20261007100000).
+const OwnerOutletLink = sequelize.define("owner_outlet_link", {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    // 10-digit mobile of the franchise owner.
+    owner_mobile: { type: DataTypes.STRING(15), allowNull: false },
+    hotel_id: { type: DataTypes.INTEGER, allowNull: false, unique: "owner_outlet_links_hotel" },
+    note: { type: DataTypes.STRING(160), allowNull: false, defaultValue: "" },
+}, {
+    tableName: "owner_outlet_links",
+    indexes: [{ fields: ["owner_mobile"], name: "owner_outlet_links_owner" }],
+});
+
+module.exports = { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange, OwnerAlert, OwnerSetting, OwnerOfflinePeriod, OwnerOutletLink };

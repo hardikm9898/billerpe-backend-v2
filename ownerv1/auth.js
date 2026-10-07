@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
-const { Hotel, HotelUser, OwnerDevice } = require("../model");
+const { Hotel, HotelUser, OwnerDevice, OwnerOutletLink } = require("../model");
 const { RuleError } = require("../appv1/core");
 
 // Sessions for the BillerPe Owner App (Plan 1 owners, owner decision
@@ -14,7 +14,9 @@ const { RuleError } = require("../appv1/core");
 // which managers can carry too.
 //
 // One login covers every Plan 1 outlet that has this mobile as its owner
-// number. The token never expires (no surprise re-logins); it ends when the
+// number, plus the franchise outlets linked to this mobile (owner
+// 2026-10-07, OwnerOutletLink): a franchise outlet is shown to its franchise
+// owner only, never to the owner in its own owner_number. The token never expires (no surprise re-logins); it ends when the
 // owner logs out (device revoked), the login's password changes, the owner
 // account is switched off, or no Plan 1 outlet is left.
 
@@ -43,28 +45,63 @@ function verify(token) {
     }
 }
 
+const HOTEL_ATTRS = ["id", "hotel_name", "owner_name", "owner_number", "plan_end_date", "hotel_logo"];
+const USER_ATTRS = ["id", "hotel_id", "name", "number", "password", "active"];
+const isActive = (u) => u.active !== false && u.active !== 0;
+
 /**
- * Every outlet this person owns that may use the Owner App, each with the
- * owner's own staff row there. Plan 2 outlets, switched-off outlets and
- * outlets whose owner login is switched off are left out.
+ * Franchise links touching this owner: outlets linked to them, and their own
+ * outlets linked to someone else. A cloud without the table yet (code
+ * deployed before `npm run migrate`) has no links, never an error.
+ */
+async function franchiseLinks(mobile, ownHotelIds) {
+    try {
+        return await OwnerOutletLink.findAll({
+            where: { [Op.or]: [{ owner_mobile: mobile }, ...(ownHotelIds.length ? [{ hotel_id: ownHotelIds }] : [])] },
+            attributes: ["owner_mobile", "hotel_id"],
+            raw: true,
+        });
+    } catch (e) {
+        if (!/owner_outlet_links/.test(String(e && e.message))) throw e;
+        return [];
+    }
+}
+
+/**
+ * Every outlet this person may see in the Owner App: the Plan 1 outlets with
+ * this mobile as owner number (with the owner's own staff row there), minus
+ * those linked to a franchise owner, plus the franchise outlets linked to
+ * this mobile (`franchise: true`, acting through that outlet's own owner
+ * account, which always has every permission). Plan 2 outlets, switched-off
+ * outlets and outlets whose owner login is switched off are left out.
  */
 async function ownedOutlets(mobile) {
     if (!mobile) return [];
     const hotels = await Hotel.findAll({
         where: { owner_number: [mobile, `91${mobile}`], product_plan: "LOCAL_SUITE", active: { [Op.not]: false } },
-        attributes: ["id", "hotel_name", "owner_name", "owner_number", "plan_end_date", "hotel_logo"],
+        attributes: HOTEL_ATTRS,
         raw: true,
     });
-    if (!hotels.length) return [];
-    const users = await HotelUser.findAll({
-        where: { hotel_id: hotels.map((h) => h.id), number: spellings(mobile) },
-        attributes: ["id", "hotel_id", "name", "number", "password", "active"],
-        raw: true,
-    });
+    const links = await franchiseLinks(mobile, hotels.map((h) => h.id));
+    const linkedAway = new Set(links.filter((l) => l.owner_mobile !== mobile).map((l) => l.hotel_id));
+    const own = hotels.filter((h) => !linkedAway.has(h.id));
     const out = [];
-    for (const h of hotels) {
-        const u = users.find((x) => x.hotel_id === h.id && x.active !== false && x.active !== 0);
-        if (u) out.push({ hotel: h, user: u });
+    if (own.length) {
+        const users = await HotelUser.findAll({ where: { hotel_id: own.map((h) => h.id), number: spellings(mobile) }, attributes: USER_ATTRS, raw: true });
+        for (const h of own) {
+            const u = users.find((x) => x.hotel_id === h.id && isActive(x));
+            if (u) out.push({ hotel: h, user: u });
+        }
+    }
+    const franchiseIds = links.filter((l) => l.owner_mobile === mobile && !own.some((h) => h.id === l.hotel_id)).map((l) => l.hotel_id);
+    if (franchiseIds.length) {
+        const fHotels = await Hotel.findAll({ where: { id: franchiseIds, product_plan: "LOCAL_SUITE", active: { [Op.not]: false } }, attributes: HOTEL_ATTRS, raw: true });
+        const fUsers = fHotels.length ? await HotelUser.findAll({ where: { hotel_id: fHotels.map((h) => h.id) }, attributes: USER_ATTRS, raw: true }) : [];
+        for (const h of fHotels) {
+            const om = mobile10(h.owner_number);
+            const u = fUsers.find((x) => x.hotel_id === h.id && om && mobile10(x.number) === om && isActive(x));
+            if (u) out.push({ hotel: h, user: u, franchise: true });
+        }
     }
     return out.sort((a, b) => a.hotel.id - b.hotel.id);
 }
@@ -105,7 +142,8 @@ const passwordMatches = async (password, hash) => !!hash && bcrypt.compare(Strin
 
 /**
  * Why a correct staff password still cannot open the app: staff (not the
- * owner) at a Plan 1 outlet, or the owner of a Plan 2 outlet.
+ * owner) at a Plan 1 outlet, the owner of a Plan 2 outlet, or the owner of
+ * a franchise outlet (its franchise owner has it in the Owner App).
  */
 async function refusalFor(mobile, password) {
     const users = await HotelUser.findAll({ where: { number: spellings(mobile) }, attributes: ["id", "hotel_id", "password"], raw: true });
@@ -118,6 +156,10 @@ async function refusalFor(mobile, password) {
             return { ok: false, error: "plan-2", message: "Your outlet uses the BillerPe POS App. All owner features are inside the POS App." };
         }
         if (!isOwner) return { ok: false, error: "not-owner", message: "Only the restaurant owner can use this app. Staff use the Web POS or Captain App." };
+        const links = await franchiseLinks(mobile, [u.hotel_id]);
+        if (links.some((l) => l.hotel_id === u.hotel_id && l.owner_mobile !== mobile)) {
+            return { ok: false, error: "franchise", message: "This outlet is a franchise outlet. Its franchise owner sees it in the Owner App." };
+        }
     }
     return null;
 }
@@ -131,6 +173,9 @@ async function login({ mobile, password, device }) {
     const owned = await ownedOutlets(m);
     let match = null;
     for (const o of owned) {
+        // A franchise outlet acts through its own owner's account: that
+        // person's password never opens the franchise owner's login.
+        if (o.franchise) continue;
         if (await passwordMatches(password, o.user.password)) {
             match = o;
             break;
@@ -179,8 +224,8 @@ async function resume({ token, device }) {
     if (!s || s.device.device_id !== String(device?.deviceId || "")) return { ok: false, error: "session-ended" };
     const d = cleanDevice(device);
     await s.device.update({ app_version: d.app_version || s.device.app_version, last_active: new Date() });
-    const self = s.owned.find((o) => o.user.id === s.device.hotel_user_id) || s.owned[0];
-    return { ok: true, session: { token, owner: ownerView(self), deviceId: s.device.device_id } };
+    const self = s.owned.find((o) => o.user.id === s.device.hotel_user_id) || s.owned.find((o) => !o.franchise) || s.owned[0];
+    return { ok: true, session: { token, owner: { ...ownerView(self), mobile: s.mobile }, deviceId: s.device.device_id } };
 }
 
 /**
