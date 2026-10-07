@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
 const { Hotel, HotelUser, OwnerDevice } = require("../model");
+const { RuleError } = require("../appv1/core");
 
 // Sessions for the BillerPe Owner App (Plan 1 owners, owner decision
 // 2026-10-05: owner only, LOCAL_SUITE outlets only, no paid gate).
@@ -208,6 +209,39 @@ async function logout(o) {
     return {};
 }
 
+/**
+ * Every phone and browser this owner is logged in on (Owner Dashboard
+ * Profile). Browsers carry a "web-" device id. Scoped to the owner's mobile.
+ */
+async function devices(o) {
+    const rows = await OwnerDevice.findAll({
+        where: { owner_mobile: o.mobile, status: "active" },
+        attributes: ["id", "device_id", "name", "make", "model", "android", "app_version", "last_active", "createdAt"],
+        order: [["last_active", "DESC"]],
+        raw: true,
+    });
+    return {
+        devices: rows.map((d) => ({
+            id: d.id,
+            name: d.name || d.model || "Device",
+            web: String(d.device_id).startsWith("web-"),
+            os: d.android || "",
+            appVersion: d.app_version || "",
+            lastActive: d.last_active,
+            since: d.createdAt,
+            current: d.id === o.device.id,
+        })),
+    };
+}
+
+/** Logs one of the owner's other phones or browsers out (its next call gets 401). */
+async function logoutDevice(o, id) {
+    const n = Number(id) || 0;
+    if (n === o.device.id) throw new RuleError("Use Log out to end this session.");
+    await OwnerDevice.update({ status: "revoked", push_token: null }, { where: { id: n, owner_mobile: o.mobile, status: "active" } });
+    return devices(o);
+}
+
 async function setPushToken(o, token) {
     const t = token ? String(token).slice(0, 255) : null;
     // A phone's token belongs to one login at a time.
@@ -222,4 +256,4 @@ async function setLanguage(o, lang) {
     return { language: l };
 }
 
-module.exports = { login, resume, requireOwner, logout, setPushToken, setLanguage, ownedOutlets, mobile10, verify };
+module.exports = { login, resume, requireOwner, logout, devices, logoutDevice, setPushToken, setLanguage, ownedOutlets, mobile10, verify };

@@ -48,6 +48,8 @@ router.use(auth.requireOwner);
 const HANDLERS = {
     outlets: (o) => outlets(o),
     logout: (o) => auth.logout(o),
+    devices: (o) => auth.devices(o),
+    logoutDevice: (o, id) => auth.logoutDevice(o, id),
     setPushToken: (o, token) => auth.setPushToken(o, token),
     setLanguage: (o, lang) => auth.setLanguage(o, lang),
 

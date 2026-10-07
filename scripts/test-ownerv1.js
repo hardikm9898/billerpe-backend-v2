@@ -163,6 +163,29 @@ async function run() {
     r = await call("setLanguage", t1, "xx");
     check("an unknown language falls back to English", r.result?.language === "en", r);
 
+    console.log("\nlogged-in devices (Owner Dashboard)");
+    r = await post("/login", { mobile: OWNER, password: PW, device: { ...phone("web-browser-1"), name: "Chrome on Windows" } });
+    const tWeb = r.session?.token;
+    check("a browser logs in like a phone", !!tWeb, r);
+    r = await post("/login", { mobile: OWNER, password: PW, device: phone("p3") });
+    const t3dev = r.session?.token;
+    r = await call("devices", tWeb);
+    const devs = r.result?.devices || [];
+    check("devices lists every active phone and browser", devs.length === 4 && devs.filter((d) => d.current).length === 1, devs);
+    check("the browser is marked web and current", devs.find((d) => d.current)?.web === true && devs.find((d) => d.current)?.name === "Chrome on Windows", devs);
+    const otherOwner = await M.OwnerDevice.create({ owner_mobile: "9999999999", hotel_user_id: o1.id, password_fp: "x", device_id: `other-${stamp}`, status: "active" });
+    r = await call("logoutDevice", tWeb, otherOwner.id);
+    check("logoutDevice cannot touch another owner's device", (await M.OwnerDevice.findByPk(otherOwner.id)).status === "active", r);
+    await otherOwner.destroy();
+    r = await call("logoutDevice", tWeb, devs.find((d) => d.current).id);
+    check("logoutDevice refuses this session itself", r.ok === false && /Log out/.test(r.error || ""), r);
+    const p3row = await M.OwnerDevice.findOne({ where: { owner_mobile: OWNER, device_id: "p3" }, raw: true });
+    r = await call("logoutDevice", tWeb, p3row.id);
+    check("logoutDevice logs another phone out", r.ok === true && r.result.devices.length === 3 && !r.result.devices.some((d) => d.id === p3row.id), r);
+    r = await call("outlets", t3dev);
+    check("the phone logged out from the dashboard gets 401", r.status === 401, r);
+    await call("logout", tWeb);
+
     console.log("\nsession end");
     r = await call("logout", t2);
     check("logout answers ok", r.ok === true, r);
