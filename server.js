@@ -126,6 +126,8 @@ app.use(express.static("public"))
 app.use("/app/v1", cors({ origin: true, credentials: false }));
 // BillerPe Owner App: the same kind of WebView client, bearer token only.
 app.use("/owner/v1", cors({ origin: true, credentials: false }));
+// BillerPe SuperAdmin (admin.billerpe.in, sales app): bearer token only.
+app.use("/admin/v1", cors({ origin: true, credentials: false }));
 app.use(
     cors({
         origin: [
@@ -226,6 +228,8 @@ server.listen(PORT, (err) => {
                 "hms_res_settings",
                 // Owner App (Plan 1 owners): schema owned by migration 20261005100000.
                 "owner_devices", "owner_stock_levels", "owner_stock_days", "owner_changes", "owner_alerts", "owner_settings", "owner_offline_periods",
+                // BillerPe SuperAdmin (/admin/v1): schema owned by migration 20261008100000.
+                "adm_roles", "adm_teams", "adm_users", "adm_leaves", "adm_sessions", "adm_audit_log", "adm_settings", "crm_events", "crm_jobs",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',

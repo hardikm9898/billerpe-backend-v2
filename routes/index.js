@@ -60,5 +60,7 @@ Router.use("/crm", crmRoutes)
 // BillerPe POS App (Plan 2) - bearer-token API for CLOUD_APP outlets.
 Router.use("/app/v1", require("../appv1/routes"))
 Router.use("/owner/v1", require("../ownerv1/routes"))
+// BillerPe SuperAdmin (admin.billerpe.in) and the sales app - BillerPe's own staff.
+Router.use("/admin/v1", require("../adminv1/routes"))
 
 module.exports = Router
