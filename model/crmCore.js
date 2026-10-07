@@ -175,7 +175,14 @@ const CrmCall = sequelize.define("crm_call", {
     duration_seconds: { type: T.INTEGER, allowNull: false, defaultValue: 0 },
     answered: { type: T.BOOLEAN, allowNull: false, defaultValue: false },
     outcome_id: { type: T.INTEGER, allowNull: true },
+    // "s3:<key>" (private, played through a short link) or a local path on test servers.
     recording_url: { type: T.STRING(500), allowNull: true },
+    // unknown (typed) | pending (the app is looking for it) | yes | no (not found) | none (not answered).
+    // Migration 20261010100000.
+    recorded: { type: T.STRING(10), allowNull: false, defaultValue: "unknown" },
+    recording_name: { type: T.STRING(200), allowNull: true },
+    recording_size: { type: T.INTEGER, allowNull: true },
+    device_id: { type: T.STRING(64), allowNull: true },
     legacy_id: { type: T.STRING(40), allowNull: true, unique: "crm_calls_legacy" },
 }, { tableName: "crm_calls", indexes: [{ fields: ["lead_id", "started_at"], name: "crm_calls_lead" }, { fields: ["user_id", "started_at"], name: "crm_calls_user" }] });
 

@@ -8,10 +8,15 @@ const perms = require("../permissions");
 async function notify(userId, { type, title, body = "", link = "", ref = null }, opts = {}) {
     if (!userId) return null;
     try {
-        return await AdmNotification.create(
+        const row = await AdmNotification.create(
             { user_id: userId, type: String(type).slice(0, 30), title: String(title).slice(0, 160), body: String(body).slice(0, 400), link: String(link).slice(0, 160), ref: ref ? String(ref).slice(0, 120) : null },
             { transaction: opts.transaction },
         );
+        // Also to the person's phones (sales app), once the change is saved.
+        const push = () => require("../push").toUser(userId, { title: row.title, body: row.body, link: row.link, type: row.type, id: row.id });
+        if (opts.transaction) opts.transaction.afterCommit(() => void push());
+        else void push();
+        return row;
     } catch (e) {
         if (e instanceof UniqueConstraintError) return null;
         throw e;

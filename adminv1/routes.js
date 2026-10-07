@@ -19,6 +19,7 @@ const cadences = require("./crm/cadences");
 const campaigns = require("./crm/campaigns");
 const escalations = require("./crm/escalations");
 const digest = require("./crm/digest");
+const calls = require("./crm/calls");
 const perms = require("./permissions");
 
 // BillerPe SuperAdmin API (admin.billerpe.in and the sales app): /admin/v1.
@@ -84,6 +85,20 @@ setImmediate(() => perms.upgradeRoles().catch((e) => console.error("[adminv1] ro
 /* ------------------------------ everything else ------------------------------ */
 
 router.use(auth.requireStaff);
+
+// The sales app uploads a call recording as the raw request body (they are
+// often larger than a JSON call allows): POST /admin/v1/app/recording/<callId>
+// with Content-Type = the file's type and X-File-Name.
+router.post("/app/recording/:callId", express.raw({ type: () => true, limit: "60mb" }), (req, res) => {
+    calls.upload(req.staff, req.params.callId, req.body, { mime: String(req.headers["content-type"] || "application/octet-stream").split(";")[0], name: decodeURIComponent(String(req.headers["x-file-name"] || "")) }).then(
+        (r) => res.json({ ok: true, result: r }),
+        (err) => {
+            if (err instanceof RuleError) return res.json({ ok: false, error: err.message });
+            console.error("[adminv1] recording:", err);
+            return res.json({ ok: false, error: GENERIC });
+        },
+    );
+});
 
 /** name -> fn(staff, ...args). Every handler checks its own permission (auth.need). */
 const HANDLERS = {
@@ -186,6 +201,14 @@ const HANDLERS = {
     escalations: (s) => escalations.mine(s),
     teamToday: (s) => escalations.teamToday(s),
     digestTemplateText: () => ({ text: digest.TEMPLATE_TEXT }),
+
+    /* sales app (phase 4) */
+    appCalls: (s, input) => calls.sync(s, input || {}),
+    appLookup: (s, number) => calls.lookup(s, number),
+    appLeadCache: (s) => calls.cache(s),
+    appNoRecording: (s, callId) => calls.noRecording(s, callId),
+    appSetPush: (s, token) => calls.setPush(s, token),
+    callRecording: (s, callId) => calls.play(s, callId),
 
     /* worker */
     workerStatus: (s) => {

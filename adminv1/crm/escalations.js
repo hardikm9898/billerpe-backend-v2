@@ -190,6 +190,7 @@ async function teamToday(s) {
     const workDay = wh.days.includes(moment(now).tz(TZ).day());
     const { start } = todayRange(now);
     const out = [];
+    const callStats = await require("./calls").stats(people.map((p) => p.id), start, new Date(now.getTime() + 60000));
     for (const p of people) {
         const open = await CrmLeadV2.count({ where: { owner_id: p.id, stage_id: c.openStageIds, deleted_at: null, merged_into_id: null } });
         const tasksOpen = await CrmTaskV2.count({ where: { owner_id: p.id, status: "open", due_at: { [Op.lt]: now } } });
@@ -199,7 +200,7 @@ async function teamToday(s) {
         const leave = await AdmLeave.findOne({ where: { user_id: p.id, from_date: { [Op.lte]: today }, to_date: { [Op.gte]: today } }, raw: true });
         const onShift = workDay && hhmm >= (p.shift_start || wh.start) && hhmm < (p.shift_end || wh.end);
         const outcomes = await CrmActivity.count({ where: { actor_id: p.id, type: "outcome", at: { [Op.gte]: start } } });
-        const calls = await CrmCall.findAll({ where: { user_id: p.id, started_at: { [Op.gte]: start } }, attributes: [[sequelize.fn("COUNT", sequelize.col("id")), "n"], [sequelize.fn("SUM", sequelize.col("duration_seconds")), "secs"]], raw: true });
+        const cs = callStats.get(p.id) || { calls: 0, talkSeconds: 0, recorded: 0, toRecord: 0 };
         const firsts = await CrmLeadV2.findAll({ where: { owner_id: p.id, first_contact_at: { [Op.gte]: start } }, attributes: ["first_contact_at", "response_due_at"], raw: true });
         const onTime = firsts.filter((f) => !f.response_due_at || new Date(f.first_contact_at) <= new Date(f.response_due_at)).length;
         const esc = await CrmEscalation.count({ where: { owner_id: p.id, status: "open" } });
@@ -209,7 +210,7 @@ async function teamToday(s) {
             shift: `${p.shift_start || wh.start} to ${p.shift_end || wh.end}`,
             status: leave ? "leave" : brk ? "break" : !onShift ? "off" : (await canTakeLeads(p.id)) ? "available" : "off",
             breakKind: brk ? brk.kind : null, breakUntil: brk ? brk.ends_at : null,
-            inRotation: rot.has(p.id), open, overdue: tasksOpen, outcomes, calls: Number(calls[0]?.n) || 0, talkSeconds: Number(calls[0]?.secs) || 0,
+            inRotation: rot.has(p.id), open, overdue: tasksOpen, outcomes, calls: cs.calls, talkSeconds: cs.talkSeconds, recorded: cs.recorded, toRecord: cs.toRecord,
             firstContacts: firsts.length, firstContactsOnTime: onTime, escalations: esc, newToday,
         });
     }

@@ -202,7 +202,7 @@ async function detail(s, id) {
         },
         tasks: tasks.map((x) => ({ id: x.id, type: x.type, note: x.note, dueAt: x.due_at, status: x.status, owner: x.owner_id ? who.get(x.owner_id) || "" : "", doneAt: x.done_at, outcome: x.outcome_id ? c.outcomeById.get(x.outcome_id)?.name || "" : "", origin: x.origin })),
         timeline: acts.map((a) => ({ id: a.id, type: a.type, at: a.at, actor: a.actor_id ? who.get(a.actor_id) || `#${a.actor_id}` : "System", outcome: a.outcome_id ? c.outcomeById.get(a.outcome_id)?.name || "" : "", body: a.body, data: parse(a.data) })),
-        calls: calls.map((x) => ({ id: x.id, at: x.started_at, by: x.user_id ? who.get(x.user_id) || "" : "", direction: x.direction, seconds: x.duration_seconds, answered: !!x.answered, source: x.source, recording: x.recording_url, outcome: x.outcome_id ? c.outcomeById.get(x.outcome_id)?.name || "" : "" })),
+        calls: calls.map((x) => ({ id: x.id, at: x.started_at, by: x.user_id ? who.get(x.user_id) || "" : "", direction: x.direction, seconds: x.duration_seconds, answered: !!x.answered, source: x.source, recorded: x.recorded, hasRecording: !!x.recording_url, outcome: x.outcome_id ? c.outcomeById.get(x.outcome_id)?.name || "" : "" })),
         inquiries: inquiries.map((q) => ({ id: q.id, source: q.source, at: q.received_at, message: q.message, detail: parse(q.source_detail) })),
         duplicates: dups.map((d) => ({ id: d.id, name: d.name, stage: c.stageById.get(d.stage_id)?.name || "", owner: d.owner_id ? who.get(d.owner_id) || "" : "", createdAt: d.createdAt, mergedIntoId: d.merged_into_id })),
         whatsapp: await chatSummary(l),
@@ -366,7 +366,11 @@ async function logOutcome(s, id, input = {}) {
 
         // the call, when this was a call (call: false = a WhatsApp chat or a visit)
         const wasCall = input.call === false ? false : input.call ? true : !task || task.type === "call";
-        if (wasCall) {
+        // The sales app already logged the call from the phone's call log: the outcome goes on it.
+        const appCall = input.callId ? await CrmCall.findOne({ where: { id: Number(input.callId) || 0, lead_id: lead.id }, transaction: t }) : null;
+        if (input.callId && !appCall) throw new RuleError("That call is not on this lead.");
+        if (appCall) await appCall.update({ outcome_id: outcome.id }, { transaction: t });
+        else if (wasCall) {
             const call = input.call && typeof input.call === "object" ? input.call : {};
             const secs = Math.max(0, Math.min(36000, Number(call.seconds) || 0));
             await CrmCall.create({ lead_id: lead.id, user_id: s.user.id, source: "typed", direction: call.direction === "in" ? "in" : "out", phone: lead.phone, started_at: call.at ? new Date(call.at) : now, duration_seconds: secs, answered: !!outcome.reached, outcome_id: outcome.id }, { transaction: t });
