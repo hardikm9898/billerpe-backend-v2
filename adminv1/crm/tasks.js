@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const { CrmLeadV2, CrmTaskV2, CrmActivity, CrmCall } = require("../../model");
+const { CrmLeadV2, CrmTaskV2, CrmActivity, CrmCall, CrmWaChat, CrmWaMessage } = require("../../model");
 const { NEXT_LABEL } = require("./config");
 
 // Tasks are the single list of next actions (design doc: Data model). A
@@ -35,7 +35,11 @@ async function scoreFacts(leadId, t) {
     const demo = await CrmActivity.count({ where: { lead_id: leadId, type: "outcome", data: { [Op.like]: '%"demo_done"%' } }, transaction: t });
     // Work by a person moved from the old CRM (notes, status changes, calls) counts as contact too.
     const worked = await CrmActivity.count({ where: { lead_id: leadId, actor_id: { [Op.ne]: null }, legacy_id: { [Op.like]: "lb1a:%" }, type: ["note", "stage", "call"] }, transaction: t });
-    return { reached: reached + replies + Math.min(worked, 3), demoDone: demo > 0 };
+    // Writing to us on WhatsApp counts as interest, and as recent contact.
+    const chats = (await CrmWaChat.findAll({ where: { lead_id: leadId }, attributes: ["id"], raw: true, transaction: t })).map((c) => c.id);
+    const waIn = chats.length ? await CrmWaMessage.count({ where: { chat_id: chats, direction: "in", kind: { [Op.ne]: "reaction" } }, transaction: t }) : 0;
+    const lastIn = chats.length ? await CrmWaMessage.max("at", { where: { chat_id: chats, direction: "in" }, transaction: t }) : null;
+    return { reached: reached + replies + Math.min(worked, 3), demoDone: demo > 0, waReplies: waIn, lastReplyAt: lastIn || null };
 }
 
 module.exports = { syncNext, addTask, cancelOpen, openCount, scoreFacts };

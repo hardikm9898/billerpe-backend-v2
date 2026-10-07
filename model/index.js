@@ -929,6 +929,7 @@ const { AppDevice, AppClientKey, AppQueueEntry, AppAlert } = require("./appV1");
 const { OwnerDevice, OwnerStockLevel, OwnerStockDay, OwnerChange, OwnerAlert, OwnerSetting, OwnerOfflinePeriod, OwnerOutletLink } = require("./ownerApp");
 const { AdmRole, AdmTeam, AdmUser, AdmLeave, AdmSession, AdmAuditLog, AdmSetting, CrmEvent, CrmJob } = require("./admin");
 const { CrmStage, CrmLostReason, CrmOutcome, CrmLeadV2, CrmInquiry, CrmTaskV2, CrmActivity, CrmCall, CrmAssignment, AdmNotification, AdmBreak } = require("./crmCore");
+const { CrmWaChat, CrmWaMessage, CrmWaTemplate, CrmWaOptout, CrmRule, CrmRuleRun, CrmCadence, CrmCadenceStep, CrmCadenceEnrollment, CrmCampaign, CrmCampaignRcpt, CrmEscalation } = require("./crmAuto");
 const StockMovement = require("./stockMovement");
 StockMovement.belongsTo(RawMaterial, { foreignKey: "raw_material_id" });
 StockMovement.belongsTo(HotelUser, { foreignKey: "user_id" });
@@ -972,6 +973,19 @@ module.exports = {
     CrmAssignment,
     AdmNotification,
     AdmBreak,
+    // SuperAdmin inbox and automation (phase 3)
+    CrmWaChat,
+    CrmWaMessage,
+    CrmWaTemplate,
+    CrmWaOptout,
+    CrmRule,
+    CrmRuleRun,
+    CrmCadence,
+    CrmCadenceStep,
+    CrmCadenceEnrollment,
+    CrmCampaign,
+    CrmCampaignRcpt,
+    CrmEscalation,
 
     RestaurantSetting,
     UserSession,

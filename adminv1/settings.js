@@ -3,6 +3,7 @@ const { sequelize, AdmSetting, AdmAuditLog, AdmUser } = require("../model");
 const { RuleError } = require("../appv1/core");
 const audit = require("./audit");
 const { need } = require("./auth");
+const aiDefaults = require("./crm/aiDefaults");
 
 // Panel settings (Settings screen). Each key holds one JSON object; the
 // defaults are the owner's answers from the design doc (7 Oct 2026).
@@ -11,7 +12,9 @@ const DEFAULTS = {
     // Mon-Sat (1-6, Sunday = 0 off), 10:30 to 19:00, lunch at any time.
     working_hours: { days: [1, 2, 3, 4, 5, 6], start: "10:30", end: "19:00", lunchMinutes: 60, teaBreaks: 2, teaMinutes: 15 },
     // Working minutes. Salesperson -> manager -> admin.
-    timers: { firstContactMinutes: 15, managerActMinutes: 15, overdueToManagerMinutes: 60, overdueToAdminMinutes: 60 },
+    // Leads that arrive at night or on Sunday wait in a morning queue that must be
+    // cleared in the first working hour (two on Monday, which carries Sunday's leads).
+    timers: { firstContactMinutes: 15, managerActMinutes: 15, overdueToManagerMinutes: 60, overdueToAdminMinutes: 60, morningQueueMinutes: 60, mondayMorningMinutes: 120 },
     // BillerPe's own GST invoices. The GSTIN is a demo one until replaced.
     company: {
         name: "BillerPe",
@@ -27,6 +30,11 @@ const DEFAULTS = {
     },
     // AI replies all day; after a person replies in a chat the AI stays quiet there.
     whatsapp_ai: { aiAllDay: true, aiQuietHoursAfterHuman: 24, templateFrom: "09:00", templateTo: "21:00" },
+    // The WhatsApp AI assistant: on/off, model, script and knowledge (crm/aiDefaults.js).
+    ai_assistant: aiDefaults.DEFAULTS,
+    // 9:30 summary for every salesperson: in the panel, and on WhatsApp once the
+    // staff template is approved by Meta.
+    digest: { enabled: true, time: "09:30", whatsapp: true, templateName: "staff_daily_digest" },
 };
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -56,6 +64,8 @@ const VALIDATE = {
         managerActMinutes: int(v.managerActMinutes, 1, 600, "Manager must act within"),
         overdueToManagerMinutes: int(v.overdueToManagerMinutes, 1, 1440, "Overdue to manager"),
         overdueToAdminMinutes: int(v.overdueToAdminMinutes, 1, 1440, "Overdue to admin"),
+        morningQueueMinutes: int(v.morningQueueMinutes ?? DEFAULTS.timers.morningQueueMinutes, 1, 600, "Morning queue"),
+        mondayMorningMinutes: int(v.mondayMorningMinutes ?? DEFAULTS.timers.mondayMorningMinutes, 1, 600, "Monday morning queue"),
     }),
     company: (v) => {
         const gstin = text(v.gstin, 15).toUpperCase();
@@ -86,6 +96,32 @@ const VALIDATE = {
         if (templateFrom >= templateTo) throw new RuleError("Template sending must end after it starts.");
         return { aiAllDay: v.aiAllDay !== false, aiQuietHoursAfterHuman: int(v.aiQuietHoursAfterHuman, 0, 168, "AI quiet hours"), templateFrom, templateTo };
     },
+    ai_assistant: (v) => {
+        const model = text(v.model, 60) || aiDefaults.DEFAULTS.model;
+        if (!/^claude-[a-z0-9.-]+$/.test(model)) throw new RuleError("Write a Claude model id, for example claude-haiku-4-5.");
+        const instructions = text(v.instructions, 8000);
+        if (instructions.length < 40) throw new RuleError("Write the AI's instructions (at least a few lines).");
+        const knowledge = (Array.isArray(v.knowledge) ? v.knowledge : [])
+            .map((k) => ({ topic: text(k && k.topic, 80), answer: text(k && k.answer, 3000) }))
+            .filter((k) => k.topic || k.answer);
+        if (knowledge.some((k) => !k.topic || !k.answer)) throw new RuleError("Every knowledge entry needs a topic and an answer.");
+        if (knowledge.length > 60) throw new RuleError("Keep the knowledge to 60 entries or fewer.");
+        return {
+            enabled: v.enabled !== false,
+            model,
+            delaySeconds: int(v.delaySeconds ?? 12, 0, 120, "Wait before replying"),
+            maxRepliesPerChatPerDay: int(v.maxRepliesPerChatPerDay ?? 25, 1, 200, "AI replies per chat per day"),
+            maxRepliesPerDay: int(v.maxRepliesPerDay ?? 1500, 1, 20000, "AI replies per day"),
+            instructions,
+            knowledge,
+        };
+    },
+    digest: (v) => ({
+        enabled: v.enabled !== false,
+        time: time(v.time, "Digest time"),
+        whatsapp: v.whatsapp !== false,
+        templateName: text(v.templateName, 80) || "staff_daily_digest",
+    }),
 };
 
 async function read(key) {

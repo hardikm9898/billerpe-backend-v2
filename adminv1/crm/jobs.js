@@ -29,8 +29,9 @@ async function sweep({ only = null } = {}) {
     const lostIds = c.stages.filter((s) => s.kind === "lost").map((s) => s.id);
     const done = { revisited: 0, repaired: 0, reassigned: 0, assigned: 0 };
 
-    // 1. revisits
-    const due = await CrmLeadV2.findAll({ where: { ...scopeIds, stage_id: lostIds, revisit_at: { [Op.lte]: now }, merged_into_id: null, deleted_at: null }, order: [["revisit_at", "ASC"]], limit: LIMIT });
+    // 1. revisits (built-in rule "Not now comes back", can be switched off)
+    const revisitOn = await require("./automation").ruleOn("revisit");
+    const due = !revisitOn ? [] : await CrmLeadV2.findAll({ where: { ...scopeIds, stage_id: lostIds, revisit_at: { [Op.lte]: now }, merged_into_id: null, deleted_at: null }, order: [["revisit_at", "ASC"]], limit: LIMIT });
     for (const lead of due) {
         await sequelize.transaction(async (t) => {
             const reason = lead.lost_reason_id ? c.reasonById.get(lead.lost_reason_id) : null;

@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const { sequelize, CrmLeadV2, CrmInquiry, CrmTaskV2, CrmActivity, CrmCall, CrmAssignment, AdmUser } = require("../../model");
+const { sequelize, CrmLeadV2, CrmInquiry, CrmTaskV2, CrmActivity, CrmCall, CrmAssignment, AdmUser, CrmWaChat, CrmEscalation } = require("../../model");
 const { RuleError } = require("../../appv1/core");
 const queue = require("../../services/admin/queue");
 const { need } = require("../auth");
@@ -9,7 +9,7 @@ const { syncNext, addTask, cancelOpen, openCount, scoreFacts } = require("./task
 const { scoreLead, band } = require("./score");
 const { assign, pickOwner } = require("./assign");
 const { notify } = require("./notify");
-const { normalizePhone, workingHours, addWorkingMinutes, txt, intOrNull, json, parse, moment, TZ } = require("./util");
+const { normalizePhone, firstContactDue, txt, intOrNull, json, parse, moment, TZ } = require("./util");
 
 // Leads: list, detail, create, edit, outcome (the heart of the CRM: every
 // call or chat ends with an outcome that sets the next action), stage moves,
@@ -205,7 +205,18 @@ async function detail(s, id) {
         calls: calls.map((x) => ({ id: x.id, at: x.started_at, by: x.user_id ? who.get(x.user_id) || "" : "", direction: x.direction, seconds: x.duration_seconds, answered: !!x.answered, source: x.source, recording: x.recording_url, outcome: x.outcome_id ? c.outcomeById.get(x.outcome_id)?.name || "" : "" })),
         inquiries: inquiries.map((q) => ({ id: q.id, source: q.source, at: q.received_at, message: q.message, detail: parse(q.source_detail) })),
         duplicates: dups.map((d) => ({ id: d.id, name: d.name, stage: c.stageById.get(d.stage_id)?.name || "", owner: d.owner_id ? who.get(d.owner_id) || "" : "", createdAt: d.createdAt, mergedIntoId: d.merged_into_id })),
+        whatsapp: await chatSummary(l),
+        cadences: await require("./cadences").forLead(l.id),
+        escalations: (await CrmEscalation.findAll({ where: { lead_id: l.id, status: "open" }, raw: true })).map((e) => ({ id: e.id, kind: e.kind, level: e.level, raisedAt: e.raised_at, nextLevelAt: e.next_level_at })),
     };
+}
+
+/** The lead's WhatsApp chat, for the lead page. */
+async function chatSummary(l) {
+    const chat = l.phone_key && l.phone_key.length >= 10 ? await CrmWaChat.findOne({ where: { [Op.or]: [{ lead_id: l.id }, { phone_key: l.phone_key }] }, order: [["last_message_at", "DESC"]] }) : null;
+    if (!chat) return null;
+    const wa = require("./wa");
+    return { chatId: chat.id, preview: chat.preview, lastAt: chat.last_message_at, lastInAt: chat.last_in_at, needsReply: !!chat.needs_reply, unread: chat.unread, windowOpen: wa.windowOpen(chat), optedOut: await wa.optedOut(chat.phone_key) };
 }
 
 /* ------------------------------ create / edit ------------------------------ */
@@ -256,13 +267,13 @@ async function findByPhone(key, t) {
  */
 async function createLead({ fields, phone, source, sourceDetail = null, actorId = null, ownerId, message = "", at = new Date() }, t) {
     const c = await config.load();
-    const wh = await workingHours();
-    const responseDue = addWorkingMinutes(wh, at, (await require("../settings").read("timers")).firstContactMinutes);
+    const responseDue = await firstContactDue(at);
     const lead = await CrmLeadV2.create(
         { ...fields, phone: phone.phone, phone_key: phone.key, phone_valid: phone.valid, source, source_detail: json(sourceDetail), stage_id: c.stageByKey.get("new").id, owner_id: null, response_due_at: responseDue, last_activity_at: null, created_by: actorId },
         { transaction: t },
     );
     await activity(lead.id, "created", actorId, message ? `Lead from ${source}: ${message}` : `Lead from ${source}`, { source, sourceDetail }, t);
+    if (phone.valid) await require("./wa").linkLead(phone.key, lead.id, t);
     let owner = ownerId;
     let reason = actorId ? "Added by hand" : "";
     if (owner === undefined) {
@@ -564,6 +575,8 @@ async function merge(s, fromId, intoId) {
         await CrmInquiry.update({ lead_id: into.id }, { where: { lead_id: from.id }, transaction: t });
         await CrmCall.update({ lead_id: into.id }, { where: { lead_id: from.id }, transaction: t });
         await CrmTaskV2.update({ lead_id: into.id, owner_id: into.owner_id }, { where: { lead_id: from.id, status: "open" }, transaction: t });
+        await CrmWaChat.update({ lead_id: into.id, kind: "lead" }, { where: { lead_id: from.id }, transaction: t });
+        await require("./cadences").stopForLead(from.id, "merged", null, t);
         const dup = c.reasonByKey.get("duplicate");
         const lostStage = c.stages.find((x) => x.kind === "lost");
         await from.update({ merged_into_id: into.id, stage_id: lostStage.id, lost_reason_id: dup ? dup.id : null, closed_at: new Date(), revisit_at: null }, { transaction: t });

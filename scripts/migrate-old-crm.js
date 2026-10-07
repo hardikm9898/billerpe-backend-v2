@@ -2,7 +2,7 @@
 // (local_billerpe crm_lead_msts) into the new sales CRM (crm_leads ...).
 //
 //   node scripts/migrate-old-crm.js [--source-env .env.production] [--source-db live_backup1]
-//        [--v2-db local_billerpe | --v2-db none] [--start YYYY-MM-DD] [--create-staff] [--commit]
+//        [--v2-db local_billerpe | --v2-db none] [--start YYYY-MM-DD (default: next working day)] [--create-staff] [--commit]
 //
 // Reads the source READ-ONLY (its own connection, SET SESSION TRANSACTION
 // READ ONLY). Writes to the database of the current .env (DATABASE_NAME).
@@ -20,10 +20,12 @@
 //   --create-staff adds the missing ones (temporary passwords printed once).
 // - Next actions: open leads touched by a person in the last 30 days get a
 //   call, spread over the coming working days (30 per person per day, most
-//   advanced first); older or never-touched ones get a WhatsApp revival task
-//   (60 per person per day). An open migrated task in the future is kept.
-// - Not moved here: WhatsApp chats, drips and campaigns (they move with the
-//   WhatsApp inbox in phase 3).
+//   advanced first); older or never-touched ones join the "Revival of old
+//   leads" cadence (60 per person per day start) with a call task to decide
+//   after it ends. An open migrated task in the future is kept.
+// - WhatsApp (phase 3): the inbox (wa_agent_conversations / messages), the
+//   approved templates and the campaigns with their recipients. Old drips
+//   are not moved (they stopped on 8 Sep 2026; cadences replace them).
 
 const path = require("path");
 const args = process.argv.slice(2);
@@ -51,6 +53,8 @@ const { normalizePhone, moment, TZ } = require("../adminv1/crm/util");
 const settings = require("../adminv1/settings");
 const { syncNext } = require("../adminv1/crm/tasks");
 const { recalc } = require("../adminv1/crm/leads");
+const cadences = require("../adminv1/crm/cadences");
+const wa = require("../adminv1/crm/wa");
 
 const STATUS = {
     NEW: ["new"], ASSIGNED: ["new"],
@@ -88,9 +92,155 @@ async function readSource() {
         assignments: await q(`SELECT * FROM \`${db}\`.crm_lead_assignment_history_msts ORDER BY id`),
         employees: await q(`SELECT e.*, u.name AS user_name, u.number AS user_number FROM \`${db}\`.crm_employee_profile_msts e LEFT JOIN \`${db}\`.hms_superAdmin_users u ON u.id = e.superAdmin_user_id`),
         v2: V2_DB === "none" ? [] : await q(`SELECT * FROM \`${V2_DB}\`.crm_lead_msts WHERE deleted = 0 ORDER BY id`),
+        waChats: await q(`SELECT * FROM \`${db}\`.wa_agent_conversations ORDER BY id`),
+        waMessages: await q(`SELECT * FROM \`${db}\`.wa_agent_messages ORDER BY id`),
+        waTemplates: await q(`SELECT * FROM \`${db}\`.hms_whatsapp_template_msts ORDER BY id`),
+        campaigns: await q(`SELECT * FROM \`${db}\`.crm_whatsapp_campaign_msts ORDER BY id`),
+        recipients: await q(`SELECT * FROM \`${db}\`.crm_campaign_recipient_msts ORDER BY id`),
     };
     await c.end();
     return src;
+}
+
+/* ---------- WhatsApp (phase 3) ---------- */
+
+const msgKind = (t) => (["text", "image", "document", "audio", "video", "template", "reaction", "sticker", "location"].includes(t) ? t : "text");
+const tsDate = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? new Date(n < 1e12 ? n * 1000 : n) : null;
+};
+const jsonArr = (v) => {
+    if (Array.isArray(v)) return v;
+    try {
+        const j = JSON.parse(v || "[]");
+        return Array.isArray(j) ? j : [];
+    } catch {
+        return [];
+    }
+};
+
+function planWhatsApp(src) {
+    const lastBy = new Map();
+    for (const m of src.waMessages) lastBy.set(normalizePhone(m.phone).key, m);
+    const lastWeek = Date.now() - 7 * 86400000;
+    let waiting = 0;
+    for (const m of lastBy.values()) if (m.direction === "inbound" && (tsDate(m.ts) || 0) > lastWeek) waiting += 1;
+    log(`  WhatsApp: ${src.waChats.length} chats (${waiting} waiting for a reply from the last 7 days), ${src.waMessages.length} messages, templates ${src.waTemplates.map((t) => t.name).join(", ")}, ${src.campaigns.length} campaigns`);
+}
+
+async function writeTemplates(src) {
+    const map = new Map();
+    for (const t of src.waTemplates) {
+        const legacy = `lb1tp:${t.id}`;
+        let row = (await M.CrmWaTemplate.findOne({ where: { legacy_id: legacy } })) || (await M.CrmWaTemplate.findOne({ where: { name: t.name, language: "en" } }));
+        const params = jsonArr(t.params).map((p) => ({ label: p.label || p.name || "Value", source: p.name === "name" ? "lead.name" : "custom", value: "" }));
+        if (!row) row = await M.CrmWaTemplate.create({ name: t.name, language: "en", category: "marketing", body: null, params: JSON.stringify(params), header_image: t.default_image ? String(t.default_image).replace(/ /g, "%20") : null, active: !!t.active && t.name !== "apitest", legacy_id: legacy });
+        else if (!row.legacy_id) await row.update({ legacy_id: legacy, header_image: row.header_image || t.default_image || null });
+        map.set(t.id, row.id);
+    }
+    log(`templates: ${map.size} (paste each approved text into Inbox > Templates so the panel can show it)`);
+    return map;
+}
+
+async function writeWhatsApp(src, tplMap) {
+    const byPhone = new Map();
+    for (const m of src.waMessages) {
+        const key = normalizePhone(m.phone).key;
+        if (!byPhone.has(key)) byPhone.set(key, []);
+        byPhone.get(key).push(m);
+    }
+    const convByKey = new Map(src.waChats.map((x) => [normalizePhone(x.phone).key, x]));
+    const keys = [...new Set([...convByKey.keys(), ...byPhone.keys()])].filter((k) => k && k.length === 10);
+    const lastWeek = Date.now() - 7 * 86400000;
+    let chats = 0;
+    let msgs = 0;
+    for (const key of keys) {
+        const conv = convByKey.get(key);
+        const list = (byPhone.get(key) || []).slice().sort((a, b) => (tsDate(a.ts) || 0) - (tsDate(b.ts) || 0) || a.id - b.id);
+        const n = wa.waNumber(conv ? conv.phone : list[0].phone);
+        if (!n) continue;
+        const legacy = conv ? `lb1w:${conv.id}` : null;
+        let chat = await M.CrmWaChat.findOne({ where: { phone_key: key } });
+        if (!chat) {
+            const lead = await M.CrmLeadV2.findOne({ where: { phone_key: key, merged_into_id: null, deleted_at: null }, order: [["id", "DESC"]] });
+            const who = lead ? { kind: "lead", leadId: lead.id } : (await wa.classify(key)) || { kind: "other" };
+            const name = conv && conv.name && String(conv.name).replace(/\D/g, "") !== String(conv.phone).replace(/\D/g, "") ? String(conv.name).slice(0, 120) : "";
+            chat = await M.CrmWaChat.create({ phone: n.digits, phone_key: key, name, kind: who.kind, label: who.label || "", lead_id: who.leadId || null, hotel_id: who.hotelId || null, legacy_id: legacy });
+            chats += 1;
+        } else if (legacy && !chat.legacy_id) await chat.update({ legacy_id: legacy });
+        const rows = list.map((m) => {
+            const out = m.direction !== "inbound";
+            const kind = msgKind(m.type);
+            const text = String(m.text || "");
+            return {
+                chat_id: chat.id,
+                wa_id: /^wamid\./.test(m.messageId || "") ? String(m.messageId).slice(0, 120) : null,
+                direction: out ? "out" : "in",
+                kind,
+                body: String(m.caption || text || "").slice(0, 4000) || null,
+                template_name: kind === "template" ? (text.match(/\[Template: ([^\]]+)\]/) || [])[1] || null : null,
+                media_url: m.media_url || null,
+                mime_type: m.mime_type || null,
+                file_name: m.file_name ? String(m.file_name).slice(0, 200) : null,
+                sender: !out ? "customer" : m.is_ai ? "ai" : kind === "template" ? "rule" : "user",
+                status: out ? String(m.status || "sent").slice(0, 10) : "received",
+                at: tsDate(m.ts) || m.createdAt,
+                legacy_id: `lb1m:${m.id}`,
+                createdAt: m.createdAt || new Date(),
+            };
+        });
+        for (let i = 0; i < rows.length; i += 500) {
+            const before = await M.CrmWaMessage.count({ where: { chat_id: chat.id } });
+            await M.CrmWaMessage.bulkCreate(rows.slice(i, i + 500), { ignoreDuplicates: true });
+            msgs += (await M.CrmWaMessage.count({ where: { chat_id: chat.id } })) - before;
+        }
+        // The chat's summary from everything it now holds.
+        const last = await M.CrmWaMessage.findOne({ where: { chat_id: chat.id, kind: { [Op.ne]: "note" } }, order: [["at", "DESC"], ["id", "DESC"]] });
+        const lastIn = await M.CrmWaMessage.max("at", { where: { chat_id: chat.id, direction: "in" } });
+        const lastOut = await M.CrmWaMessage.max("at", { where: { chat_id: chat.id, direction: "out" } });
+        const waiting = !!last && last.direction === "in" && new Date(last.at).getTime() > lastWeek;
+        await chat.update({
+            last_in_at: lastIn || null,
+            last_out_at: lastOut || null,
+            last_message_at: last ? last.at : chat.last_message_at,
+            preview: String((last && (last.body || `[${last.kind}]`)) || "").replace(/\s+/g, " ").slice(0, 200),
+            needs_reply: waiting,
+            unread: waiting ? Math.max(1, Number(conv && conv.unread) || 1) : 0,
+        });
+    }
+
+    // Campaigns and who got them.
+    const leadOfOld = async (oldLeadId) => {
+        const inq = oldLeadId ? await M.CrmInquiry.findOne({ where: { legacy_id: `lb1:${oldLeadId}` }, attributes: ["lead_id"], raw: true }) : null;
+        if (!inq) return null;
+        const l = await M.CrmLeadV2.findByPk(inq.lead_id, { attributes: ["id", "merged_into_id"], raw: true });
+        return l ? l.merged_into_id || l.id : null;
+    };
+    let camps = 0;
+    for (const cp of src.campaigns) {
+        const legacy = `lb1cp:${cp.id}`;
+        let row = await M.CrmCampaign.findOne({ where: { legacy_id: legacy } });
+        if (!row) {
+            row = await M.CrmCampaign.create({
+                name: String(cp.name || `Old campaign ${cp.id}`).slice(0, 120), template_id: cp.template_id ? tplMap.get(cp.template_id) || null : null, params: JSON.stringify(jsonArr(cp.param_values)),
+                audience: JSON.stringify({ old: cp.lead_filter || null, message: cp.message || null }), status: "done", scheduled_at: cp.scheduled_at || cp.createdAt, started_at: cp.createdAt, finished_at: cp.updatedAt,
+                total: cp.total_recipients || 0, legacy_id: legacy, createdAt: cp.createdAt,
+            });
+            camps += 1;
+        }
+        const rcpts = [];
+        for (const r of src.recipients.filter((x) => x.campaign_id === cp.id)) {
+            const p = normalizePhone(r.phone_number);
+            const nn = wa.waNumber(r.phone_number);
+            rcpts.push({
+                campaign_id: row.id, lead_id: await leadOfOld(r.lead_id), phone_key: p.key || `x${r.id}`, phone: nn ? nn.digits : String(r.phone_number || "").replace(/\D/g, "").slice(0, 20),
+                status: ["sent", "delivered", "read", "failed"].includes(r.status) ? r.status : r.status === "pending" ? "skipped" : "sent", error: r.error_message ? String(r.error_message).slice(0, 300) : null,
+                sent_at: r.sent_at, delivered_at: r.delivered_at, read_at: r.read_at, legacy_id: `lb1cr:${r.id}`,
+            });
+        }
+        for (let i = 0; i < rcpts.length; i += 500) await M.CrmCampaignRcpt.bulkCreate(rcpts.slice(i, i + 500), { ignoreDuplicates: true });
+    }
+    log(`WhatsApp: ${chats} new chats, ${msgs} messages written (a re-run writes 0), ${camps} campaigns`);
 }
 
 async function main() {
@@ -100,6 +250,7 @@ async function main() {
     const c = await config.load(true);
     const src = await readSource();
     log(`read: ${src.leads.length} old leads, ${src.v2.length} v2 leads, ${src.activities.length} activities, ${src.tasks.length} tasks, ${src.demos.length} demos, ${src.calls.length} calls, ${src.assignments.length} assignments, ${src.employees.length} staff`);
+    log(`      WhatsApp: ${src.waChats.length} chats, ${src.waMessages.length} messages, ${src.waTemplates.length} templates, ${src.campaigns.length} campaigns with ${src.recipients.length} recipients`);
 
     /* ---------- staff ---------- */
     const roles = Object.fromEntries((await M.AdmRole.findAll({ raw: true })).map((r) => [r.name, r.id]));
@@ -159,8 +310,16 @@ async function main() {
         tasksBy.get(t.lead_id).push(t);
     }
 
-    const start = opt("start") ? moment.tz(opt("start"), "YYYY-MM-DD", TZ) : moment().tz(TZ).startOf("day");
     const wh = await settings.read("working_hours");
+    // Default: the next working day, so nothing planned is already overdue when
+    // the script runs (overdue tasks would escalate to managers at once).
+    const nextWorkDay = () => {
+        const d = moment().tz(TZ).startOf("day").add(1, "day");
+        while (!wh.days.includes(d.day())) d.add(1, "day");
+        return d;
+    };
+    const start = opt("start") ? moment.tz(opt("start"), "YYYY-MM-DD", TZ) : nextWorkDay();
+    log(`plan starts ${start.format("ddd D MMM YYYY")}${opt("start") ? "" : " (the next working day; --start YYYY-MM-DD to change)"}`);
     const report = { leads: 0, joinedDuplicates: 0, v2Joined: 0, invalidPhones: 0, stages: {}, owners: {}, already: 0, plan: { call: 0, revival: 0, kept: 0 }, revisitSpread: 0 };
     const planned = [];
 
@@ -225,7 +384,10 @@ async function main() {
                 ci += 1;
                 report.plan.call += 1;
             } else {
-                p.next = { type: "whatsapp", dueAt: slotTime(Math.floor(ri / 60), ri % 60, 60), note: "Revival: send the revival message (old lead)" };
+                // The revival cadence sends three WhatsApp messages over 14 days; a reply
+                // becomes a call task. The lead's own next action is the decision after it.
+                const day = Math.floor(ri / 60);
+                p.next = { type: "call", dueAt: slotTime(Math.min(day + 13, workdays.length - 1), ri % 60, 60), note: "Revival cadence ended: call once, or close the lead", revivalStart: slotTime(day, ri % 60, 60) };
                 ri += 1;
                 report.plan.revival += 1;
             }
@@ -237,17 +399,24 @@ async function main() {
     log(`  leads after joining duplicates: ${report.leads} (${report.joinedDuplicates} duplicate rows joined; ${report.v2Joined} v2 website leads matched old ones; ${report.invalidPhones} with a number that cannot be called)`);
     log(`  stages: ${Object.entries(report.stages).map(([k, v]) => `${k} ${v}`).join(", ")}`);
     log(`  owners: ${Object.entries(report.owners).map(([k, v]) => `${k} ${v}`).join(", ")}`);
-    log(`  next actions: ${report.plan.call} calls, ${report.plan.revival} WhatsApp revivals, ${report.plan.kept} kept from the old CRM`);
+    log(`  next actions: ${report.plan.call} calls, ${report.plan.revival} into the revival cadence, ${report.plan.kept} kept from the old CRM`);
     for (const [k, list] of byOwner) {
-        const calls = list.filter((p) => p.next && p.next.type === "call").length;
-        const rev = list.filter((p) => p.next && p.next.type === "whatsapp").length;
+        const calls = list.filter((p) => p.next && p.next.type === "call" && !p.next.revivalStart).length;
+        const rev = list.filter((p) => p.next && p.next.revivalStart).length;
         const name = await nameOf(Number(k));
-        log(`    ${name}: ${calls} calls until ${lastDay(calls, 30)}, ${rev} revivals until ${lastDay(rev, 60)}`);
+        log(`    ${name}: ${calls} calls until ${lastDay(calls, 30)}, ${rev} revival starts until ${lastDay(rev, 60)}`);
     }
+    planWhatsApp(src);
     if (!COMMIT) {
         log("\nDry run only. Add --commit to write.");
         return;
     }
+
+    /* ---------- WhatsApp templates first (the revival cadence needs them) ---------- */
+    const tplMap = await writeTemplates(src);
+    await cadences.ensureDefaults();
+    await cadences.linkDefaultTemplates();
+    const revival = await M.CrmCadence.findOne({ where: { cadence_key: "revival" } });
 
     /* ---------- write ---------- */
     const reasonBy = c.reasonByKey;
@@ -334,6 +503,10 @@ async function main() {
             await M.CrmActivity.create({ lead_id: lead.id, type: "system", body: `Moved from the ${det.from}. Old status: ${STATUS_LABEL(pr.status)}${outcome ? ` (last outcome: ${outcome.name})` : ""}${p.others.length ? `. Joined ${p.others.length} duplicate${p.others.length === 1 ? "" : "s"} with the same number.` : ""}`, at: new Date(), legacy_id: `mig:${p.primary.legacy}` }, { transaction: t });
             if (p.stage.kind === "open" && p.next) {
                 await M.CrmTaskV2.create({ lead_id: lead.id, owner_id: p.ownerId, type: p.next.type, note: p.next.note, due_at: p.next.dueAt, status: "open", origin: "migration" }, { transaction: t });
+                if (p.next.revivalStart && revival) {
+                    await cadences.enroll(lead.id, revival.id, { origin: "migration", startAt: p.next.revivalStart }, t);
+                    report.revivalEnrolled = (report.revivalEnrolled || 0) + 1;
+                }
             }
             // Leads the new CRM already made for this number (website / Meta
             // after the deploy, before this run) join the migrated lead.
@@ -363,7 +536,8 @@ async function main() {
         n += 1;
         if (n % 250 === 0) log(`  ${n} leads written...`);
     }
-    log(`\nWrote ${n} leads (${report.already} were already there from an earlier run). ${report.revisitSpread} past revisit dates spread over the next 30 days. ${report.joinedNew || 0} leads the new CRM made for the same numbers were joined into them.`);
+    log(`\nWrote ${n} leads (${report.already} were already there from an earlier run). ${report.revisitSpread} past revisit dates spread over the next 30 days. ${report.joinedNew || 0} leads the new CRM made for the same numbers were joined into them. ${report.revivalEnrolled || 0} started the revival cadence.`);
+    await writeWhatsApp(src, tplMap);
     if (passwords.length) log(`\nNew logins (temporary passwords, shown once):\n  ${passwords.join("\n  ")}`);
 }
 

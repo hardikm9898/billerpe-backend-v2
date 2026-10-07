@@ -85,6 +85,21 @@ function workingMinutesBetween(wh, from, to) {
     return Math.round(total);
 }
 
+/**
+ * When the first call to a lead that arrived at `at` is due: 15 working
+ * minutes, or for a lead that came at night / on a day off, within the
+ * morning queue (first working hour; first two on Monday). Design doc,
+ * "Working hours and response timers".
+ */
+async function firstContactDue(at = new Date()) {
+    const wh = await workingHours();
+    const timers = await settings.read("timers");
+    if (isWorkingTime(wh, at)) return addWorkingMinutes(wh, at, timers.firstContactMinutes);
+    const open = addWorkingMinutes(wh, at, 0);
+    const monday = moment(open).tz(TZ).day() === 1;
+    return addWorkingMinutes(wh, open, monday ? timers.mondayMorningMinutes : timers.morningQueueMinutes);
+}
+
 /** Start of today and tomorrow in India time, as Dates. */
 function todayRange(now = new Date()) {
     const start = moment(now).tz(TZ).startOf("day");
@@ -103,4 +118,4 @@ const parse = (t) => {
     }
 };
 
-module.exports = { TZ, normalizePhone, workingHours, resetHoursCache, isWorkingTime, addWorkingMinutes, workingMinutesBetween, todayRange, txt, intOrNull, json, parse, moment };
+module.exports = { TZ, normalizePhone, workingHours, resetHoursCache, isWorkingTime, addWorkingMinutes, workingMinutesBetween, firstContactDue, todayRange, txt, intOrNull, json, parse, moment };

@@ -19,8 +19,16 @@ if (jobsOff && process.env.ADMIN_WORKER_FORCE !== "1") {
 const worker = require("./services/admin/worker");
 // Job handlers and schedules of each SuperAdmin module.
 require("./adminv1/crm/jobs");
+require("./adminv1/crm/ai");
+require("./adminv1/crm/automation");
+require("./adminv1/crm/cadences");
+require("./adminv1/crm/campaigns");
+require("./adminv1/crm/escalations");
+require("./adminv1/crm/digest");
 
 const log = { info: (...a) => logger.info(a.join(" ")), error: (...a) => logger.error(a.join(" ")) };
+// Built-in rules and cadences exist before the first event is handled.
+Promise.all([require("./adminv1/crm/automation").ensureDefaults(), require("./adminv1/crm/cadences").ensureDefaults()]).catch((e) => log.error("defaults:", e && e.message));
 worker.start(Number(process.env.ADMIN_WORKER_INTERVAL_MS) || 2000, log);
 logger.info(`Admin worker started (${worker.WORKER})`);
 

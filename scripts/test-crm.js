@@ -301,10 +301,14 @@ async function run() {
     config.invalidate();
 
     /* ---------- worker schedule ---------- */
-    const before = await M.CrmJob.count({ where: { kind: "crm.sweep" } });
+    // Its own schedule name, so a running worker (which queues the real ones) cannot interfere.
+    const kind = `test.schedule.${stamp}`;
+    worker.registerSchedule(kind, 300);
     await worker.queueSchedules();
     await worker.queueSchedules();
-    check("sweep scheduled once per slot", (await M.CrmJob.count({ where: { kind: "crm.sweep" } })) === before + 1);
+    check("a schedule is queued once per slot", (await M.CrmJob.count({ where: { kind } })) === 1);
+    check("the sweep is a registered schedule", (await M.CrmJob.count({ where: { kind: "crm.sweep" } })) >= 1);
+    await M.CrmJob.destroy({ where: { kind } });
 }
 
 async function cleanup() {

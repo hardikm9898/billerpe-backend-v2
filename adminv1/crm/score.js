@@ -18,8 +18,9 @@ function scoreLead(lead, stageKey, facts = {}, now = new Date()) {
     if (lead.plan_interest) add(4, `Interested in ${lead.plan_interest}`);
     if (facts.reached) add(Math.min(15, 6 + facts.reached * 3), `Spoken to ${facts.reached} time${facts.reached === 1 ? "" : "s"}`);
     if (facts.demoDone) add(12, "Demo done");
+    if (facts.waReplies) add(Math.min(10, 4 + facts.waReplies), `Wrote on WhatsApp ${facts.waReplies} time${facts.waReplies === 1 ? "" : "s"}`);
     if (!lead.phone_valid) add(-25, "Phone number looks wrong");
-    const quietFrom = lead.last_activity_at || lead.createdAt;
+    const quietFrom = [lead.last_activity_at || lead.createdAt, facts.lastReplyAt].filter(Boolean).map((d) => new Date(d)).sort((a, b) => b - a)[0];
     const quietDays = quietFrom ? Math.floor((now - new Date(quietFrom)) / 86400000) : 0;
     if (quietDays > 2) add(-Math.min(30, (quietDays - 2) * 2), `No contact for ${quietDays} days`);
     const score = Math.max(0, Math.min(100, parts.reduce((a, p) => a + p.points, 0)));

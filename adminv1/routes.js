@@ -10,6 +10,16 @@ const crmConfig = require("./crm/config");
 const leads = require("./crm/leads");
 const myday = require("./crm/myday");
 const notifications = require("./crm/notify");
+const wa = require("./crm/wa");
+const inbox = require("./crm/inbox");
+const ai = require("./crm/ai");
+const templates = require("./crm/templates");
+const automation = require("./crm/automation");
+const cadences = require("./crm/cadences");
+const campaigns = require("./crm/campaigns");
+const escalations = require("./crm/escalations");
+const digest = require("./crm/digest");
+const perms = require("./permissions");
 
 // BillerPe SuperAdmin API (admin.billerpe.in and the sales app): /admin/v1.
 // Same shape as /owner/v1: POST /admin/v1/<method> with { args: [...] },
@@ -41,6 +51,35 @@ router.post("/resume", (req, res) => {
         res.json({ ok: false, error: "network", message: GENERIC });
     });
 });
+
+/* ------------------------------ WhatsApp webhook (Meta) ------------------------------ */
+
+// Meta's callback URL for the WhatsApp number: https://<api>/admin/v1/wa/webhook.
+// GET = the one-time verify handshake; POST = messages and delivery ticks,
+// signed with the Meta app secret (refused when the secret is not set).
+const crypto = require("crypto");
+router.get("/wa/webhook", (req, res) => {
+    const token = process.env.ADMIN_WA_VERIFY_TOKEN || process.env.WA_VERIFY_TOKEN;
+    if (req.query["hub.mode"] === "subscribe" && token && req.query["hub.verify_token"] === token) return res.status(200).send(String(req.query["hub.challenge"] || ""));
+    return res.sendStatus(403);
+});
+router.post("/wa/webhook", (req, res) => {
+    const secret = process.env.ADMIN_WA_APP_SECRET || process.env.META_APP_SECRET;
+    if (!secret) return res.sendStatus(503);
+    const sig = String(req.headers["x-hub-signature-256"] || "");
+    const expected = "sha256=" + crypto.createHmac("sha256", secret).update(req.rawBody || Buffer.alloc(0)).digest("hex");
+    if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return res.sendStatus(401);
+    wa.handleWebhook(req.body).then(
+        () => res.sendStatus(200),
+        (e) => {
+            console.error("[adminv1] wa webhook:", e);
+            res.sendStatus(500);
+        },
+    );
+});
+
+// Built-in roles get the permissions later phases added (once).
+setImmediate(() => perms.upgradeRoles().catch((e) => console.error("[adminv1] role upgrade:", e && e.message)));
 
 /* ------------------------------ everything else ------------------------------ */
 
@@ -102,6 +141,51 @@ const HANDLERS = {
     notifications: (s, query) => notifications.list(s, query || {}),
     notificationCount: (s) => notifications.unreadCount(s),
     notificationsRead: (s, ids) => notifications.markRead(s, ids ?? "all"),
+
+    /* WhatsApp inbox (phase 3) */
+    inbox: (s, query) => inbox.list(s, query || {}),
+    inboxWaiting: (s) => inbox.waiting(s),
+    inboxChat: (s, id, query) => inbox.detail(s, id, query || {}),
+    inboxSend: (s, id, text) => inbox.sendText(s, id, text),
+    inboxSendTemplate: (s, id, templateId, values) => inbox.sendTemplate(s, id, templateId, values),
+    inboxSendFile: (s, id, file) => inbox.sendFile(s, id, file || {}),
+    inboxTakeOver: (s, id) => inbox.takeOver(s, id),
+    inboxLetAi: (s, id) => inbox.letAi(s, id),
+    inboxAiOff: (s, id) => inbox.aiOff(s, id),
+    inboxRead: (s, id) => inbox.markRead(s, id),
+    inboxDone: (s, id, done) => inbox.setDone(s, id, done !== false),
+    inboxMakeLead: (s, id, input) => inbox.makeLead(s, id, input || {}),
+    inboxSetKind: (s, id, kind) => inbox.setKind(s, id, kind),
+    inboxOptout: (s, id, on) => inbox.setOptout(s, id, !!on),
+    inboxForLead: (s, leadId) => inbox.forLead(s, leadId),
+    inboxStatus: (s) => inbox.status(s),
+    waTemplates: (s, query) => templates.list(s, query || {}),
+    waTemplateSave: (s, input) => templates.save(s, input || {}),
+    aiTry: (s, input) => ai.tryIt(s, input || {}),
+
+    /* automation, cadences, campaigns, escalations */
+    rules: (s) => automation.list(s),
+    ruleSave: (s, input) => automation.save(s, input || {}),
+    ruleActive: (s, id, active) => automation.setActive(s, id, !!active),
+    ruleDelete: (s, id) => automation.remove(s, id),
+    rulePreview: (s, input) => automation.preview(s, input || {}),
+    ruleRuns: (s, query) => automation.runLog(s, query || {}),
+    cadences: async (s) => {
+        await cadences.ensureDefaults();
+        return cadences.list(s);
+    },
+    cadenceSave: (s, input) => cadences.save(s, input || {}),
+    cadenceStart: (s, leadId, cadenceId) => cadences.start(s, leadId, cadenceId),
+    cadenceStop: (s, enrollmentId) => cadences.stop(s, enrollmentId),
+    campaigns: (s) => campaigns.list(s),
+    campaign: (s, id, query) => campaigns.detail(s, id, query || {}),
+    campaignPreview: (s, input) => campaigns.preview(s, input || {}),
+    campaignSave: (s, input) => campaigns.save(s, input || {}),
+    campaignStart: (s, id, input) => campaigns.start(s, id, input || {}),
+    campaignAction: (s, id, action) => campaigns.setStatus(s, id, action),
+    escalations: (s) => escalations.mine(s),
+    teamToday: (s) => escalations.teamToday(s),
+    digestTemplateText: () => ({ text: digest.TEMPLATE_TEXT }),
 
     /* worker */
     workerStatus: (s) => {

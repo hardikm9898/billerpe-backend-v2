@@ -4,8 +4,7 @@ const { createLead, findByPhone, activity, reopen, recalc } = require("./leads")
 const { syncNext, addTask } = require("./tasks");
 const { assign, pickOwner, canTakeLeads } = require("./assign");
 const { notify, peopleWith } = require("./notify");
-const { normalizePhone, workingHours, addWorkingMinutes, txt } = require("./util");
-const settings = require("../settings");
+const { normalizePhone, firstContactDue, txt } = require("./util");
 
 // Every inbound inquiry (website form, Meta Lead Ads, WhatsApp, the sales
 // app's "new caller") comes through receive(). The same Meta delivery is
@@ -62,8 +61,7 @@ async function receive(input = {}) {
             if (pick) await assign(lead, pick.id, { byId: null, reason: `${pick.reason} (previous owner cannot take leads)` }, t);
         }
         const kind = c.stageById.get(lead.stage_id)?.kind;
-        const wh = await workingHours();
-        const due = addWorkingMinutes(wh, at, (await settings.read("timers")).firstContactMinutes);
+        const due = await firstContactDue(at);
         if (kind === "won") {
             await notify(lead.owner_id, { type: "lead.customer_inquiry", title: `Customer enquired again: ${lead.name || lead.phone}`, body: inquiry.message || `Through ${SOURCE_LABEL[source] || source}`, link: `/leads/${lead.id}`, ref: `inq:${lead.id}:${at.getTime()}` }, { transaction: t });
             return { leadId: lead.id, joined: true, customer: true };
