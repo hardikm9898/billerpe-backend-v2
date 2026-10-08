@@ -52,16 +52,20 @@ router.post("/support/ticket", deviceAuth, createTicket);
 
 // The plan lock (owner 2026-10-08): the outlet PC's lock banner asks for the
 // state, uses the one "Extend 1 day", and gets the renewal payment link.
-const planReply = (fn) => (req, res) =>
-    Promise.resolve()
+// Same wrapper as every other /sync call (the exe's sync client reads results / error).
+const planReply = (fn) => (req, res) => {
+    const { success, error } = require("../responce/res");
+    return Promise.resolve()
         .then(() => fn(req))
         .then(
-            (result) => res.json({ ok: true, result }),
-            (err) => res.json({ ok: false, error: err instanceof require("../appv1/core").RuleError ? err.message : "Something went wrong. Please try again." }),
+            (result) => res.json(success("success", result, 200)),
+            (err) => res.json(error(err instanceof require("../appv1/core").RuleError ? err.message : "Something went wrong. Please try again.", err instanceof require("../appv1/core").RuleError ? 400 : 500)),
         );
+};
 const renewals = () => require("../adminv1/bil/renewals");
 router.get("/plan", deviceAuth, planReply((req) => renewals().planState(req.user)));
-router.post("/plan/extend", deviceAuth, planReply((req) => renewals().extendOneDay(req.user, `Outlet PC${req.body && req.body.staff ? `: ${String(req.body.staff).slice(0, 30)}` : ""}`)));
+// usedAt: when "Extend 1 day" was pressed on a PC that was offline then (reported later).
+router.post("/plan/extend", deviceAuth, planReply((req) => renewals().extendOneDay(req.user, `Outlet PC${req.body && req.body.staff ? `: ${String(req.body.staff).slice(0, 30)}` : ""}${req.body && req.body.usedAt ? " (offline)" : ""}`, new Date(), req.body && req.body.usedAt)));
 router.post("/plan/pay", deviceAuth, planReply((req) => renewals().payLink(req.user)));
 router.get("/support/tickets", deviceAuth, listTickets);
 

@@ -325,10 +325,13 @@ async function run() {
     const devToken = signDeviceToken({ hotel_id: hGuj.id, device_id: reg.device_id, installation_id: reg.installation_id });
     let res = await fetch(`${root}/sync/heartbeat`, { headers: { Authorization: `Bearer ${devToken}` } }).then((x) => x.json());
     check("the heartbeat carries the plan (ended)", !!(res && res.results && res.results.plan && res.results.plan.expired), JSON.stringify(res).slice(0, 300));
-    res = await post(`${root}/sync/plan/extend`, { staff: "Cashier" }, devToken);
-    check("Extend 1 day from the outlet PC", res.ok && !res.result.state.expired, res);
+    const pressedAt = new Date(Date.now() - 30 * 60000).toISOString();
+    res = await post(`${root}/sync/plan/extend`, { staff: "Cashier", usedAt: pressedAt }, devToken);
+    check("Extend 1 day pressed offline 30 min ago, reported now: the day counts from the press", res.results && !res.results.state.expired && near((await H(hGuj.id)).plan_end_date, new Date(pressedAt).getTime() + 24 * 3600000), res);
     res = await post(`${root}/sync/plan/extend`, {}, devToken);
-    check("only once", !res.ok && /has not ended|already used/.test(res.error), res);
+    check("only once", res.error && /has not ended|already used/.test(res.results.message), res);
+    res = await fetch(`${root}/sync/plan`, { headers: { Authorization: `Bearer ${devToken}` } }).then((x) => x.json());
+    check("the PC can read its plan", res.results && res.results.inGrace === true, res);
 
     console.log("\nHardware");
     const prod = await WebSiteProducts.create({ title: `Test printer ${stamp}`, images: [], keyFeatures: [], price: 5000, offer_active: true, offer_price: 4500, status: true });

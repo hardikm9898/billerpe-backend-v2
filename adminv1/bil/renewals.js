@@ -170,18 +170,25 @@ async function planState(hotelId, now = new Date()) {
     };
 }
 
-/** "Extend 1 day" on the banner: once per renewal, only after the plan has ended. */
-async function extendOneDay(hotelId, by = "outlet", now = new Date()) {
+/**
+ * "Extend 1 day" on the banner: once per renewal, only after the plan has
+ * ended. usedAt = when it was pressed on an outlet PC that was offline then
+ * (owner 2026-10-08: it works offline once; the PC reports it later) - the
+ * day counts from that moment, not from the report.
+ */
+async function extendOneDay(hotelId, by = "outlet", now = new Date(), usedAt = null) {
+    const pressed = usedAt ? new Date(usedAt) : null;
+    const start = pressed && !Number.isNaN(pressed.getTime()) && pressed <= now && now - pressed < 48 * 3600000 ? pressed : now;
     return sequelize.transaction(async (t) => {
         const hotel = await Hotel.findOne({ where: { id: hotelId }, transaction: t, lock: t.LOCK.UPDATE });
         if (!hotel) throw new RuleError("Outlet not found.");
-        if (!hotel.plan_end_date || new Date(hotel.plan_end_date) > now) throw new RuleError("The plan has not ended: nothing to extend.");
+        if (!hotel.plan_end_date || new Date(hotel.plan_end_date) > start) throw new RuleError("The plan has not ended: nothing to extend.");
         const r = await openFor(hotel.id, t);
         if (!r) throw new RuleError("The plan has not ended: nothing to extend.");
         if (r.grace_used_at) throw new RuleError("The 1-day extension was already used. Renew with the payment link to unlock the software.");
-        const until = new Date(now.getTime() + 24 * 3600000);
+        const until = new Date(start.getTime() + 24 * 3600000);
         await hotel.update({ plan_end_date: until }, { transaction: t });
-        await r.update({ grace_used_at: now, grace_by: txt(by, 40) }, { transaction: t });
+        await r.update({ grace_used_at: start, grace_by: txt(by, 40) }, { transaction: t });
         if (r.account_id) await addActivity(r.account_id, hotel.id, "renewal", null, `${hotel.hotel_name}: extended by 1 day from the lock banner (${txt(by, 40)}) - locks again ${moment(until).tz(TZ).format("D MMM, h:mm A")}`, null, t);
         if (r.owner_id) await notify(r.owner_id, { type: "renewal.grace", title: `${hotel.hotel_name} used its 1-day extension`, body: "The plan ended unpaid. It locks again in 24 hours.", link: `/billing/renewals`, ref: `grace:${r.id}` }, { transaction: t });
         return { until: until.toISOString() };
