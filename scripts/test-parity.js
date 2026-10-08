@@ -303,6 +303,22 @@ async function run() {
     r = await call("quickPayLink", cs.token, { hotelId: newHotel.id, lines: [{ itemId: appItem.id }], discountPct: 30, discountReason: "Big chain" });
     check("above 25% discount: waits for approval, no link yet", r.ok && r.result.needsApproval && !r.result.url, r);
 
+    console.log("\nBusiness dashboard and bills per outlet (old panel: dashboard, restaurant insights)");
+    const todayStr = util.moment().tz("Asia/Kolkata").format("YYYY-MM-DD");
+    await M.Order.create({ hotel_id: newHotel.id, grandAmount: 750, payment: "success", deleted: false, business_date: todayStr });
+    await M.Order.create({ hotel_id: newHotel.id, grandAmount: 250, payment: "success", deleted: false, business_date: todayStr });
+    r = await call("reports", admin.token, { from: todayStr, to: todayStr });
+    const bz = r.ok && r.result.business;
+    const mine = bz && bz.orders.rows.find((x) => x.id === newHotel.id);
+    check("reports open with the Business section first", r.ok && r.result.sections[0] === "business", r.ok ? r.result.sections : r);
+    check("new outlets today counted, with the period before", bz && bz.newOutlets.now >= 2 && typeof bz.newOutlets.before === "number" && bz.newByMonth.length === 12);
+    check("bills per outlet: our outlet with 2 bills and its sales", mine && mine.bills === 2 && mine.sales === 1000, mine);
+    check("outlets billing in the last 3 days include it", bz && bz.billingLast3Days >= 1);
+    r = await call("businessSummary", cs.token);
+    check("Home summary for customer success (customers, outlets, not billing, dues, tickets)", r.ok && r.result.customers >= 1 && r.result.outlets >= 1 && typeof r.result.notBilling7Days === "number" && typeof r.result.openTickets === "number" && r.result.dues !== undefined, r);
+    r = await call("businessSummary", A.token);
+    check("not for a salesperson", !r.ok);
+
     console.log("\nAssign all unassigned");
     await M.CrmLeadV2.update({ owner_id: null }, { where: { id: ids.slice(0, 4) } });
     r = await call("leadsAssignUnassigned", mgr.token);
@@ -322,6 +338,7 @@ async function cleanup() {
             await M.BilInvoice.destroy({ where: { id: invs } });
         }
         await M.CsRenewal.destroy({ where: { hotel_id: hotels } }).catch(() => {});
+        await M.Order.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         const accIds = (await M.CsAccountOutlet.findAll({ where: { hotel_id: hotels }, attributes: ["account_id"], raw: true })).map((x) => x.account_id);
         for (const name of ["CsOnboardingItem", "CsTask", "CsOutletDay", "CsAccountOutlet", "UserAccess", "PaymentMode", "BillChargeRule", "NotificationSetting", "RolePermissionDefault", "MenuCatalog", "RestaurantSetting"]) if (M[name]) await M[name].destroy({ where: { hotel_id: hotels } }).catch(() => {});
         if (accIds.length) {

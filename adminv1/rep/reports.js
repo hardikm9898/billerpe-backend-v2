@@ -292,6 +292,93 @@ async function revenue(p) {
     };
 }
 
+/* ------------------------------ business ------------------------------ */
+
+const ORDERS_MAX_DAYS = 92;
+const change = (now, before) => (before ? Math.round(((now - before) / before) * 1000) / 10 : null);
+
+/**
+ * The business at a glance (old panel: dashboard + restaurant insights):
+ * customers, outlets live / not billing, new outlets against the period
+ * before, outlets added per month, and bills per outlet in the period.
+ */
+async function business(p) {
+    const days = moment.tz(p.to, TZ).diff(moment.tz(p.from, TZ), "days") + 1;
+    const prevFrom = moment.tz(p.from, TZ).subtract(days, "days").format("YYYY-MM-DD");
+    const prevStart = moment.tz(prevFrom, TZ).startOf("day").toDate();
+    const live = "h.active = 1 AND (h.testing IS NULL OR h.testing = 0)";
+    const [counts] = await q(
+        `SELECT COUNT(*) outlets, SUM(h.plan_end_date > UTC_TIMESTAMP()) on_plan, SUM(h.product_plan = 'CLOUD_APP') app,
+                SUM(h.createdAt >= :start AND h.createdAt < :end) new_now, SUM(h.createdAt >= :prevStart AND h.createdAt < :start) new_before
+         FROM hotel_registrations h WHERE ${live}`,
+        { start: p.start, end: p.end, prevStart },
+    );
+    const [customers] = await q("SELECT COUNT(*) n FROM cs_accounts", {});
+    const today = moment().tz(TZ).format("YYYY-MM-DD");
+    const d3 = moment().tz(TZ).subtract(2, "days").format("YYYY-MM-DD");
+    const d7 = moment().tz(TZ).subtract(6, "days").format("YYYY-MM-DD");
+    const [act] = await q(
+        `SELECT COUNT(DISTINCT CASE WHEN o.business_date >= :d3 THEN o.hotel_id END) billing3, COUNT(DISTINCT o.hotel_id) billing7
+         FROM hms_order_msts o WHERE o.deleted = 0 AND o.payment = 'success' AND o.business_date >= :d7 AND o.business_date <= :today`,
+        { d3, d7, today },
+    );
+    const [idle] = await q(
+        `SELECT COUNT(*) n FROM hotel_registrations h WHERE ${live} AND h.plan_end_date > UTC_TIMESTAMP()
+         AND NOT EXISTS (SELECT 1 FROM hms_order_msts o WHERE o.hotel_id = h.id AND o.deleted = 0 AND o.payment = 'success' AND o.business_date >= :d7)`,
+        { d7 },
+    );
+    const [ending] = await q(`SELECT COUNT(*) n FROM hotel_registrations h WHERE ${live} AND h.plan_end_date > UTC_TIMESTAMP() AND h.plan_end_date < UTC_TIMESTAMP() + INTERVAL 30 DAY`, {});
+    const months = await q(
+        `SELECT DATE_FORMAT(CONVERT_TZ(h.createdAt, '+00:00', '+05:30'), '%Y-%m') m, COUNT(*) n FROM hotel_registrations h
+         WHERE ${live} AND h.createdAt >= :since GROUP BY m ORDER BY m`,
+        { since: moment().tz(TZ).startOf("month").subtract(11, "months").toDate() },
+    );
+    const monthRows = Array.from({ length: 12 }, (_, i) => {
+        const m = moment().tz(TZ).startOf("month").subtract(11 - i, "months").format("YYYY-MM");
+        return { month: m, outlets: n((months.find((x) => x.m === m) || {}).n) };
+    });
+    // Bills per outlet (old panel: "Restaurant's" page), at most the last 92 days of the period.
+    const oFrom = days > ORDERS_MAX_DAYS ? moment.tz(p.to, TZ).subtract(ORDERS_MAX_DAYS - 1, "days").format("YYYY-MM-DD") : p.from;
+    const per = await q(
+        `SELECT o.hotel_id id, h.hotel_name name, COUNT(*) bills, COALESCE(SUM(o.grandAmount), 0) sales FROM hms_order_msts o JOIN hotel_registrations h ON h.id = o.hotel_id
+         WHERE o.deleted = 0 AND o.payment = 'success' AND o.business_date >= :from AND o.business_date <= :to GROUP BY o.hotel_id, h.hotel_name ORDER BY sales DESC LIMIT 100`,
+        { from: oFrom, to: p.to },
+    );
+    const [tot] = await q("SELECT COUNT(*) bills, COALESCE(SUM(grandAmount), 0) sales, COUNT(DISTINCT hotel_id) outlets FROM hms_order_msts WHERE deleted = 0 AND payment = 'success' AND business_date >= :from AND business_date <= :to", { from: oFrom, to: p.to });
+    return {
+        customers: n(customers.n),
+        outlets: n(counts.outlets),
+        onPlan: n(counts.on_plan),
+        posApp: n(counts.app),
+        newOutlets: { now: n(counts.new_now), before: n(counts.new_before), change: change(n(counts.new_now), n(counts.new_before)) },
+        billingLast3Days: n(act.billing3),
+        notBilling7Days: n(idle.n),
+        endingIn30Days: n(ending.n),
+        drillNotBilling: { to: "outlets", query: { filter: "not_billing" } },
+        drillEnding: { to: "renewals", query: {} },
+        newByMonth: monthRows,
+        orders: {
+            from: oFrom,
+            to: p.to,
+            capped: oFrom !== p.from,
+            bills: n(tot.bills),
+            sales: n(tot.sales),
+            outletsBilling: n(tot.outlets),
+            rows: per.map((r) => ({ id: r.id, name: r.name, bills: n(r.bills), sales: Math.round(n(r.sales)), drill: { to: "outlets", query: { sel: r.id } } })),
+        },
+    };
+}
+
+/** For Home: the business in a few numbers, right now. */
+async function businessSummary(s) {
+    need(s, "customers.view");
+    const p = period({});
+    const b = await business({ ...p, start: moment().tz(TZ).startOf("month").toDate(), end: moment().tz(TZ).add(1, "day").startOf("day").toDate(), from: moment().tz(TZ).startOf("month").format("YYYY-MM-DD"), to: p.to });
+    const [due] = s.can("billing.view") ? await q("SELECT COALESCE(SUM(total - paid), 0) total FROM bil_invoices WHERE demo = 0 AND status IN ('issued','part_paid')", {}) : [{ total: null }];
+    const [tickets] = await q("SELECT COUNT(*) n FROM sup_tickets WHERE state <> 'closed'", {});
+    return { customers: b.customers, outlets: b.outlets, onPlan: b.onPlan, billingLast3Days: b.billingLast3Days, notBilling7Days: b.notBilling7Days, endingIn30Days: b.endingIn30Days, newThisMonth: b.newOutlets.now, newLastMonth: b.newOutlets.before, dues: due.total === null ? null : n(due.total), openTickets: n(tickets.n) };
+}
+
 /* ------------------------------ support ------------------------------ */
 
 async function support(p) {
@@ -420,6 +507,10 @@ async function all(s, query = {}) {
         out.score = await scoreSignals(s, p, of);
         out.sections.push("sources", "funnel", "firstContact", "team", "activity", "score");
     }
+    if (s.can("customers.view")) {
+        out.business = await business(p);
+        out.sections.unshift("business");
+    }
     if (s.can("billing.view")) {
         out.revenue = await revenue(p);
         out.sections.push("revenue");
@@ -452,6 +543,19 @@ async function excel(s, query = {}) {
         for (const row of rows) ws.addRow(row);
     };
     const title = `${r.from} to ${r.to}`;
+    if (r.business) {
+        sheet("Business", [["What", "k", 36], ["Value", "v", 14]], [
+            { k: "Customers", v: r.business.customers },
+            { k: "Live outlets", v: r.business.outlets },
+            { k: "On a running plan", v: r.business.onPlan },
+            { k: "New outlets in the period", v: r.business.newOutlets.now },
+            { k: "New outlets, period before", v: r.business.newOutlets.before },
+            { k: "Billing in the last 3 days", v: r.business.billingLast3Days },
+            { k: "No bill for 7 days (on a plan)", v: r.business.notBilling7Days },
+            { k: "Plans ending in 30 days", v: r.business.endingIn30Days },
+        ]);
+        sheet("Bills per outlet", [["Outlet", "name", 32], ["Bills", "bills"], ["Sales", "sales", 14]], r.business.orders.rows);
+    }
     if (r.sources) sheet("Sources", [["Source", "label", 24], ["Leads", "leads"], ["Won", "won"], ["Lost", "lost"], ["Win rate %", "rate"]], r.sources.rows);
     if (r.sources && r.sources.ads.length) sheet("Meta ads", [["Ad", "ad", 48], ["Leads", "leads"], ["Won", "won"], ["Win rate %", "rate"]], r.sources.ads);
     if (r.funnel) sheet("Funnel", [["Stage", "name", 24], ["Reached", "reached"], ["There now", "now"]], r.funnel.stages);
@@ -484,4 +588,4 @@ async function excel(s, query = {}) {
     return { fileName: `BillerPe reports ${title}.xlsx`, base64: Buffer.from(buf).toString("base64") };
 }
 
-module.exports = { all, excel, scoreCheck, period };
+module.exports = { all, excel, scoreCheck, period, businessSummary };

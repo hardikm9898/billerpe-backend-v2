@@ -346,6 +346,7 @@ const HANDLERS = {
     reports: (s, query) => reports.all(s, query || {}),
     reportExcel: (s, query) => reports.excel(s, query || {}),
     scoreCheck: (s) => reports.scoreCheck(s),
+    businessSummary: (s) => reports.businessSummary(s),
 
     healthRun: async (s) => {
         auth.need(s, "settings.manage");
