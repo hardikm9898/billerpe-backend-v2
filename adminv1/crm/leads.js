@@ -208,6 +208,10 @@ async function detail(s, id) {
             budget: l.budget,
             decisionMaker: l.decision_maker,
             expectedStart: l.expected_start,
+            dealAmount: l.deal_amount === null ? null : Number(l.deal_amount),
+            agreedAmount: l.agreed_amount === null ? null : Number(l.agreed_amount),
+            payDueOn: l.pay_due_on,
+            payRef: l.pay_ref,
             sourceDetail: parse(l.source_detail),
             lostNote: l.lost_note,
             mergedIntoId: l.merged_into_id,
@@ -261,6 +265,7 @@ const DETAIL_FIELDS = {
     hardwareNeed: ["hardware_need", 120],
     budget: ["budget", 60],
     decisionMaker: ["decision_maker", 120],
+    payRef: ["pay_ref", 80],
 };
 
 function detailFields(input) {
@@ -277,6 +282,18 @@ function detailFields(input) {
         const v = input.expectedStart ? String(input.expectedStart) : null;
         if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new RuleError("Choose the expected start date.");
         out.expected_start = v;
+    }
+    // Payment tracking: rupees, before GST as quoted.
+    for (const [k, col] of [["dealAmount", "deal_amount"], ["agreedAmount", "agreed_amount"]]) {
+        if (input[k] === undefined) continue;
+        const raw = input[k] === null || input[k] === "" ? null : Number(String(input[k]).replace(/[,\s₹]/g, ""));
+        if (raw !== null && (!Number.isFinite(raw) || raw < 0 || raw > 100000000)) throw new RuleError("Write the amount in rupees, for example 11999.");
+        out[col] = raw === null ? null : Math.round(raw * 100) / 100;
+    }
+    if (input.payDueOn !== undefined) {
+        const v = input.payDueOn ? String(input.payDueOn) : null;
+        if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new RuleError("Choose the payment due date.");
+        out.pay_due_on = v;
     }
     if (out.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(out.email)) throw new RuleError("The email address does not look right.");
     return out;
@@ -354,7 +371,8 @@ async function update(s, id, input = {}) {
             Object.assign(fields, { phone: p.phone, phone_key: p.key, phone_valid: true });
         }
         const before = lead.get({ plain: true });
-        const changed = Object.keys(fields).filter((k) => String(before[k] ?? "") !== String(fields[k] ?? ""));
+        const norm = (k, v) => (/_amount$/.test(k) && v !== null && v !== undefined ? String(Number(v)) : String(v ?? ""));
+        const changed = Object.keys(fields).filter((k) => norm(k, before[k]) !== norm(k, fields[k]));
         if (!changed.length) return { id: lead.id };
         await lead.update(fields, { transaction: t });
         await activity(lead.id, "edit", s.user.id, `Updated ${changed.map((k) => k.replace(/_/g, " ")).join(", ")}`, { changed: Object.fromEntries(changed.map((k) => [k, [before[k], fields[k]]])) }, t);
@@ -546,12 +564,64 @@ async function reassign(s, id, toId, reason) {
     if (to) {
         const u = await AdmUser.findOne({ where: { id: to, status: "active" }, raw: true });
         if (!u) throw new RuleError("Choose an active person.");
+        const owners = await scope.visibleOwners(s);
+        if (owners !== null && !owners.includes(to)) throw new RuleError("You can give leads only to your own team.");
     }
     return sequelize.transaction(async (t) => {
         const lead = await getLead(s, id, t, true);
         await assign(lead, to, { byId: s.user.id, reason: txt(reason, 200) || "Reassigned" }, t);
         return { id: lead.id };
     });
+}
+
+/**
+ * Many leads at once (old panel: bulk-select + bulk-assign). toId = a
+ * person, or "auto" = round-robin for each lead, as if it had just come in.
+ * Managers without "see every lead" give only to their own team.
+ */
+async function reassignMany(s, ids, toId, reason) {
+    need(s, "leads.assign");
+    const list = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Boolean))];
+    if (!list.length) throw new RuleError("Choose at least one lead.");
+    if (list.length > 200) throw new RuleError("Assign at most 200 leads at a time.");
+    const auto = toId === "auto";
+    const to = auto ? null : Number(toId) || null;
+    if (!auto) {
+        if (!to) throw new RuleError("Choose who gets the leads.");
+        const u = await AdmUser.findOne({ where: { id: to, status: "active" }, raw: true });
+        if (!u) throw new RuleError("Choose an active person.");
+        const owners = await scope.visibleOwners(s);
+        if (owners !== null && !owners.includes(to)) throw new RuleError("You can give leads only to your own team.");
+    }
+    const { pickOwner } = require("./assign");
+    const why = txt(reason, 200) || (auto ? "Round-robin (bulk)" : "Reassigned (bulk)");
+    let done = 0;
+    const skipped = [];
+    for (const id of list) {
+        try {
+            await sequelize.transaction(async (t) => {
+                const lead = await getLead(s, id, t, true);
+                const target = auto ? await pickOwner({ phoneKey: lead.phone_key, excludeLeadId: lead.id }) : { id: to, reason: why };
+                if (!target) throw new RuleError("Nobody can take leads right now.");
+                await assign(lead, target.id, { byId: s.user.id, reason: auto ? `${why} · ${target.reason}` : why }, t);
+            });
+            done += 1;
+        } catch (e) {
+            if (!(e instanceof RuleError)) throw e;
+            skipped.push({ id, why: e.message });
+        }
+    }
+    return { assigned: done, skipped };
+}
+
+/** Every open lead with no owner, by round-robin (old panel: "auto-assign unassigned"). */
+async function assignUnassigned(s) {
+    need(s, "leads.assign");
+    if (!s.can("leads.view_all")) throw new RuleError("You do not have permission for this.");
+    const c = await config.load();
+    const rows = await CrmLeadV2.findAll({ where: { owner_id: null, stage_id: c.openStageIds, deleted_at: null, merged_into_id: null }, attributes: ["id"], order: [["createdAt", "ASC"]], limit: 200, raw: true });
+    if (!rows.length) return { assigned: 0, skipped: [] };
+    return reassignMany(s, rows.map((r) => r.id), "auto", "Round-robin (assign all unassigned)");
 }
 
 /** Adds a next action (an open lead can have several: a call today, a demo on Friday). */
@@ -633,4 +703,4 @@ async function merge(s, fromId, intoId) {
     });
 }
 
-module.exports = { list, detail, create, update, logOutcome, moveStage, markWon, wonIn, markLost, reopen, addNote, reassign, addLeadTask, updateTask, merge, createLead, findByPhone, recalc, activity, row, names, getLead };
+module.exports = { list, detail, create, update, logOutcome, moveStage, markWon, wonIn, markLost, reopen, addNote, reassign, reassignMany, assignUnassigned, addLeadTask, updateTask, merge, createLead, findByPhone, recalc, activity, row, names, getLead };

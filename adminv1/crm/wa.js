@@ -249,7 +249,7 @@ async function sendMedia(chat, { url, mime, fileName = "", caption = "" }, { sen
  * marketing template per lead per day: they get { skipped, reason, retryAt }
  * instead of an error so the worker can try again later.
  */
-async function sendTemplate(chat, template, values, { sender = "user", userId = null, campaignId = null, enrollmentId = null, now = new Date() } = {}) {
+async function sendTemplate(chat, template, values, { sender = "user", userId = null, campaignId = null, enrollmentId = null, now = new Date(), anyKind = false } = {}) {
     if (!template || !template.active) throw new RuleError("Choose an active template.");
     const defs = parse(template.params) || [];
     const vals = (values || []).map((v) => String(v ?? "").slice(0, 200));
@@ -263,7 +263,8 @@ async function sendTemplate(chat, template, values, { sender = "user", userId = 
         throw new RuleError("This number asked not to get WhatsApp messages from us (opt-out).");
     }
     if (auto) {
-        if (chat.kind !== "lead") return { skipped: true, reason: `not a lead (${chat.kind})` };
+        // anyKind: a campaign to an uploaded list (old panel: bulk message) may reach customers too - never a restaurant's guests or our staff.
+        if (chat.kind !== "lead" && !(anyKind && ["customer", "other"].includes(chat.kind))) return { skipped: true, reason: `not a lead (${chat.kind})` };
         const w = await templateWindow(now);
         if (!w.open) return { skipped: true, reason: "outside sending hours", retryAt: w.nextOpen };
         if ((await autoTemplatesToday(chat.id, now)) >= 1) {

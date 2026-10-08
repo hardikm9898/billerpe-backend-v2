@@ -104,11 +104,13 @@ async function pipeline(s, query = {}) {
         const where = { ...base, stage_id: st.id };
         const count = await CrmLeadV2.count({ where });
         const rows = await CrmLeadV2.findAll({ where, order: [["next_action_at", "ASC"], ["id", "ASC"]], limit: per, raw: true });
+        // Deal value in the column: the agreed amount, else the proposal (payment tracking).
+        const [sum] = await CrmLeadV2.findAll({ where, attributes: [[CrmLeadV2.sequelize.fn("SUM", CrmLeadV2.sequelize.literal("COALESCE(agreed_amount, deal_amount, 0)")), "v"]], raw: true });
         all.push(...rows);
-        out.push({ stage: { id: st.id, key: st.stage_key, name: st.name }, count, rows });
+        out.push({ stage: { id: st.id, key: st.stage_key, name: st.name }, count, value: Number(sum && sum.v) || 0, rows });
     }
     const who = await names(all.map((r) => r.owner_id));
-    return { serverTime: new Date().toISOString(), columns: out.map((x) => ({ stage: x.stage, count: x.count, leads: x.rows.map((r) => row(r, c, who)) })) };
+    return { serverTime: new Date().toISOString(), columns: out.map((x) => ({ stage: x.stage, count: x.count, value: x.value, leads: x.rows.map((r) => row(r, c, who)) })) };
 }
 
 /* ------------------------------ breaks ------------------------------ */
@@ -135,4 +137,59 @@ async function endBreak(s) {
     return { breakUntil: null };
 }
 
-module.exports = { myDay, pipeline, startBreak, endBreak };
+/* ------------------------------ demos ------------------------------ */
+
+const DEMO_VIEWS = ["today", "upcoming", "overdue", "done", "all"];
+
+/**
+ * Demos (old panel: the Demos list): every demo planned on the leads this
+ * person may see - today, coming up, past their time and not logged, or
+ * done with how it went (Demo done / no-show / other outcome).
+ */
+async function demos(s, query = {}) {
+    const c = await config.load();
+    const leadWhere = { ...(await scope.leadWhere(s)), deleted_at: null, merged_into_id: null };
+    const view = DEMO_VIEWS.includes(query.view) ? query.view : "today";
+    const now = new Date();
+    const { start, end } = todayRange(now);
+    const where = { type: "demo" };
+    if (view === "today") Object.assign(where, { status: ["open", "done"], due_at: { [Op.gte]: start, [Op.lt]: end } });
+    else if (view === "upcoming") Object.assign(where, { status: "open", due_at: { [Op.gte]: now } });
+    else if (view === "overdue") Object.assign(where, { status: "open", due_at: { [Op.lt]: now } });
+    else if (view === "done") where.status = "done";
+    else where.status = { [Op.ne]: "cancelled" };
+    if (query.ownerId) where.owner_id = Number(query.ownerId) || 0;
+    const leadIds = (await CrmLeadV2.findAll({ where: leadWhere, attributes: ["id"], raw: true })).map((l) => l.id);
+    const order = view === "done" ? [["done_at", "DESC"]] : view === "all" ? [["due_at", "DESC"]] : [["due_at", "ASC"]];
+    const tasks = leadIds.length ? await CrmTaskV2.findAll({ where: { ...where, lead_id: leadIds }, order, limit: 200, raw: true }) : [];
+    const leads = new Map((tasks.length ? await CrmLeadV2.findAll({ where: { id: [...new Set(tasks.map((t) => t.lead_id))] }, raw: true }) : []).map((l) => [l.id, l]));
+    const who = await names([...tasks.map((t) => t.owner_id), ...[...leads.values()].map((l) => l.owner_id)]);
+    const counts = {};
+    for (const v of ["today", "upcoming", "overdue"]) {
+        const w = { type: "demo" };
+        if (v === "today") Object.assign(w, { status: ["open", "done"], due_at: { [Op.gte]: start, [Op.lt]: end } });
+        else if (v === "upcoming") Object.assign(w, { status: "open", due_at: { [Op.gte]: now } });
+        else Object.assign(w, { status: "open", due_at: { [Op.lt]: now } });
+        counts[v] = leadIds.length ? await CrmTaskV2.count({ where: { ...w, lead_id: leadIds, ...(where.owner_id ? { owner_id: where.owner_id } : {}) } }) : 0;
+    }
+    return {
+        serverTime: now.toISOString(),
+        view,
+        counts,
+        demos: tasks.map((t) => {
+            const l = leads.get(t.lead_id);
+            return {
+                id: t.id,
+                at: t.due_at,
+                note: t.note || "",
+                status: t.status,
+                doneAt: t.done_at,
+                outcome: t.outcome_id ? c.outcomeById.get(t.outcome_id)?.name || "" : "",
+                by: t.owner_id ? who.get(t.owner_id) || "" : "",
+                lead: l ? row(l, c, who) : null,
+            };
+        }),
+    };
+}
+
+module.exports = { myDay, pipeline, startBreak, endBreak, demos };

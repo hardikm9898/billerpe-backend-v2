@@ -6,7 +6,7 @@ const audit = require("../audit");
 const { need } = require("../auth");
 const config = require("./config");
 const wa = require("./wa");
-const { txt, parse, moment, TZ } = require("./util");
+const { txt, parse, moment, TZ, normalizePhone } = require("./util");
 
 // Campaigns: one approved template to a filtered list of leads, sent by the
 // worker at a steady rate inside the template sending hours. Opt-outs are
@@ -14,7 +14,26 @@ const { txt, parse, moment, TZ } = require("./util");
 
 const BANDS = { hot: { [Op.gte]: 60 }, warm: { [Op.gte]: 30, [Op.lt]: 60 }, cold: { [Op.lt]: 30 } };
 
+/**
+ * An uploaded list (old panel: bulk message from an Excel file): numbers
+ * with an optional name, Indian mobiles only, no repeats, at most 5,000.
+ */
+const MAX_NUMBERS = 5000;
+function cleanNumbers(list) {
+    const seen = new Set();
+    const out = [];
+    for (const x of Array.isArray(list) ? list : []) {
+        const n = normalizePhone(x && typeof x === "object" ? x.phone : x);
+        if (!n.valid || !n.phone.startsWith("+91") || seen.has(n.key)) continue;
+        seen.add(n.key);
+        out.push({ key: n.key, phone: n.phone, name: txt(x && typeof x === "object" ? x.name : "", 80) });
+        if (out.length >= MAX_NUMBERS) break;
+    }
+    return out;
+}
+
 function cleanAudience(a = {}, c) {
+    if (a.kind === "numbers") return { kind: "numbers", numbers: cleanNumbers(a.numbers) };
     const arr = (v) => (Array.isArray(v) ? [...new Set(v.map(String))] : []);
     const date = (v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
     return {
@@ -49,6 +68,15 @@ function audienceWhere(a, c) {
 }
 
 async function audienceLeads(a, c, limit = null) {
+    if (a.kind === "numbers") {
+        // Numbers that are already leads are sent as those leads; the rest stand alone.
+        const list = limit ? a.numbers.slice(0, limit) : a.numbers;
+        const known = new Map((await CrmLeadV2.findAll({ where: { phone_key: list.map((x) => x.key), deleted_at: null, merged_into_id: null }, attributes: ["id", "name", "phone_key", "restaurant_name", "city", "owner_id"], raw: true })).map((l) => [l.phone_key, l]));
+        return list.map((x) => {
+            const l = known.get(x.key);
+            return { id: l ? l.id : null, name: x.name || (l && l.name) || "", phone: x.phone, phone_key: x.key, restaurant_name: l ? l.restaurant_name : "", city: l ? l.city : "", owner_id: l ? l.owner_id : null };
+        });
+    }
     return CrmLeadV2.findAll({ where: audienceWhere(a, c), attributes: ["id", "name", "phone", "phone_key", "restaurant_name", "city", "owner_id"], order: [["id", "ASC"]], ...(limit ? { limit } : {}), raw: true });
 }
 
@@ -62,7 +90,7 @@ async function preview(s, input = {}) {
     const out = new Set((await CrmWaOptout.findAll({ where: { phone_key: keys.slice(0, 20000) }, attributes: ["phone_key"], raw: true })).map((o) => o.phone_key));
     const reach = keys.filter((k) => !out.has(k)).length;
     const perMinute = Math.max(1, Math.min(120, Number(input.perMinute) || 30));
-    return { leads: leads.length, numbers: keys.length, optedOut: out.size, reach, minutes: Math.ceil(reach / perMinute), sample: leads.slice(0, 8).map((l) => ({ id: l.id, name: l.name || l.phone, restaurant: l.restaurant_name, city: l.city })) };
+    return { leads: leads.length, numbers: keys.length, optedOut: out.size, reach, minutes: Math.ceil(reach / perMinute), sample: leads.slice(0, 8).map((l) => ({ id: l.id, name: l.name || l.phone, restaurant: l.restaurant_name, city: l.city })), list: a.kind === "numbers" ? { total: a.numbers.length, alreadyLeads: leads.filter((l) => l.id).length } : null };
 }
 
 async function save(s, input = {}) {
@@ -173,6 +201,60 @@ async function detail(s, id, query = {}) {
     };
 }
 
+/* ------------------------------ uploaded lists ------------------------------ */
+
+/**
+ * Reads numbers (and names) from an uploaded Excel/CSV file or pasted text:
+ * the column whose heading says mobile/phone/number (else the first column
+ * with mobiles), and a "name" column when there is one.
+ */
+async function readNumbers(s, input = {}) {
+    need(s, "campaigns.send");
+    let rows = [];
+    if (input.fileBase64) {
+        const XLSX = require("xlsx");
+        const buf = Buffer.from(String(input.fileBase64), "base64");
+        if (buf.length > 5 * 1024 * 1024) throw new RuleError("The file is over 5 MB.");
+        let wb;
+        try {
+            wb = XLSX.read(buf, { type: "buffer" });
+        } catch {
+            throw new RuleError("This file could not be read. Use .xlsx, .xls or .csv.");
+        }
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+    } else {
+        rows = String(input.text || "").split(/\r?\n/).map((line) => line.split(/[,\t;]/));
+    }
+    rows = rows.filter((r) => Array.isArray(r) && r.some((v) => String(v).trim()));
+    if (!rows.length) throw new RuleError("No numbers found.");
+    const head = rows[0].map((v) => String(v).trim().toLowerCase());
+    // A heading row names its columns and holds no mobile number.
+    const isHead = head.some((h) => /mobile|phone|number|name/.test(h)) && !rows[0].some((v) => normalizePhone(v).valid);
+    let phoneCol = head.findIndex((h) => /mobile|phone|number/.test(h));
+    const nameCol = head.findIndex((h) => /name/.test(h));
+    const body = isHead ? rows.slice(1) : rows;
+    if (phoneCol < 0) {
+        const widest = Math.max(...body.map((r) => r.length));
+        for (let i = 0; i < widest && phoneCol < 0; i++) if (body.some((r) => normalizePhone(r[i]).valid)) phoneCol = i;
+    }
+    if (phoneCol < 0) throw new RuleError("No column with mobile numbers was found.");
+    const raw = body.map((r) => ({ phone: String(r[phoneCol] ?? "").trim(), name: nameCol >= 0 && nameCol !== phoneCol ? String(r[nameCol] ?? "").trim() : "" })).filter((x) => x.phone);
+    const numbers = cleanNumbers(raw);
+    const bad = raw.filter((x) => { const n = normalizePhone(x.phone); return !n.valid || !n.phone.startsWith("+91"); }).length;
+    return { numbers, rows: raw.length, invalid: bad, repeats: raw.length - bad - numbers.length, capped: numbers.length >= MAX_NUMBERS };
+}
+
+/** The sample file (old panel: "download sample Excel"). */
+async function sampleNumbersFile(s) {
+    need(s, "campaigns.send");
+    const XLSX = require("xlsx");
+    const ws = XLSX.utils.aoa_to_sheet([["Name", "Mobile"], ["Rahul Shah", "9876543210"], ["Spice Route Cafe", "+91 98765 43211"]]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Numbers");
+    return { fileName: "BillerPe numbers sample.xlsx", base64: XLSX.write(wb, { type: "base64", bookType: "xlsx" }) };
+}
+
 /* ------------------------------ sending (worker) ------------------------------ */
 
 async function sendDue(now = new Date()) {
@@ -188,14 +270,17 @@ async function sendDue(now = new Date()) {
             continue;
         }
         const fixed = parse(camp.params) || [];
+        // An uploaded list: the name typed in the file fills {{name}} for numbers that are not leads.
+        const aud = parse(camp.audience) || {};
+        const listNames = aud.kind === "numbers" ? new Map((aud.numbers || []).map((x) => [x.key, x.name])) : null;
         const batch = await CrmCampaignRcpt.findAll({ where: { campaign_id: camp.id, status: "queued" }, order: [["id", "ASC"]], limit: camp.per_minute });
         for (const r of batch) {
             try {
-                const lead = r.lead_id ? await CrmLeadV2.findByPk(r.lead_id) : null;
+                const lead = r.lead_id ? await CrmLeadV2.findByPk(r.lead_id) : listNames && listNames.get(r.phone_key) ? { name: listNames.get(r.phone_key) } : null;
                 const owner = lead && lead.owner_id ? await AdmUser.findByPk(lead.owner_id, { attributes: ["id", "name", "mobile"] }) : null;
                 const chat = await wa.chatFor(r.phone);
-                if (chat.kind === "lead" && lead && chat.lead_id !== lead.id) await chat.update({ lead_id: lead.id });
-                const res = await wa.sendTemplate(chat, tpl, await wa.paramValues(tpl, { lead, owner, overrides: fixed }), { sender: "campaign", campaignId: camp.id, now });
+                if (chat.kind === "lead" && lead && lead.id && chat.lead_id !== lead.id) await chat.update({ lead_id: lead.id });
+                const res = await wa.sendTemplate(chat, tpl, await wa.paramValues(tpl, { lead, owner, overrides: fixed }), { sender: "campaign", campaignId: camp.id, now, anyKind: !!listNames });
                 if (res.skipped) await r.update({ status: "skipped", error: txt(res.reason, 300) });
                 else if (res.message.status === "failed") await r.update({ status: "failed", error: res.message.error, wa_id: res.message.wa_id });
                 else {
@@ -223,4 +308,4 @@ worker.registerJob("crm.campaigns", () => sendDue().then((n) => `${n} sent`));
 worker.registerSchedule("crm.campaigns", 60);
 worker.subscribe("wa.received", (ev, data) => onEvent(ev, data).catch((e) => console.error("[crm campaigns] event", ev.id, e && e.message)));
 
-module.exports = { preview, save, start, setStatus, list, detail, sendDue, counts, cleanAudience, audienceWhere };
+module.exports = { preview, save, start, setStatus, list, detail, sendDue, counts, cleanAudience, audienceWhere, readNumbers, sampleNumbersFile };

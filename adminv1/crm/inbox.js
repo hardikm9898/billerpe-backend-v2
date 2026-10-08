@@ -9,7 +9,7 @@ const wa = require("./wa");
 const ai = require("./ai");
 const { syncNext } = require("./tasks");
 const { band } = require("./score");
-const { workingHours, addWorkingMinutes, txt, parse } = require("./util");
+const { workingHours, addWorkingMinutes, txt, parse, normalizePhone } = require("./util");
 
 // The shared WhatsApp inbox. A salesperson sees the chats of the leads they
 // may see; "inbox.all" also sees guests, customers and unknown numbers. A
@@ -316,4 +316,24 @@ async function status(s) {
     return { ...ai.status(), aiEnabled: await aiEnabled() };
 }
 
-module.exports = { list, waiting, detail, sendText, sendTemplate, sendFile, takeOver, letAi, aiOff, markRead, setDone, makeLead, setKind, setOptout, forLead, status, VIEWS };
+/**
+ * A chat with any number (old panel: add a contact, send to a new number).
+ * WhatsApp allows only a template to someone who has not written in 24
+ * hours, so a new chat starts with one.
+ */
+async function startChat(s, input = {}) {
+    if (!s.can("inbox.use") && !s.can("inbox.all")) need(s, "inbox.use");
+    const n = normalizePhone(input.phone);
+    if (!n.valid) throw new RuleError("Enter a valid mobile number (10 digits for India).");
+    const chat = await wa.chatFor(n.phone, { name: txt(input.name, 120) });
+    if (input.name && !chat.name) await chat.update({ name: txt(input.name, 120) });
+    if (input.templateId) {
+        const tpl = await CrmWaTemplate.findByPk(Number(input.templateId));
+        const r = await wa.sendTemplate(chat, tpl, Array.isArray(input.values) ? input.values : [], { sender: "user", userId: s.user.id });
+        const msg = r && r.message;
+        if (msg && msg.status === "failed") throw new RuleError(`WhatsApp did not take it: ${msg.error}`);
+    }
+    return { chatId: chat.id, kind: chat.kind, leadId: chat.lead_id || null };
+}
+
+module.exports = { list, waiting, detail, sendText, sendTemplate, sendFile, takeOver, letAi, aiOff, markRead, setDone, makeLead, setKind, setOptout, forLead, status, VIEWS, startChat };

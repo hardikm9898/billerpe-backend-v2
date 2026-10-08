@@ -72,6 +72,11 @@ const CrmLeadV2 = sequelize.define("crm_lead", {
     budget: { type: T.STRING(60), allowNull: false, defaultValue: "" },
     decision_maker: { type: T.STRING(120), allowNull: false, defaultValue: "" },
     expected_start: { type: T.DATEONLY, allowNull: true },
+    // Payment tracking (migration 20261014100000): proposal sent, amount agreed, when and how it is paid.
+    deal_amount: { type: T.DECIMAL(12, 2), allowNull: true },
+    agreed_amount: { type: T.DECIMAL(12, 2), allowNull: true },
+    pay_due_on: { type: T.DATEONLY, allowNull: true },
+    pay_ref: { type: T.STRING(80), allowNull: false, defaultValue: "" },
     // website | meta | whatsapp | phone | manual | referral | import
     source: { type: T.STRING(20), allowNull: false, defaultValue: "manual" },
     // JSON: campaign, adset, ad, form, utm...
