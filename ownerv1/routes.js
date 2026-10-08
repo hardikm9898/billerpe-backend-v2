@@ -106,8 +106,18 @@ router.post("/:name", (req, res) => {
     const fn = HANDLERS[req.params.name];
     if (!fn) return res.status(404).json({ ok: false, error: "Unknown call" });
     const args = Array.isArray(req.body?.args) ? req.body.args : [];
+    const name = req.params.name;
+    // A BillerPe support session: some calls are the owner's own, every change is audited.
+    const sp = req.owner.support ? require("./support") : null;
     Promise.resolve()
-        .then(() => fn(req.owner, ...args))
+        .then(async () => {
+            if (!sp) return fn(req.owner, ...args);
+            const early = await sp.before(req.owner, name);
+            if (early !== undefined) return early;
+            const result = await fn(req.owner, ...args);
+            await sp.after(req.owner, name, args);
+            return result;
+        })
         .then(
             (result) => res.json({ ok: true, result: result ?? {} }),
             (err) => {

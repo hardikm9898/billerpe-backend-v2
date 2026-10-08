@@ -208,7 +208,18 @@ async function detail(s, id) {
         whatsapp: await chatSummary(l),
         cadences: await require("./cadences").forLead(l.id),
         escalations: (await CrmEscalation.findAll({ where: { lead_id: l.id, status: "open" }, raw: true })).map((e) => ({ id: e.id, kind: e.kind, level: e.level, raisedAt: e.raised_at, nextLevelAt: e.next_level_at })),
+        customer: await customerOf(l),
     };
+}
+
+/** A won lead's customer account and outlet (phase 5), when there is one. */
+async function customerOf(l) {
+    const { CsAccount, CsAccountOutlet, Hotel } = require("../../model");
+    const link = l.hotel_id ? await CsAccountOutlet.findOne({ where: { hotel_id: l.hotel_id }, attributes: ["account_id", "hotel_id", "onboarding", "health"], raw: true }) : null;
+    const acc = link ? await CsAccount.findOne({ where: { id: link.account_id }, attributes: ["id", "name"], raw: true }) : await CsAccount.findOne({ where: { lead_id: l.id }, attributes: ["id", "name"], raw: true });
+    if (!acc && !l.hotel_id) return null;
+    const hotel = l.hotel_id ? await Hotel.findOne({ where: { id: l.hotel_id }, attributes: ["id", "hotel_name"], raw: true }) : null;
+    return { accountId: acc ? acc.id : null, accountName: acc ? acc.name : "", hotelId: hotel ? hotel.id : null, outlet: hotel ? hotel.hotel_name : "", onboarding: link ? link.onboarding : "none", health: link ? link.health : "grey" };
 }
 
 /** The lead's WhatsApp chat, for the lead page. */
@@ -437,19 +448,25 @@ async function moveStage(s, id, input = {}) {
 
 async function markWon(s, id, input = {}) {
     need(s, "leads.edit");
-    const c = await config.load();
     return sequelize.transaction(async (t) => {
         const lead = await getLead(s, id, t, true);
-        if (!isOpen(c, lead)) throw new RuleError("This lead is already closed.");
-        const won = c.stages.find((x) => x.kind === "won");
-        const now = new Date();
-        await cancelOpen(lead.id, t);
-        await lead.update({ stage_id: won.id, won_at: now, closed_at: now, last_activity_at: now, revisit_at: null }, { transaction: t });
-        await activity(lead.id, "won", s.user.id, txt(input.note, 500), null, t);
-        await syncNext(lead.id, t);
-        await queue.emit({ type: "lead.won", entity: "crm_lead", entityId: lead.id, actorId: s.user.id }, { transaction: t });
+        await wonIn(s, lead, input, t);
         return { id: lead.id };
     });
+}
+
+/** Closes a locked, open lead as won inside `t` (also used by Mark won -> customer, adminv1/cs/won.js). */
+async function wonIn(s, lead, input, t) {
+    const c = await config.load();
+    if (!isOpen(c, lead)) throw new RuleError("This lead is already closed.");
+    const won = c.stages.find((x) => x.kind === "won");
+    const now = new Date();
+    await cancelOpen(lead.id, t);
+    await lead.update({ stage_id: won.id, won_at: now, closed_at: now, last_activity_at: now, revisit_at: null, ...(input.hotelId ? { hotel_id: input.hotelId } : {}) }, { transaction: t });
+    await activity(lead.id, "won", s.user.id, txt(input.note, 500), input.data || null, t);
+    await syncNext(lead.id, t);
+    await queue.emit({ type: "lead.won", entity: "crm_lead", entityId: lead.id, actorId: s.user.id }, { transaction: t });
+    return lead;
 }
 
 async function markLost(s, id, input = {}) {
@@ -600,4 +617,4 @@ async function merge(s, fromId, intoId) {
     });
 }
 
-module.exports = { list, detail, create, update, logOutcome, moveStage, markWon, markLost, reopen, addNote, reassign, addLeadTask, updateTask, merge, createLead, findByPhone, recalc, activity, row, names, getLead };
+module.exports = { list, detail, create, update, logOutcome, moveStage, markWon, wonIn, markLost, reopen, addNote, reassign, addLeadTask, updateTask, merge, createLead, findByPhone, recalc, activity, row, names, getLead };

@@ -35,7 +35,32 @@ const DEFAULTS = {
     // 9:30 summary for every salesperson: in the panel, and on WhatsApp once the
     // staff template is approved by Meta.
     digest: { enabled: true, time: "09:30", whatsapp: true, templateName: "staff_daily_digest" },
+    // Customers after the sale (phase 5): "Open as outlet" opens the web Owner
+    // Dashboard at ownerDashboardUrl for supportMinutes; the onboarding
+    // checklist every new outlet gets (auto = ticked by the outlet's own data;
+    // plan = suite | app | all); the limits of the health check.
+    customers: {
+        ownerDashboardUrl: "",
+        supportMinutes: 30,
+        trialDays: 14,
+        onboardingNewDays: 30,
+        onboarding: [
+            { key: "payment", title: "Payment received", auto: "payment", plan: "all", dueDays: 0 },
+            { key: "outlet", title: "Outlet created, owner can log in", auto: "outlet", plan: "all", dueDays: 0 },
+            { key: "menu", title: "Menu uploaded", auto: "menu", plan: "all", dueDays: 2 },
+            { key: "pc", title: "Outlet PC installed and registered", auto: "pc", plan: "suite", dueDays: 3 },
+            { key: "app_devices", title: "POS App installed on the outlet's phones", auto: "app_devices", plan: "app", dueDays: 3 },
+            { key: "printers", title: "Printers set up", auto: null, plan: "all", dueDays: 3 },
+            { key: "first_bill", title: "First bill made", auto: "first_bill", plan: "all", dueDays: 4 },
+            { key: "training", title: "Staff training done", auto: null, plan: "all", dueDays: 5 },
+            { key: "day7", title: "Day-7 check call", auto: null, plan: "all", dueDays: 7 },
+            { key: "day30", title: "Day-30 review", auto: null, plan: "all", dueDays: 30 },
+        ],
+        health: { noBillsDays: 3, lowBillsPct: 30, dipBillsPct: 60, minNormalBills: 5, pcOfflineHours: 24, pcAmberHours: 16, backlogHours: 6, versionsBehind: 2, planWarnDays: 15, ticketDays: 3, onboardingLateDays: 1, ebillLow: 100 },
+    },
 };
+
+const AUTO_ITEMS = ["payment", "outlet", "menu", "pc", "app_devices", "first_bill"];
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const int = (v, min, max, label) => {
@@ -114,6 +139,49 @@ const VALIDATE = {
             maxRepliesPerDay: int(v.maxRepliesPerDay ?? 1500, 1, 20000, "AI replies per day"),
             instructions,
             knowledge,
+        };
+    },
+    customers: (v) => {
+        const d = DEFAULTS.customers;
+        let url = text(v.ownerDashboardUrl, 200).replace(/\/+$/, "");
+        if (url && !/^https:\/\/[^\s/]+(\/\S*)?$/.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/\S*)?$/.test(url)) throw new RuleError("Owner Dashboard address: write the full https:// address, for example https://owner.billerpe.in.");
+        const seen = new Set();
+        const onboarding = (Array.isArray(v.onboarding) ? v.onboarding : d.onboarding).map((it, i) => {
+            const title = text(it && it.title, 120);
+            if (!title) throw new RuleError(`Onboarding step ${i + 1} needs a name.`);
+            let key = text(it && it.key, 30).toLowerCase().replace(/[^a-z0-9_]/g, "_") || title.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 30);
+            while (seen.has(key)) key = `${key.slice(0, 26)}_${i}`;
+            seen.add(key);
+            const auto = AUTO_ITEMS.includes(it && it.auto) ? it.auto : null;
+            const plan = ["suite", "app"].includes(it && it.plan) ? it.plan : "all";
+            return { key, title, auto, plan, dueDays: int(it && it.dueDays !== undefined ? it.dueDays : 0, 0, 120, `Days for "${title}"`) };
+        });
+        if (!onboarding.length) throw new RuleError("Keep at least one onboarding step.");
+        if (onboarding.length > 25) throw new RuleError("Keep the checklist to 25 steps or fewer.");
+        const h = { ...d.health, ...(v.health || {}) };
+        const health = {
+            noBillsDays: int(h.noBillsDays, 2, 30, "Red after days without bills"),
+            lowBillsPct: int(h.lowBillsPct, 1, 99, "Red below % of normal bills"),
+            dipBillsPct: int(h.dipBillsPct, 1, 99, "Amber below % of normal bills"),
+            minNormalBills: int(h.minNormalBills, 1, 1000, "Judge bills only from this many a day"),
+            pcOfflineHours: int(h.pcOfflineHours, 1, 240, "Red when the PC is offline for"),
+            pcAmberHours: int(h.pcAmberHours, 1, 240, "Amber when the PC is offline for"),
+            backlogHours: int(h.backlogHours, 1, 72, "Red when bills wait to upload for"),
+            versionsBehind: int(h.versionsBehind, 1, 20, "Red when this many versions behind"),
+            planWarnDays: int(h.planWarnDays, 1, 90, "Amber this many days before the plan ends"),
+            ticketDays: int(h.ticketDays, 1, 60, "Amber when a ticket is open for"),
+            onboardingLateDays: int(h.onboardingLateDays, 0, 30, "Amber when an onboarding step is late by"),
+            ebillLow: int(h.ebillLow, 0, 100000, "Amber below this many e-bill credits"),
+        };
+        if (health.lowBillsPct >= health.dipBillsPct) throw new RuleError("The red bills limit must be below the amber one.");
+        if (health.pcAmberHours >= health.pcOfflineHours) throw new RuleError("The amber PC-offline time must be shorter than the red one.");
+        return {
+            ownerDashboardUrl: url,
+            supportMinutes: int(v.supportMinutes ?? d.supportMinutes, 5, 120, "Support session minutes"),
+            trialDays: int(v.trialDays ?? d.trialDays, 1, 90, "Free trial days"),
+            onboardingNewDays: int(v.onboardingNewDays ?? d.onboardingNewDays, 0, 365, "Onboarding for outlets newer than"),
+            onboarding,
+            health,
         };
     },
     digest: (v) => ({

@@ -234,6 +234,8 @@ server.listen(PORT, (err) => {
                 "crm_stages", "crm_lost_reasons", "crm_outcomes", "crm_leads", "crm_inquiries", "crm_tasks", "crm_activities", "crm_calls", "crm_assignments", "adm_notifications", "adm_breaks",
                 // SuperAdmin inbox and automation: schema owned by migration 20261009100000.
                 "crm_wa_chats", "crm_wa_messages", "crm_wa_templates", "crm_wa_optouts", "crm_rules", "crm_rule_runs", "crm_cadences", "crm_cadence_steps", "crm_cadence_enrollments", "crm_campaigns", "crm_campaign_recipients", "crm_escalations",
+                // SuperAdmin customers and outlet operations: schema owned by migration 20261011100000.
+                "cs_accounts", "cs_account_outlets", "cs_onboarding_items", "cs_outlet_days", "cs_tasks", "cs_activities", "adm_support_sessions",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',

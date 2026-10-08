@@ -20,6 +20,11 @@ const campaigns = require("./crm/campaigns");
 const escalations = require("./crm/escalations");
 const digest = require("./crm/digest");
 const calls = require("./crm/calls");
+const csAccounts = require("./cs/accounts");
+const csOutlets = require("./cs/outlets");
+const csOnboarding = require("./cs/onboarding");
+const csWon = require("./cs/won");
+const csToday = require("./cs/today");
 const perms = require("./permissions");
 
 // BillerPe SuperAdmin API (admin.billerpe.in and the sales app): /admin/v1.
@@ -209,6 +214,38 @@ const HANDLERS = {
     appNoRecording: (s, callId) => calls.noRecording(s, callId),
     appSetPush: (s, token) => calls.setPush(s, token),
     callRecording: (s, callId) => calls.play(s, callId),
+
+    /* customers and outlet operations (phase 5) */
+    leadWonCustomer: (s, id, input) => csWon.win(s, id, input || {}),
+    wonFindOutlets: (s, q) => csWon.findOutlets(s, q),
+    accountAddOutlet: (s, id, input) => csWon.addOutlet(s, id, input || {}),
+    planNames: () => ({ plans: csWon.PLAN_NAMES }),
+    csToday: (s) => csToday.today(s),
+    accounts: (s, query) => csAccounts.list(s, query || {}),
+    account: (s, id) => csAccounts.detail(s, id),
+    accountUpdate: (s, id, input) => csAccounts.update(s, id, input || {}),
+    accountOwner: (s, id, ownerId, reason) => csAccounts.setOwner(s, id, ownerId, reason),
+    accountNote: (s, id, text) => csAccounts.addNote(s, id, text),
+    accountTaskAdd: (s, id, input) => csAccounts.taskAdd(s, id, input || {}),
+    accountTaskDone: (s, taskId, result) => csAccounts.taskDone(s, taskId, result),
+    accountTaskMove: (s, taskId, dueAt) => csAccounts.taskMove(s, taskId, dueAt),
+    accountPick: (s, q) => csAccounts.pick(s, q),
+    onboardingTick: (s, itemId, done, note) => csOnboarding.tick(s, itemId, done !== false, note),
+    onboardingItem: (s, itemId, input) => csOnboarding.setItem(s, itemId, input || {}),
+    onboardingStart: (s, hotelId) => csOnboarding.startFor(s, hotelId),
+    outlets: (s, query) => csOutlets.list(s, query || {}),
+    outlet: (s, hotelId) => csOutlets.detail(s, hotelId),
+    outletPlan: (s, hotelId, input) => csOutlets.switchPlan(s, hotelId, input || {}),
+    outletReleasePc: (s, hotelId, reason) => csOutlets.releasePc(s, hotelId, reason),
+    outletDeviceLogout: (s, hotelId, deviceId, reason) => csOutlets.logoutDevice(s, hotelId, deviceId, reason),
+    outletMove: (s, hotelId, accountId, reason) => csAccounts.moveOutlet(s, hotelId, accountId, reason),
+    outletOpenAs: (s, hotelId, reason) => csOutlets.openAs(s, hotelId, reason),
+    supportEnd: (s, sessionId) => csOutlets.endSupport(s, sessionId),
+    healthRun: async (s) => {
+        auth.need(s, "settings.manage");
+        const job = await queue.enqueue({ kind: "cs.health", maxAttempts: 1 });
+        return { jobId: job.id };
+    },
 
     /* worker */
     workerStatus: (s) => {

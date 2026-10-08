@@ -11,7 +11,8 @@ const { workingHours, todayRange, moment, TZ } = require("./util");
 // The morning digest (design doc: "a 9:30 am daily digest per person"): on
 // working days, each salesperson gets overdue / due today / new waiting /
 // escalations in the panel and, once Meta approves the staff template, on
-// WhatsApp (owner chose both, 7 Oct 2026).
+// WhatsApp (owner chose both, 7 Oct 2026). People who look after customers
+// get it too, with their customer tasks and onboarding steps counted in.
 
 /** The WhatsApp template the owner submits to Meta (Settings > Digest shows it). */
 const TEMPLATE_TEXT = "Good morning {{1}}! Your BillerPe sales day: {{2}} overdue, {{3}} due today, {{4}} new leads waiting. Open My Day: https://admin.billerpe.in";
@@ -23,7 +24,9 @@ async function numbersFor(userId, now = new Date()) {
     const today = await CrmTaskV2.count({ where: { owner_id: userId, status: "open", due_at: { [Op.gte]: now, [Op.lt]: end } } });
     const fresh = await CrmLeadV2.count({ where: { owner_id: userId, stage_id: c.stageByKey.get("new")?.id || 0, first_contact_at: null, deleted_at: null, merged_into_id: null } });
     const esc = await CrmEscalation.count({ where: { status: "open", to_ids: { [Op.like]: `%,${userId},%` } } });
-    return { overdue, today, fresh, esc };
+    // Customer tasks and onboarding steps (phase 5) count in the same day.
+    const cs = await require("../cs/today").counts(userId, now);
+    return { overdue: overdue + cs.overdue, today: today + cs.today, fresh, esc };
 }
 
 /** Job crm.digest (every 5 minutes): sends today's digest once, after the set time on working days. */
@@ -33,7 +36,7 @@ async function run(now = new Date(), { force = false } = {}) {
     const wh = await workingHours();
     const m = moment(now).tz(TZ);
     if (!force && (!wh.days.includes(m.day()) || m.format("HH:mm") < d.time)) return "not yet";
-    const roles = (await AdmRole.findAll({ raw: true })).filter((r) => perms.can(perms.parse(r.permissions), "leads.edit")).map((r) => r.id);
+    const roles = (await AdmRole.findAll({ raw: true })).filter((r) => perms.can(perms.parse(r.permissions), "leads.edit") || perms.can(perms.parse(r.permissions), "customers.manage")).map((r) => r.id);
     const people = await AdmUser.findAll({ where: { status: "active", role_id: roles }, raw: true });
     const tpl = d.whatsapp ? await CrmWaTemplate.findOne({ where: { name: d.templateName, active: true } }) : null;
     const date = m.format("YYYY-MM-DD");

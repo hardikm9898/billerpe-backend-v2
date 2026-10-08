@@ -206,6 +206,9 @@ const ownerView = (o) => ({ name: o.user.name || o.hotel.owner_name || "", mobil
  * resume and the middleware so both end a session for the same reasons.
  */
 async function check(token) {
+    // BillerPe support's 30-minute "open as outlet" session (ownerv1/support.js).
+    const support = require("./support");
+    if (support.verify(token)) return support.check(token);
     const p = verify(token);
     if (!p) return null;
     const device = await OwnerDevice.findOne({ where: { id: Number(p.did) || 0, owner_mobile: String(p.m), status: "active" } });
@@ -221,6 +224,10 @@ async function check(token) {
 /** App start: confirm the saved token. */
 async function resume({ token, device }) {
     const s = await check(token);
+    if (s && s.support) {
+        const o = s.owned[0];
+        return { ok: true, session: { token, owner: ownerView(o), deviceId: String(device?.deviceId || ""), support: { staff: s.support.staffName, outlet: s.support.outlet, expiresAt: s.support.expiresAt } } };
+    }
     if (!s || s.device.device_id !== String(device?.deviceId || "")) return { ok: false, error: "session-ended" };
     const d = cleanDevice(device);
     await s.device.update({ app_version: d.app_version || s.device.app_version, last_active: new Date() });
@@ -239,7 +246,7 @@ async function requireOwner(req, res, next) {
         const s = await check(token);
         if (!s) return res.status(401).json({ ok: false, error: "Your session has ended. Please log in again.", code: "session-ended" });
         req.owner = { ...s, outletIds: new Set(s.owned.map((o) => o.hotel.id)) };
-        if (!s.device.last_active || Date.now() - new Date(s.device.last_active).getTime() > 60000) {
+        if (!s.support && (!s.device.last_active || Date.now() - new Date(s.device.last_active).getTime() > 60000)) {
             void OwnerDevice.update({ last_active: new Date() }, { where: { id: s.device.id } }).catch(() => {});
         }
         return next();

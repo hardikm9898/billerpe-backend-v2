@@ -25,6 +25,7 @@ require("./adminv1/crm/cadences");
 require("./adminv1/crm/campaigns");
 require("./adminv1/crm/escalations");
 require("./adminv1/crm/digest");
+require("./adminv1/cs/health");
 
 const log = { info: (...a) => logger.info(a.join(" ")), error: (...a) => logger.error(a.join(" ")) };
 // Built-in rules and cadences exist before the first event is handled.

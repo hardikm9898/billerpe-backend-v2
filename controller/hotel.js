@@ -29,6 +29,7 @@ const BillChargeRule = require("../model/billChargeRule")
 const NotificationSetting = require("../model/notificationSetting")
 const RolePermissionDefault = require("../model/rolePermissionDefault")
 const { ROLES, ROLE_PERMISSION_DEFAULTS, ROLE_SPECIAL_DEFAULTS } = require("../constant/rolePermissionDefaults")
+const { seedOutlet } = require("../services/outletSetup")
 const saltRounds = 10
 
 const addHotelDetails = async (req, res) => {
@@ -55,69 +56,10 @@ const addHotelDetails = async (req, res) => {
             created_by: req.user,
         }
         const create = await Hotel.create(hotelData)
-        await RestaurantSetting.create({ hotel_id: create.id })
-        // Every hotel needs exactly one default menu catalogue to exist -
-        // same seeding point as the default Role right below, and the same
-        // backfill migration 20260901120200 gives every pre-existing hotel.
-        await MenuCatalog.create({ name: "Main Menu", hotel_id: create.id, is_default: true, enter_by: create.hotel_name })
-        // Same 4 defaults billerpe-pos-pro-v2's own mock/ops-seed.ts starts
-        // with (Cash/Due protected, UPI/Card removable) - matches migration
-        // 20260902090000's backfill for every pre-existing hotel.
-        await PaymentMode.bulkCreate([
-            { name: "Cash", hotel_id: create.id, active: true, deletable: false, enter_by: create.hotel_name },
-            { name: "UPI", hotel_id: create.id, active: true, deletable: true, enter_by: create.hotel_name },
-            { name: "Card", hotel_id: create.id, active: true, deletable: true, enter_by: create.hotel_name },
-            { name: "Due", hotel_id: create.id, active: true, deletable: false, enter_by: create.hotel_name },
-        ])
-        // Same defaults as mock/ops-seed.ts's deliveryChargeRule/
-        // packagingChargeRule - matches migration 20260902100000's backfill
-        // for every pre-existing hotel.
-        await BillChargeRule.bulkCreate([
-            { rule_for: "delivery", hotel_id: create.id, active: false, charge_type: "fixed", charge_value: 40, calculation_on: "core", charge_automatic: [], calculation_on_tax: false, greater_less: "3", greater_less_amount: 0, enter_by: create.hotel_name },
-            { rule_for: "packaging", hotel_id: create.id, active: true, charge_type: "fixed", charge_value: 15, calculation_on: "core", charge_automatic: ["pickup"], calculation_on_tax: false, greater_less: "3", greater_less_amount: 0, enter_by: create.hotel_name },
-        ])
-        // Same 6 triggers/defaults as mock/data.ts's notificationSettings -
-        // matches migration 20260902110000's backfill for every
-        // pre-existing hotel.
-        await NotificationSetting.bulkCreate([
-            { trigger: "Order settled", hotel_id: create.id, whatsapp: true, sms: false, in_app: true },
-            { trigger: "KOT ready", hotel_id: create.id, whatsapp: false, sms: false, in_app: true },
-            { trigger: "Low stock", hotel_id: create.id, whatsapp: true, sms: true, in_app: true },
-            { trigger: "Sync failure", hotel_id: create.id, whatsapp: false, sms: false, in_app: true },
-            { trigger: "Cash variance", hotel_id: create.id, whatsapp: true, sms: false, in_app: true },
-            { trigger: "Reservation reminder", hotel_id: create.id, whatsapp: true, sms: true, in_app: true },
-        ])
-        // Same role-level permission template as mock/data.ts's
-        // ROLE_PERMISSION_DEFAULTS/ROLE_SPECIAL_DEFAULTS - matches migration
-        // 20260903120000's backfill for every pre-existing hotel.
-        await RolePermissionDefault.bulkCreate(
-            ROLES.map((roleName) => ({
-                hotel_id: create.id,
-                role: roleName,
-                permissions: ROLE_PERMISSION_DEFAULTS[roleName],
-                special_permissions: ROLE_SPECIAL_DEFAULTS[roleName],
-            })),
-        )
-        const role = await Role.create({ role_name: USER_ROLE.ADMIN, hotel_id: create.id })
+        // Settings, menu, payment modes, charges, roles and the owner login -
+        // the same seed as the SuperAdmin's "Mark won -> create outlet".
         const hashedOwnerPassword = await bcrypt.hash(JSON.parse(req.body.documents).password, 10)
-        const user = await HotelUser.create({ created_by: req.user, role_cd: role.role_cd, hotel_id: create.id, email: JSON.parse(req.body.documents).owner_email_id, number: JSON.parse(req.body.documents).owner_number, name: JSON.parse(req.body.documents).owner_name, active: true, password: hashedOwnerPassword })
-
-        const access = [
-            { access_name: 'Order', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Table', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Menu', read: true, create: true, edit: true, delete: true },
-            { access_name: 'DashBoard', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Reports', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Biller', read: true, create: true, edit: true, delete: true },
-            { access_name: 'User', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Booking', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Stock', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Expense', read: true, create: true, edit: true, delete: true },
-            { access_name: 'Zomato', read: true, create: true, edit: true, delete: true },
-        ]
-        for (const cur of access) {
-            await UserAccess.create({ access_name: cur.access_name, read: cur.read, create: cur.create, edit: cur.edit, delete: cur.delete, hotel_id: create.id, hotelUser_id: user.id })
-        }
+        await seedOutlet(create, { email: JSON.parse(req.body.documents).owner_email_id, number: JSON.parse(req.body.documents).owner_number, name: JSON.parse(req.body.documents).owner_name, passwordHash: hashedOwnerPassword }, { createdBy: req.user })
 
         const { discountrate, gst, discount, grandAmount, subTotal, plan_id, gst_calculated, plan_start_date, plan_end_date } = JSON.parse(req.body.documents).planData
 
