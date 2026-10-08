@@ -317,6 +317,10 @@ const HANDLERS = {
     hardwareOrders: (s, query) => bilHardware.list(s, query || {}),
     hardwareStatus: (s, id, input) => bilHardware.setStatus(s, id, input || {}),
     hardwareCreate: (s, input) => bilHardware.create(s, input || {}),
+    ebillFree: (s, hotelId, count, reason) => require("./bil/ebill").grantFree(s, hotelId, count, reason),
+    products: (s) => require("./bil/products").list(s),
+    productSave: (s, input) => require("./bil/products").save(s, input || {}),
+    ebillHistory: (s, query) => require("./bil/ebill").history(s, query || {}),
 
     /* support tickets (phase 7) */
     supportCounts: (s) => supTickets.counts(s),

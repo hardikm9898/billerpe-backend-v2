@@ -255,6 +255,43 @@ async function run() {
     r = await call("menuSampleFile", cs.token);
     check("the sample menu file downloads", r.ok && r.result.base64.startsWith("UEsD"));
 
+    console.log("\nE-bill credits: free credits and history (old panel)");
+    r = await call("ebillFree", A.token, newHotel.id, 100, "Goodwill for delay");
+    check("a salesperson cannot give credits", !r.ok);
+    r = await call("ebillFree", cs.token, newHotel.id, 100, "ok");
+    check("a reason is needed", !r.ok && /why/.test(r.error));
+    r = await call("ebillFree", cs.token, newHotel.id, 100, "Goodwill for the late install");
+    check("100 free credits given: balance 100", r.ok && r.result.balance === 100, r);
+    r = await call("ebillFree", cs.token, newHotel.id, 50, "Second goodwill top-up");
+    check("they add up: 150", r.ok && r.result.balance === 150, r);
+    await M.EBillCreditDebit.create({ hotel_id: newHotel.id, debit: true, credit: false, amount: 1 });
+    r = await call("ebillHistory", cs.token, { hotelId: newHotel.id });
+    const e0 = r.ok && r.result.entries[0];
+    check("history: newest first, who gave it and why, balance and use in 30 days", e0 && e0.count === 50 && e0.kind === "free" && e0.by === cs.u.name && e0.reason === "Second goodwill top-up" && r.result.outlet.balance === 150 && r.result.outlet.used30 === 1, r.ok ? r.result : r);
+    r = await call("ebillHistory", cs.token, {});
+    check("the all-outlets history includes it", r.ok && r.result.entries.some((x) => x.hotelId === newHotel.id));
+
+    console.log("\nWebsite products (old panel: Product Management)");
+    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    r = await call("productSave", cs.token, { title: `Par Printer ${stamp}`, price: 6500, newImages: [{ data: PNG, mime: "image/png", name: "p.png" }] });
+    check("only an admin edits products", !r.ok, r);
+    r = await call("productSave", admin.token, { title: `Par Printer ${stamp}`, price: 6500, keyFeatures: ["80mm", "", "USB + LAN"], offerActive: true, offerPrice: 5999, offer: "Diwali", newImages: [{ data: PNG, mime: "image/png", name: "p.png" }] });
+    const prod = r.ok && r.result.product;
+    created.products = prod ? [prod.id] : [];
+    check("a product is added with its photo, features and offer", prod && prod.images.length === 1 && prod.keyFeatures.join("|") === "80mm|USB + LAN" && prod.offerActive && prod.offerPrice === 5999, r);
+    r = await call("productSave", admin.token, { id: prod.id, title: `Par Printer ${stamp}`, price: 6800, images: prod.images, newImages: [{ data: PNG, mime: "image/png", name: "q.png" }], offerActive: false });
+    check("edit: price changed, photo added, offer off", r.ok && r.result.product.price === 6800 && r.result.product.images.length === 2 && !r.result.product.offerActive, r);
+    r = await call("productSave", admin.token, { id: prod.id, title: `Par Printer ${stamp}`, price: 6800, images: [] });
+    check("a product keeps at least one photo", !r.ok && /photo/.test(r.error));
+    r = await call("productSave", admin.token, { title: `Par Bad ${stamp}`, price: 100, offerActive: true, offerPrice: 200, newImages: [{ data: PNG, mime: "image/png", name: "p.png" }] });
+    check("an offer above the price is refused", !r.ok);
+    r = await call("productSave", admin.token, { title: `Par Bad ${stamp}`, price: 100, newImages: [{ data: "aGVsbG8=", mime: "text/plain", name: "x.txt" }] });
+    check("only photos (JPG / PNG / WEBP)", !r.ok && /JPG/.test(r.error));
+    r = await call("products", cs.token);
+    check("the list shows it to billing staff", r.ok && r.result.products.some((x) => x.id === prod.id && x.price === 6800));
+    const hw = await require("../adminv1/bil/catalog").hardware();
+    check("hardware invoices use the new price", hw.some((x) => x.id === prod.id && x.price === 6800));
+
     console.log("\nAssign all unassigned");
     await M.CrmLeadV2.update({ owner_id: null }, { where: { id: ids.slice(0, 4) } });
     r = await call("leadsAssignUnassigned", mgr.token);
@@ -265,6 +302,7 @@ async function run() {
 }
 
 async function cleanup() {
+    if (created.products && created.products.length) await require("../model/webSiteProducts").destroy({ where: { id: created.products } });
     if (created.hotels && created.hotels.length) {
         const hotels = created.hotels;
         const accIds = (await M.CsAccountOutlet.findAll({ where: { hotel_id: hotels }, attributes: ["account_id"], raw: true })).map((x) => x.account_id);
@@ -276,6 +314,8 @@ async function cleanup() {
         if (M.Menu) await M.Menu.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         if (M.Menu_categ) await M.Menu_categ.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         if (M.AuditLog) await M.AuditLog.destroy({ where: { hotel_id: hotels } }).catch(() => {});
+        await M.EBillCreditDebit.destroy({ where: { hotel_id: hotels } }).catch(() => {});
+        await M.EBillCredit.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         await M.HotelUser.destroy({ where: { hotel_id: hotels } });
         await M.Role.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         await M.Hotel.destroy({ where: { id: hotels } });
