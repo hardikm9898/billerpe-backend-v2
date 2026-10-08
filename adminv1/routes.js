@@ -303,6 +303,7 @@ const HANDLERS = {
     invoicePdf: (s, id) => bilPdf.pdf(s, id),
     invoiceSend: (s, id) => bilShare.send(s, id),
     invoiceLink: (s, id) => bilPayments.createLink(s, id),
+    quickPayLink: (s, input) => bilPayments.quickLink(s, input || {}),
     dues: (s) => bilInvoices.dues(s),
     payments: (s) => bilPayments.pendingList(s),
     paymentRecord: (s, invoiceId, input) => bilPayments.record(s, invoiceId, input || {}),

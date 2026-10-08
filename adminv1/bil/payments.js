@@ -248,4 +248,20 @@ async function pollLinks() {
 worker.registerJob("bil.links", pollLinks);
 worker.registerSchedule("bil.links", 300);
 
-module.exports = { record, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, METHODS };
+/**
+ * Quick payment link (old panel: Generate Payment Link; owner 2026-10-08:
+ * the link makes the invoice). One step: the GST invoice for the outlet or
+ * buyer and the lines, issued, and its PhonePe link. A discount above the
+ * free limit waits for approval first, and then no link is made yet.
+ */
+async function quickLink(s, input = {}) {
+    need(s, "billing.manage");
+    const invoices = require("./invoices");
+    const draft = await invoices.saveDraft(s, input);
+    const issued = await invoices.issue(s, draft.id);
+    if (issued.status !== "issued") return { invoiceId: draft.id, status: issued.status, needsApproval: true };
+    const l = await linkFor(draft.id, s.user.id);
+    return { invoiceId: draft.id, number: issued.number, status: "issued", url: l.url, amount: Number(l.amount), simulated: l.url.startsWith("sim:") };
+}
+
+module.exports = { record, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, METHODS, quickLink };

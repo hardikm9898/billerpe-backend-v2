@@ -292,6 +292,17 @@ async function run() {
     const hw = await require("../adminv1/bil/catalog").hardware();
     check("hardware invoices use the new price", hw.some((x) => x.id === prod.id && x.price === 6800));
 
+    console.log("\nQuick payment link (old panel: Generate Payment Link; it makes the invoice)");
+    await require("../adminv1/bil/catalog").ensureCatalog();
+    const appItem = await M.BilItem.findOne({ where: { kind: "plan", product: "CLOUD_APP", active: true }, order: [["price", "ASC"]] });
+    r = await call("quickPayLink", A.token, { hotelId: newHotel.id, lines: [{ itemId: appItem.id }] });
+    check("a salesperson without billing cannot make one", !r.ok);
+    r = await call("quickPayLink", cs.token, { hotelId: newHotel.id, lines: [{ itemId: appItem.id }] });
+    const inv = r.ok && (await M.BilInvoice.findByPk(r.result.invoiceId));
+    check("one step: an issued GST invoice with a number, and its payment link", r.ok && r.result.status === "issued" && /^BPE\//.test(r.result.number) && !!r.result.url && inv && inv.status === "issued" && Number(inv.total) === r.result.amount, r);
+    r = await call("quickPayLink", cs.token, { hotelId: newHotel.id, lines: [{ itemId: appItem.id }], discountPct: 30, discountReason: "Big chain" });
+    check("above 25% discount: waits for approval, no link yet", r.ok && r.result.needsApproval && !r.result.url, r);
+
     console.log("\nAssign all unassigned");
     await M.CrmLeadV2.update({ owner_id: null }, { where: { id: ids.slice(0, 4) } });
     r = await call("leadsAssignUnassigned", mgr.token);
@@ -305,6 +316,12 @@ async function cleanup() {
     if (created.products && created.products.length) await require("../model/webSiteProducts").destroy({ where: { id: created.products } });
     if (created.hotels && created.hotels.length) {
         const hotels = created.hotels;
+        const invs = (await M.BilInvoice.findAll({ where: { hotel_id: hotels }, attributes: ["id"], raw: true })).map((x) => x.id);
+        if (invs.length) {
+            for (const m of [M.BilPayment, M.BilPayLink, M.BilInvoiceLine]) await m.destroy({ where: { invoice_id: invs } });
+            await M.BilInvoice.destroy({ where: { id: invs } });
+        }
+        await M.CsRenewal.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         const accIds = (await M.CsAccountOutlet.findAll({ where: { hotel_id: hotels }, attributes: ["account_id"], raw: true })).map((x) => x.account_id);
         for (const name of ["CsOnboardingItem", "CsTask", "CsOutletDay", "CsAccountOutlet", "UserAccess", "PaymentMode", "BillChargeRule", "NotificationSetting", "RolePermissionDefault", "MenuCatalog", "RestaurantSetting"]) if (M[name]) await M[name].destroy({ where: { hotel_id: hotels } }).catch(() => {});
         if (accIds.length) {
