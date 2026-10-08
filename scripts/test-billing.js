@@ -274,6 +274,10 @@ async function run() {
     check("extended: plan end = now + 24 h, unlocked, in grace", near(e1.plan_end_date, Date.now() + 24 * 3600000) && !st.state.expired && st.state.inGrace, st);
     let err = await renewals.extendOneDay(hExp.id).catch((e) => e.message);
     check("cannot extend before it ends again", /has not ended/.test(err), err);
+    // Moved on by other means (before the worker closes the renewal): no grace banner.
+    await e1.update({ plan_end_date: moment().add(30, "days").toDate() });
+    st = await renewals.planState(hExp.id);
+    check("plan end moved past the extra day: not 'in grace', no banner text", !st.expired && !st.inGrace && !st.message, st);
     await e1.update({ plan_end_date: moment().subtract(1, "minute").toDate() });
     st = await renewals.planState(hExp.id);
     err = await renewals.extendOneDay(hExp.id).catch((e) => e.message);

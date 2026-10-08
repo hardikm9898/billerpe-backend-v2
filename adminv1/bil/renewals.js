@@ -150,18 +150,22 @@ async function planState(hotelId, now = new Date()) {
     const expired = !!end && end <= now;
     const r = await CsRenewal.findOne({ where: { hotel_id: hotelId, stage: OPEN }, order: [["ends_on", "DESC"]], raw: true });
     const graceUsed = !!(r && r.grace_used_at);
+    // The extra day is running only while the end IS that day: once the plan
+    // is paid or moved on (and before the worker closes the renewal), no banner.
+    const graceEnd = graceUsed ? new Date(r.grace_used_at).getTime() + 24 * 3600000 + 60000 : 0;
+    const inGrace = graceUsed && !expired && !!end && end.getTime() <= graceEnd;
     return {
         hotelId: h.id,
         outlet: h.hotel_name,
         endsAt: end ? end.toISOString() : null,
         paidUntil: r && r.grace_used_at ? new Date(r.ends_on).toISOString() : end ? end.toISOString() : null,
         expired,
-        inGrace: graceUsed && !expired,
+        inGrace,
         graceUsed,
         canExtend: expired && !graceUsed,
         daysLeft: end ? Math.floor((end.getTime() - now.getTime()) / 86400000) : null,
         message: !expired
-            ? graceUsed
+            ? inGrace
                 ? `Extended by 1 day until ${moment(end).tz(TZ).format("D MMM, h:mm A")}. Renew now to keep using BillerPe.`
                 : null
             : graceUsed
