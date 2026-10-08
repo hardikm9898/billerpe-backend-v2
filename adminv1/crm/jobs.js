@@ -78,6 +78,8 @@ async function sweep({ only = null } = {}) {
 }
 
 async function rescore() {
+    // The worker is its own process: read the weights fresh (Settings may have changed them).
+    require("./score").resetWeights();
     const c = await config.load();
     let n = 0;
     let last = 0;

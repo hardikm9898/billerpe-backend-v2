@@ -28,6 +28,7 @@ require("./adminv1/crm/digest");
 require("./adminv1/cs/health");
 require("./adminv1/bil/payments");
 require("./adminv1/bil/renewals");
+require("./adminv1/sup/jobs");
 require("./adminv1/bil/hardware");
 
 const log = { info: (...a) => logger.info(a.join(" ")), error: (...a) => logger.error(a.join(" ")) };

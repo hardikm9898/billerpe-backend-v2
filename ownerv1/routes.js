@@ -102,10 +102,22 @@ const HANDLERS = {
     planExtend: (o, outletId) => planCall(o, outletId, (id) => require("../adminv1/bil/renewals").extendOneDay(id, "Owner App")),
     planPayLink: (o, outletId) => planCall(o, outletId, (id) => require("../adminv1/bil/renewals").payLink(id)),
 
+    /* support tickets to BillerPe, with support's replies (SuperAdmin phase 7) */
+    tickets: (o, outletId, page) => ticketCall(o, outletId, (id) => require("../adminv1/sup/outlet").list(id, page)),
+    ticketRaise: (o, outletId, input) => ticketCall(o, outletId, (id, own) => require("../adminv1/sup/outlet").raise(id, { ...(input || {}), raisedBy: `${own.user.name || "Owner"} (Owner App)`, contactName: own.user.name || "", contactMobile: own.user.number }, "owner_app")),
+    ticketReply: (o, outletId, ticketId, text) => ticketCall(o, outletId, (id, own) => require("../adminv1/sup/outlet").reply(id, ticketId, text, { by: `${own.user.name || "Owner"} (Owner App)`, channel: "owner_app" })),
+
     /* phase 2 - reports */
     reportCatalog: () => reports.catalog(),
     report: (o, query) => reports.report(o, query || {}),
 };
+
+function ticketCall(o, outletId, fn) {
+    const id = Number(outletId) || 0;
+    const own = o.owned.find((x) => x.hotel.id === id);
+    if (!own) throw new RuleError("This outlet is not yours.");
+    return fn(id, own);
+}
 
 function planCall(o, outletId, fn) {
     const id = Number(outletId) || 0;

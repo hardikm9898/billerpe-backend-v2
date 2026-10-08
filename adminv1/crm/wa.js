@@ -217,6 +217,20 @@ async function sendText(chat, text, { sender = "user", userId = null } = {}) {
     return deliver(msg, { messaging_product: "whatsapp", to: chat.phone, type: "text", text: { body, preview_url: true } });
 }
 
+/**
+ * A question with up to 3 reply buttons (the ticket rating). Only inside
+ * the window; the answer comes back as an ordinary message with the
+ * button's title as its text.
+ */
+async function sendButtons(chat, text, buttons, { sender = "user", userId = null } = {}) {
+    const body = String(text || "").trim().slice(0, 1000);
+    if (!windowOpen(chat)) throw new RuleError("The 24-hour window is closed. Send a template instead.");
+    const list = (buttons || []).slice(0, 3).map((b) => ({ type: "reply", reply: { id: txt(b.id, 200), title: txt(b.title, 20) } }));
+    const shown = [body, list.map((b) => `[${b.reply.title}]`).join(" ")].join("\n");
+    const msg = await record(chat, { direction: "out", kind: "text", body: shown, sender, user_id: userId, status: "queued" });
+    return deliver(msg, { messaging_product: "whatsapp", to: chat.phone, type: "interactive", interactive: { type: "button", body: { text: body }, action: { buttons: list } } });
+}
+
 const MEDIA_KIND = (mime) => (/^image\//.test(mime) ? "image" : /^video\//.test(mime) ? "video" : /^audio\//.test(mime) ? "audio" : "document");
 
 /** A photo, video, voice note or file (by public URL). Only inside the window. */
@@ -444,5 +458,5 @@ async function fetchInboundMedia(messageId) {
 
 module.exports = {
     transport, live, waNumber, windowOpen, windowEndsAt, optedOut, setOptout, templateWindow, autoTemplatesToday, fillBody, paramValues,
-    classify, chatFor, linkLead, record, sendText, sendMedia, sendTemplate, note, receiveMessage, handleWebhook, applyStatus, onInbound, fetchInboundMedia, STOP_WORDS,
+    classify, chatFor, linkLead, record, sendText, sendButtons, sendMedia, sendTemplate, note, receiveMessage, handleWebhook, applyStatus, onInbound, fetchInboundMedia, STOP_WORDS,
 };

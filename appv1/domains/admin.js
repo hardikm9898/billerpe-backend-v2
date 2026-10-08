@@ -386,12 +386,23 @@ async function changePassword(c, current, next) {
 /** Support ticket to BillerPe (plan change / renewal requests go the same way - owner decision). */
 async function raiseTicket(c, subject, body, kind) {
     if (!String(subject || "").trim()) fail("Add a subject");
-    const row = await M.RaiseTicket.create({
-        hotel_id: c.hotelId, status: "new", priority: kind === "support" ? "low" : "medium",
-        ticket_type: ["support", "plan-change", "renewal"].includes(kind) ? kind : "support",
-        issue: `${String(subject).trim()}\n${String(body || "").trim()}\n\n— ${c.userName} (${c.role}), POS App`,
-    });
-    return { ticketId: String(row.id) };
+    // Into the SuperAdmin support queue (phase 7): timers, an owner, replies back here.
+    const r = await require("../../adminv1/sup/outlet").raise(c.hotelId, {
+        subject: String(subject).trim(),
+        details: String(body || "").trim() || String(subject).trim(),
+        category: kind === "plan-change" || kind === "renewal" ? "Plan and payment" : "POS App",
+        legacyType: ["support", "plan-change", "renewal"].includes(kind) ? kind : "support",
+        priority: "medium",
+        raisedBy: `${c.userName} (${c.role}), POS App`,
+        contactName: c.userName,
+        contactMobile: c.user && c.user.number,
+    }, "pos_app");
+    return { ticketId: String(r.id) };
+}
+
+/** The outlet answers support from the app's ticket list. */
+async function ticketReply(c, ticketId, text) {
+    return require("../../adminv1/sup/outlet").reply(c.hotelId, ticketId, text, { by: `${c.userName} (${c.role})`, channel: "pos_app" });
 }
 
 async function markAlertsRead(c, ids) {
@@ -432,5 +443,6 @@ module.exports = {
     changePin: { fn: changePin },
     changePassword: { fn: changePassword },
     raiseTicket: { fn: raiseTicket },
+    ticketReply: { fn: ticketReply },
     markAlertsRead: { fn: markAlertsRead },
 };

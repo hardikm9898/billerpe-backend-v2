@@ -53,6 +53,12 @@ const sendWhatsAppMessage = async (name, phone_number) => {
 }
 
 const sendAdminNotifications = (name, phone_number, email, message) => {
+    // Never from a test server (a *_test database or DISABLE_CRON=1, as the
+    // scheduled jobs in server.js): these go to real phones.
+    if (process.env.DISABLE_CRON === "1" || /_test$/.test(process.env.DATABASE_NAME || "")) {
+        console.log("[admin whatsapp] skipped on a test server:", name, message);
+        return;
+    }
     const adminNumbers = ['8866484190', '8490900456']
     // const adminNumbers = ['7434993463']
 

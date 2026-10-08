@@ -59,9 +59,9 @@ async function check(token) {
 }
 
 // Calls that only read. Anything else from a support session is a change and is audited.
-const READS = new Set(["outlets", "home", "outlet", "tables", "bills", "bill", "manage", "manageMenu", "manageStaff", "manageTables", "manageSettings", "manageStock", "alerts", "alertCount", "alertRules", "daySummary", "pcHistory", "reportCatalog", "report", "devices"]);
+const READS = new Set(["outlets", "home", "outlet", "tables", "bills", "bill", "manage", "manageMenu", "manageStaff", "manageTables", "manageSettings", "manageStock", "alerts", "alertCount", "alertRules", "daySummary", "pcHistory", "reportCatalog", "report", "devices", "tickets"]);
 // The owner's own things: not for support.
-const BLOCKED = new Set(["saveAlertRules", "logoutDevice"]);
+const BLOCKED = new Set(["saveAlertRules", "logoutDevice", "ticketRaise", "ticketReply"]);
 
 /** Runs before a handler in a support session: answers some calls itself; returns undefined to go on. */
 async function before(o, name) {

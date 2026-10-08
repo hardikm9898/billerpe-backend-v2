@@ -6,7 +6,7 @@ const { need } = require("../auth");
 const config = require("./config");
 const scope = require("./scope");
 const { syncNext, addTask, cancelOpen, openCount, scoreFacts } = require("./tasks");
-const { scoreLead, band } = require("./score");
+const { scoreLead, band, weights } = require("./score");
 const { assign, pickOwner } = require("./assign");
 const { notify } = require("./notify");
 const { normalizePhone, firstContactDue, txt, intOrNull, json, parse, moment, TZ } = require("./util");
@@ -63,7 +63,7 @@ const isOpen = (c, lead) => c.stageById.get(lead.stage_id)?.kind === "open";
 async function recalc(lead, t) {
     const c = await config.load();
     const facts = await scoreFacts(lead.id, t);
-    const { score } = scoreLead(lead.get ? lead.get({ plain: true }) : lead, c.stageById.get(lead.stage_id)?.stage_key, facts);
+    const { score } = scoreLead(lead.get ? lead.get({ plain: true }) : lead, c.stageById.get(lead.stage_id)?.stage_key, facts, new Date(), await weights());
     if (score !== lead.score) await CrmLeadV2.update({ score }, { where: { id: lead.id }, transaction: t });
     return score;
 }
@@ -145,6 +145,22 @@ async function list(s, query = {}) {
     if (query.band === "hot") where.score = { [Op.gte]: 60 };
     else if (query.band === "warm") where.score = { [Op.gte]: 30, [Op.lt]: 60 };
     else if (query.band === "cold") where.score = { [Op.lt]: 30 };
+    // Report drill-downs (phase 7): created / won in a period (India dates), stage kind, lost reason, never contacted.
+    const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? moment.tz(String(v), TZ) : null);
+    const range = (fromV, toV) => {
+        const f = day(fromV);
+        const t2 = day(toV);
+        if (!f && !t2) return null;
+        return { ...(f ? { [Op.gte]: f.startOf("day").toDate() } : {}), ...(t2 ? { [Op.lt]: t2.add(1, "day").startOf("day").toDate() } : {}) };
+    };
+    const created = range(query.from, query.to);
+    if (created) where.createdAt = created;
+    const wonIn = range(query.wonFrom, query.wonTo);
+    if (wonIn) where.won_at = wonIn;
+    if (["won", "lost", "open"].includes(query.stageKind) && !query.stageId) where.stage_id = c.stages.filter((st) => st.kind === query.stageKind).map((st) => st.id);
+    if (query.lostReasonId === "none") where.lost_reason_id = null;
+    else if (query.lostReasonId) where.lost_reason_id = Number(query.lostReasonId) || 0;
+    if (query.contacted === "no") where.first_contact_at = null;
 
     const order =
         view === "won_month" ? [["won_at", "DESC"]] : view === "lost" ? [["closed_at", "DESC"]] : view === "revisit" ? [["revisit_at", "ASC"]] : view === "all" ? [["createdAt", "DESC"]] : [[sequelize.literal("next_action_at IS NULL"), "DESC"], ["next_action_at", "ASC"], ["id", "ASC"]];
@@ -175,7 +191,7 @@ async function detail(s, id) {
     ]);
     const who = await names([l.owner_id, ...tasks.map((x) => x.owner_id), ...acts.map((x) => x.actor_id), ...calls.map((x) => x.user_id), ...dups.map((d) => d.owner_id)]);
     const facts = await scoreFacts(l.id);
-    const sc = scoreLead(l, c.stageById.get(l.stage_id)?.stage_key, facts);
+    const sc = scoreLead(l, c.stageById.get(l.stage_id)?.stage_key, facts, new Date(), await weights());
     return {
         serverTime: new Date().toISOString(),
         lead: {

@@ -4,7 +4,7 @@ const router = express.Router();
 const { deviceAuth } = require("../middleware/deviceAuth");
 const { heartbeat, pull, push, pushOrders, rebaseLocalIds } = require("../controller/sync/syncController");
 const { getManifest, getFile } = require("../controller/sync/webBundleController");
-const { createTicket, listTickets } = require("../controller/sync/supportController");
+const { createTicket, listTickets, replyTicket } = require("../controller/sync/supportController");
 const { downloadHistory, linkHistory } = require("../controller/sync/historyController");
 const { getFile: getExeReleaseFile } = require("../controller/sync/exeReleaseController");
 const { listDownloads, getFile: getAppDownloadFile } = require("../controller/sync/appDownloadController");
@@ -68,5 +68,6 @@ router.get("/plan", deviceAuth, planReply((req) => renewals().planState(req.user
 router.post("/plan/extend", deviceAuth, planReply((req) => renewals().extendOneDay(req.user, `Outlet PC${req.body && req.body.staff ? `: ${String(req.body.staff).slice(0, 30)}` : ""}${req.body && req.body.usedAt ? " (offline)" : ""}`, new Date(), req.body && req.body.usedAt)));
 router.post("/plan/pay", deviceAuth, planReply((req) => renewals().payLink(req.user)));
 router.get("/support/tickets", deviceAuth, listTickets);
+router.post("/support/ticket/:id/reply", deviceAuth, replyTicket);
 
 module.exports = router;

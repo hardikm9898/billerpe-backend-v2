@@ -22,6 +22,7 @@ const CATALOG = [
     { group: "Billing", key: "billing.manage", label: "Create invoices, record payments" },
     { group: "Billing", key: "billing.approve", label: "Approve payments, credit notes and refunds" },
     { group: "Support", key: "support.use", label: "Answer support tickets" },
+    { group: "Support", key: "support.manage", label: "Assign tickets to others; told when a ticket is late" },
     { group: "Admin", key: "automation.manage", label: "Edit automation rules and cadences" },
     { group: "Admin", key: "reports.view", label: "See reports" },
     { group: "Admin", key: "staff.manage", label: "Add and edit staff, teams and leave" },

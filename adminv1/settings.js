@@ -69,7 +69,50 @@ const DEFAULTS = {
         terms: "Prices in Indian rupees. Subscription fees are not refundable once the plan has started.",
         bankDetails: "",
     },
+    // Support tickets (phase 7, owner 2026-10-08): timers by priority in
+    // working minutes (company hours: Medium's 510 = one working day of
+    // 10:30-19:00); a ticket waiting on the customer closes itself after
+    // waitingCloseDays; a customer who writes again within reopenDays of the
+    // close reopens it. Replies outside WhatsApp's 24-hour window go by the
+    // updateTemplate; the 1-tap rating after closing by ratingTemplate
+    // (both submitted to Meta by the owner; until then: inside the window only).
+    support: {
+        timers: {
+            high: { firstReplyMinutes: 15, fixMinutes: 240 },
+            medium: { firstReplyMinutes: 30, fixMinutes: 510 },
+            low: { firstReplyMinutes: 120, fixMinutes: 1530 },
+        },
+        categories: ["Billing and printing", "Printer", "KOT and kitchen display", "Menu and items", "Reports", "Stock", "Outlet PC and sync", "POS App", "Captain App", "Owner App", "QR ordering", "Plan and payment", "Other"],
+        waitingCloseDays: 3,
+        reopenDays: 3,
+        askRating: true,
+        updateTemplate: "ticket_update",
+        ratingTemplate: "ticket_rating",
+    },
+    // Lead score weights (crm/score.js; phase 7 "score tuning"). Hot >= 60,
+    // warm >= 30 stay fixed; Reports -> Score shows how each band wins.
+    score: {
+        sources: { manual: 20, referral: 25, website: 18, phone: 18, whatsapp: 14, meta: 8, import: 5 },
+        stages: { new: 0, contacted: 8, qualified: 18, demo: 28, proposal: 35 },
+        otherSource: 5,
+        otherStage: 10,
+        multiOutlet: 12,
+        detailsKnown: 8,
+        planInterest: 4,
+        reachedBase: 6,
+        reachedEach: 3,
+        reachedMax: 15,
+        demoDone: 12,
+        waBase: 4,
+        waMax: 10,
+        badPhone: -25,
+        quietAfterDays: 2,
+        quietPerDay: 2,
+        quietMax: 30,
+    },
 };
+
+const PRIORITIES = ["high", "medium", "low"];
 
 const AUTO_ITEMS = ["payment", "outlet", "menu", "pc", "app_devices", "first_bill"];
 
@@ -202,6 +245,54 @@ const VALIDATE = {
         terms: text(v.terms, 600),
         bankDetails: text(v.bankDetails, 400),
     }),
+    support: (v) => {
+        const d = DEFAULTS.support;
+        const tm = v.timers || {};
+        const timers = {};
+        for (const p of PRIORITIES) {
+            const label = p[0].toUpperCase() + p.slice(1);
+            const t = { ...d.timers[p], ...(tm[p] || {}) };
+            timers[p] = { firstReplyMinutes: int(t.firstReplyMinutes, 1, 2880, `${label}: first reply`), fixMinutes: int(t.fixMinutes, 1, 30000, `${label}: fix`) };
+            if (timers[p].fixMinutes < timers[p].firstReplyMinutes) throw new RuleError(`${label}: the fix time cannot be shorter than the first reply time.`);
+        }
+        const categories = [...new Set((Array.isArray(v.categories) ? v.categories : d.categories).map((c) => text(c, 40)).filter(Boolean))];
+        if (!categories.length) throw new RuleError("Keep at least one ticket category.");
+        if (categories.length > 40) throw new RuleError("Keep the categories to 40 or fewer.");
+        return {
+            timers,
+            categories,
+            waitingCloseDays: int(v.waitingCloseDays ?? d.waitingCloseDays, 1, 30, "Close a ticket waiting on the customer after"),
+            reopenDays: int(v.reopenDays ?? d.reopenDays, 0, 30, "Reopen when the customer writes within"),
+            askRating: v.askRating !== false,
+            updateTemplate: text(v.updateTemplate, 80),
+            ratingTemplate: text(v.ratingTemplate, 80),
+        };
+    },
+    score: (v) => {
+        const d = DEFAULTS.score;
+        const pts = (x, label) => int(x, -100, 100, label);
+        const map = (m, dm, label) => Object.fromEntries(Object.keys(dm).map((k) => [k, pts((m || {})[k] ?? dm[k], `${label}: ${k}`)]));
+        const n = (k, label, min = -100, max = 100) => int(v[k] ?? d[k], min, max, label);
+        return {
+            sources: map(v.sources, d.sources, "Source"),
+            stages: map(v.stages, d.stages, "Stage"),
+            otherSource: n("otherSource", "Other sources"),
+            otherStage: n("otherStage", "Other stages"),
+            multiOutlet: n("multiOutlet", "2 or more outlets"),
+            detailsKnown: n("detailsKnown", "Business details known"),
+            planInterest: n("planInterest", "Plan of interest"),
+            reachedBase: n("reachedBase", "Spoken to: first"),
+            reachedEach: n("reachedEach", "Spoken to: each time"),
+            reachedMax: n("reachedMax", "Spoken to: at most"),
+            demoDone: n("demoDone", "Demo done"),
+            waBase: n("waBase", "Wrote on WhatsApp: first"),
+            waMax: n("waMax", "Wrote on WhatsApp: at most"),
+            badPhone: n("badPhone", "Phone number looks wrong"),
+            quietAfterDays: n("quietAfterDays", "Quiet after days", 0, 60),
+            quietPerDay: n("quietPerDay", "Quiet: per day", 0, 100),
+            quietMax: n("quietMax", "Quiet: at most", 0, 100),
+        };
+    },
     digest: (v) => ({
         enabled: v.enabled !== false,
         time: time(v.time, "Digest time"),
@@ -231,13 +322,19 @@ async function save(s, key, value) {
     need(s, "settings.manage");
     if (!VALIDATE[key]) throw new RuleError("Unknown setting.");
     const clean = VALIDATE[key](value || {});
-    return sequelize.transaction(async (t) => {
+    const out = await sequelize.transaction(async (t) => {
         const before = await read(key);
         const [row, created] = await AdmSetting.findOrCreate({ where: { setting_key: key }, defaults: { value: JSON.stringify(clean), updated_by: s.user.id }, transaction: t });
         if (!created) await row.update({ value: JSON.stringify(clean), updated_by: s.user.id }, { transaction: t });
         await audit.write(s, { action: "settings.update", entity: "adm_setting", entityId: key, summary: `Changed ${key.replace(/_/g, " ")}`, before, after: clean }, { transaction: t });
         return { key, value: clean };
     });
+    // New score weights: every open lead is scored again by the worker.
+    if (key === "score") {
+        require("./crm/score").resetWeights();
+        await require("../services/admin/queue").enqueue({ kind: "crm.rescore", maxAttempts: 1 });
+    }
+    return out;
 }
 
 /* ------------------------------ audit log ------------------------------ */

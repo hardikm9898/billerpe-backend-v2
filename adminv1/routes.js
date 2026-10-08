@@ -33,6 +33,9 @@ const bilHardware = require("./bil/hardware");
 const bilPdf = require("./bil/pdf");
 const bilShare = require("./bil/share");
 const bilCommon = require("./bil/common");
+const supTickets = require("./sup/tickets");
+const supCommon = require("./sup/common");
+const reports = require("./rep/reports");
 const perms = require("./permissions");
 
 // BillerPe SuperAdmin API (admin.billerpe.in and the sales app): /admin/v1.
@@ -301,6 +304,30 @@ const HANDLERS = {
     hardwareOrders: (s, query) => bilHardware.list(s, query || {}),
     hardwareStatus: (s, id, input) => bilHardware.setStatus(s, id, input || {}),
     hardwareCreate: (s, input) => bilHardware.create(s, input || {}),
+
+    /* support tickets (phase 7) */
+    supportCounts: (s) => supTickets.counts(s),
+    tickets: (s, query) => supTickets.list(s, query || {}),
+    ticket: (s, id) => supTickets.detail(s, id),
+    ticketCreate: (s, input) => supTickets.create(s, input || {}),
+    ticketReply: (s, id, input) => supTickets.reply(s, id, input || {}),
+    ticketNote: (s, id, text) => supTickets.note(s, id, text),
+    ticketWaiting: (s, id, on) => supTickets.setWaiting(s, id, on !== false),
+    ticketAssign: (s, id, toId) => supTickets.assign(s, id, toId),
+    ticketUpdate: (s, id, input) => supTickets.update(s, id, input || {}),
+    ticketClose: (s, id, resolution) => supTickets.close(s, id, resolution),
+    ticketReopen: (s, id, reason) => supTickets.reopen(s, id, reason),
+    ticketsFor: (s, query) => supTickets.forCustomer(s, query || {}),
+    inboxMakeTicket: (s, chatId, input) => supTickets.fromChat(s, chatId, input || {}),
+    supportPeople: async (s) => {
+        auth.need(s, "support.use");
+        return { people: (await supCommon.supportPeople()).map((p) => ({ id: p.id, name: p.name })) };
+    },
+
+    /* reports (phase 7) */
+    reports: (s, query) => reports.all(s, query || {}),
+    reportExcel: (s, query) => reports.excel(s, query || {}),
+    scoreCheck: (s) => reports.scoreCheck(s),
 
     healthRun: async (s) => {
         auth.need(s, "settings.manage");

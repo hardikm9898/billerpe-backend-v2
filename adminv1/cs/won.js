@@ -194,7 +194,8 @@ async function addOutlet(s, accountId, input = {}) {
 
 /** Outlets to link when marking won: by name, id or owner mobile. */
 async function findOutlets(s, q) {
-    need(s, "leads.edit");
+    // Mark won, and the outlet of a support ticket.
+    if (!s.can("support.use")) need(s, "leads.edit");
     const term = txt(q, 60);
     if (term.length < 2) return { outlets: [] };
     const { Op } = require("sequelize");

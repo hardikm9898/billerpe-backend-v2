@@ -417,6 +417,14 @@ async function list(s, query = {}) {
     const where = { ...viewWhere(which) };
     if (query.accountId) where.account_id = Number(query.accountId) || 0;
     if (query.hotelId) where.hotel_id = Number(query.hotelId) || 0;
+    // Reports drill-down (phase 7): issued in a period (India dates).
+    const DAY = /^\d{4}-\d{2}-\d{2}$/;
+    if (DAY.test(query.from || "") || DAY.test(query.to || "")) {
+        where.issued_at = {
+            ...(DAY.test(query.from || "") ? { [Op.gte]: moment.tz(query.from, TZ).startOf("day").toDate() } : {}),
+            ...(DAY.test(query.to || "") ? { [Op.lt]: moment.tz(query.to, TZ).add(1, "day").startOf("day").toDate() } : {}),
+        };
+    }
     const q = txt(query.q, 60);
     if (q) where[Op.or] = [{ number: { [Op.like]: `%${q}%` } }, { bill_name: { [Op.like]: `%${q}%` } }, { bill_mobile: { [Op.like]: `%${q.replace(/\D/g, "") || q}%` } }];
     const limit = 50;

@@ -656,7 +656,8 @@ async function load(c) {
         M.AppDevice.findAll({ where: { hotel_id: hotelId, status: "active" }, order: [["last_active", "DESC"]], raw: true }),
         M.AppAlert.findAll({ where: { hotel_id: hotelId, createdAt: { [Op.gte]: moment().subtract(2, "days").toDate() } }, order: [["id", "DESC"]], limit: 200, raw: true }),
         M.AuditLog.findAll({ where: { hotel_id: hotelId }, order: [["id", "DESC"]], limit: 300, raw: true }),
-        M.RaiseTicket.findAll({ where: { hotel_id: hotelId }, order: [["id", "DESC"]], limit: 50, raw: true }),
+        // With support's replies (SuperAdmin phase 7, adminv1/sup/outlet.js).
+        require("../adminv1/sup/outlet").list(hotelId, 1).then((r) => r.tickets),
         M.AppQueueEntry.findAll({ where: { hotel_id: hotelId, createdAt: { [Op.gte]: moment().subtract(1, "day").toDate() } }, order: [["id", "ASC"]], raw: true }),
         M.DuePaymentReceive.findAll({ where: { hotel_id: hotelId, deleted: { [Op.not]: true }, createdAt: { [Op.gte]: sinceDate } }, include: [{ model: M.User, attributes: ["name", "number"] }], order: [["id", "DESC"]] }),
         c.user.number ? M.HotelUser.findAll({ where: { number: c.user.number, active: true }, attributes: ["hotel_id"], raw: true }) : [],
@@ -730,9 +731,11 @@ async function load(c) {
         alerts: alertsView(alerts, c),
         audit: audit.map((a) => ({ id: String(a.id), at: iso(a.createdAt), by: a.user_name || "", role: roleOf.get(a.user_name) || "Cashier", module: a.entity || "", action: a.action || "" })),
         tickets: tickets.map((x) => ({
-            id: String(x.id), subject: String(x.issue || "").split("\n")[0].slice(0, 120), body: x.issue || "",
+            id: String(x.id), subject: String(x.subject || "").slice(0, 120), body: x.issue || "",
             kind: x.ticket_type === "plan-change" || x.ticket_type === "renewal" ? x.ticket_type : "support",
-            at: iso(x.createdAt), status: /close|resolve/i.test(String(x.status)) ? "closed" : "open",
+            at: iso(x.createdAt), status: x.state === "closed" ? "closed" : "open",
+            number: x.number, state: x.state, stateLabel: x.stateLabel, canReply: x.canReply, resolution: x.resolution || "",
+            messages: x.messages.map((m) => ({ id: String(m.id), from: m.from, body: m.body, at: iso(m.at) })),
         })),
         subscription,
         stock,
