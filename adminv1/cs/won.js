@@ -209,4 +209,4 @@ async function findOutlets(s, q) {
     return { outlets: rows.map((h) => ({ id: h.id, name: h.hotel_name, owner: h.owner_name, mobile: mobile10(h.owner_number), plan: h.product_plan, city: h.address2 || "" })) };
 }
 
-module.exports = { win, addOutlet, findOutlets, PLAN_NAMES };
+module.exports = { win, addOutlet, findOutlets, cleanOutlet, PLAN_NAMES };

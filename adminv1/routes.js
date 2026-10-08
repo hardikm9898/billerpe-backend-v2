@@ -256,6 +256,13 @@ const HANDLERS = {
     outletReleasePc: (s, hotelId, reason) => csOutlets.releasePc(s, hotelId, reason),
     outletDeviceLogout: (s, hotelId, deviceId, reason) => csOutlets.logoutDevice(s, hotelId, deviceId, reason),
     outletMove: (s, hotelId, accountId, reason) => csAccounts.moveOutlet(s, hotelId, accountId, reason),
+    outletCreate: (s, input) => require("./cs/outletEdit").create(s, input || {}),
+    outletDetails: (s, hotelId) => require("./cs/outletEdit").details(s, hotelId),
+    outletUpdate: (s, hotelId, input) => require("./cs/outletEdit").update(s, hotelId, input || {}),
+    outletOwnerPassword: (s, hotelId, reason) => require("./cs/outletEdit").resetOwnerPassword(s, hotelId, reason),
+    outletMenus: (s, hotelId) => require("./cs/menuImport").menus(s, hotelId),
+    outletMenuImport: (s, hotelId, input) => require("./cs/menuImport").importFile(s, hotelId, input || {}),
+    menuSampleFile: (s) => require("./cs/menuImport").sampleFile(s),
     outletOpenAs: (s, hotelId, reason) => csOutlets.openAs(s, hotelId, reason),
     supportEnd: (s, sessionId) => csOutlets.endSupport(s, sessionId),
     /* billing and renewals (phase 6) */
