@@ -281,7 +281,27 @@ async function detail(s, ticketId) {
  * window, else the ticket_update template (when it is set up). Either way
  * the customer also sees it in the app's ticket list.
  */
-async function deliverReply(sup, text, userId) {
+/**
+ * Files on a reply or note (old panel: ticket attachments): photos, short
+ * videos, PDFs; at most 3, 10 MB each. Kept where WhatsApp can fetch them.
+ */
+const FILE_TYPES = /^(image\/(jpeg|png|webp)|video\/mp4|application\/pdf)$/;
+async function storeFiles(list) {
+    const files = Array.isArray(list) ? list : [];
+    if (files.length > 3) throw new RuleError("At most 3 files at a time.");
+    const wa = require("../crm/wa");
+    const out = [];
+    for (const f of files) {
+        const mime = String((f && f.mime) || "");
+        if (!FILE_TYPES.test(mime)) throw new RuleError("Files: photos (JPG, PNG, WEBP), MP4 videos or PDFs.");
+        const buf = Buffer.from(String(f.data || ""), "base64");
+        if (!buf.length || buf.length > 10 * 1024 * 1024) throw new RuleError("Each file must be under 10 MB.");
+        out.push({ url: await wa.transport.store(buf, mime, f.name), name: txt(f.name, 120) || "file", mime });
+    }
+    return out;
+}
+
+async function deliverReply(sup, text, userId, files = []) {
     const wa = require("../crm/wa");
     if (!sup.contact_mobile) return { wa_status: "not_sent", wa_note: "No mobile number on the ticket: the customer sees the reply in the app." };
     let chat;
@@ -294,6 +314,8 @@ async function deliverReply(sup, text, userId) {
     if (sup.wa_chat_id !== chat.id) await SupTicket.update({ wa_chat_id: chat.id }, { where: { id: sup.id } });
     if (wa.windowOpen(chat)) {
         const m = await wa.sendText(chat, `BillerPe support · ${C.ticketNo(sup.ticket_id)}\n${text}`, { sender: "user", userId });
+        // The files follow the text, inside the same window.
+        for (const f of files) await wa.sendMedia(chat, { url: f.url, mime: f.mime, fileName: f.name }, { sender: "user", userId }).catch(() => undefined);
         return { wa_status: m.status === "failed" ? "failed" : m.status, wa_note: m.status === "failed" ? txt(m.error, 200) : null, wa_message_id: m.id };
     }
     const cfg = await C.supportSettings();
@@ -322,10 +344,11 @@ async function reply(s, ticketId, input = {}) {
     if (!body) throw new RuleError("Type the reply first.");
     const via = ["panel", "phone", "email"].includes(input.via) ? input.via : "panel";
     const now = new Date();
+    const files = await storeFiles(input.files);
     const { sup, msg } = await sequelize.transaction(async (t) => {
         const sup = await getSup(ticketId, t, true);
         if (sup.state === "closed") throw new RuleError("This ticket is closed. Reopen it first.");
-        const msg = await addMessage(sup.ticket_id, { kind: "staff", author_id: s.user.id, author_name: s.user.name, via, body, at: now }, t);
+        const msg = await addMessage(sup.ticket_id, { kind: "staff", author_id: s.user.id, author_name: s.user.name, via, body, at: now, files: files.length ? JSON.stringify(files) : null }, t);
         const patch = { last_staff_at: now, first_reply_at: sup.first_reply_at || now };
         if (!sup.assignee_id) Object.assign(patch, { assignee_id: s.user.id, assigned_at: now });
         if (input.wait) Object.assign(patch, { state: "waiting", waiting_since: sup.state === "waiting" ? sup.waiting_since : now });
@@ -335,18 +358,19 @@ async function reply(s, ticketId, input = {}) {
         return { sup, msg };
     });
     if (via === "panel") {
-        const d = await deliverReply(sup, body, s.user.id);
+        const d = await deliverReply(sup, body, s.user.id, files);
         await msg.update(d);
     }
     return detail(s, sup.ticket_id);
 }
 
-async function note(s, ticketId, text) {
+async function note(s, ticketId, text, fileList) {
     need(s, "support.use");
     const body = String(text ?? "").trim().slice(0, 4000);
     if (!body) throw new RuleError("Type the note first.");
     const sup = await getSup(ticketId);
-    await addMessage(sup.ticket_id, { kind: "note", author_id: s.user.id, author_name: s.user.name, body });
+    const files = await storeFiles(fileList);
+    await addMessage(sup.ticket_id, { kind: "note", author_id: s.user.id, author_name: s.user.name, body, files: files.length ? JSON.stringify(files) : null });
     return detail(s, sup.ticket_id);
 }
 

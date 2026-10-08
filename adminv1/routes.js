@@ -329,7 +329,7 @@ const HANDLERS = {
     ticket: (s, id) => supTickets.detail(s, id),
     ticketCreate: (s, input) => supTickets.create(s, input || {}),
     ticketReply: (s, id, input) => supTickets.reply(s, id, input || {}),
-    ticketNote: (s, id, text) => supTickets.note(s, id, text),
+    ticketNote: (s, id, text, files) => supTickets.note(s, id, text, files),
     ticketWaiting: (s, id, on) => supTickets.setWaiting(s, id, on !== false),
     ticketAssign: (s, id, toId) => supTickets.assign(s, id, toId),
     ticketUpdate: (s, id, input) => supTickets.update(s, id, input || {}),

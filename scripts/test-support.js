@@ -211,6 +211,22 @@ async function run() {
     const reply2 = r.ok && r.result.messages.filter((m) => m.kind === "staff").pop();
     check("inside the window: sent as text with the ticket number", reply2 && reply2.whatsapp.status === "sent" && outbox.some((b) => b.type === "text" && /BillerPe support · T-/.test(b.text.body)), [reply2, outbox[0]]);
 
+    // Attachments (old panel: files on a ticket).
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64").toString("base64");
+    outbox.length = 0;
+    r = await call("ticketReply", s1.token, t1, { text: "See this photo of the setting.", files: [{ name: "setting.png", mime: "image/png", data: png }] });
+    const reply2b = r.ok && r.result.messages.filter((m) => m.kind === "staff").pop();
+    check("a reply with a photo keeps the file on the message", reply2b && reply2b.files.length === 1 && reply2b.files[0].name === "setting.png" && !!reply2b.files[0].url, r.ok ? reply2b : r);
+    check("…and inside the window the photo follows the text on WhatsApp", outbox.some((b) => b.type === "text") && outbox.some((b) => b.type === "image" && /setting|crm-wa|http/.test(b.image.link)), outbox.map((b) => b.type));
+    r = await get(`${root}/sync/support/tickets`, devToken);
+    check("the outlet's list shows the file too", r.results.tickets.find((x) => x.id === t1).messages.some((m) => m.files && m.files.some((f) => f.name === "setting.png")));
+    r = await call("ticketNote", s1.token, t1, "Log from the PC", [{ name: "log.pdf", mime: "application/pdf", data: Buffer.from("%PDF-1.4 test").toString("base64") }]);
+    check("an internal note can carry a PDF", r.ok && r.result.messages.some((m) => m.kind === "note" && m.files.some((f) => f.name === "log.pdf")), r.ok ? "" : r);
+    r = await call("ticketReply", s1.token, t1, { text: "x", files: [{ name: "a.exe", mime: "application/x-msdownload", data: png }] });
+    check("other file types are refused", !r.ok && /PDF/.test(r.error), r);
+    r = await call("ticketReply", s1.token, t1, { text: "x", files: [1, 2, 3, 4].map((i) => ({ name: `${i}.png`, mime: "image/png", data: png })) });
+    check("more than 3 files are refused", !r.ok && /3 files/.test(r.error), r);
+
     // Outside the window, with the template set up.
     await chat.update({ last_in_at: moment().subtract(2, "days").toDate() });
     await M.CrmWaTemplate.create({ name: `ticket_update_${stamp}`, language: "en", category: "UTILITY", body: "Update on your BillerPe ticket {{1}}: {{2}}", params: JSON.stringify([{ name: "1" }, { name: "2" }]), active: true });
@@ -357,7 +373,7 @@ async function run() {
     r = await call("leads", admin.token, { view: "all", lostReasonId: reasons.budget, from: today, to: today });
     check("drill: by lost reason", r.ok && r.result.leads.some((x) => x.id === l3));
     r = await call("reports", lead.token, { from: today, to: today });
-    check("a support lead (reports.view, no leads) sees support only", r.ok && r.result.sections.join() === "support", r.ok ? r.result.sections : r);
+    check("a support lead (reports.view, no leads) sees the business and support, no leads or money", r.ok && r.result.sections.join() === "business,support", r.ok ? r.result.sections : r);
     r = await call("reports", exec.token, {});
     check("no reports.view: refused", !r.ok);
     r = await call("reports", admin.token, { from: today, to: "2020-01-01" });
