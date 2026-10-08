@@ -77,6 +77,11 @@ const HANDLERS = {
     selectOutlet: { fn: (c, outletId) => auth.selectOutlet(c, outletId) },
     logout: { fn: async () => ({}) },
 
+    /* the plan lock (owner 2026-10-08): shown on a banner / the lock screen */
+    planStatus: { fn: (c) => require("../adminv1/bil/renewals").planState(c.hotelId) },
+    planExtend: { fn: (c) => require("../adminv1/bil/renewals").extendOneDay(c.hotelId, `POS App: ${c.user?.name || "staff"}`) },
+    planPayLink: { fn: (c) => require("../adminv1/bil/renewals").payLink(c.hotelId) },
+
     /* orders */
     sendKot: { write: true, fn: (c, cart) => orders.sendKot(c, cart), key: ([cart]) => cart?.clientKey },
     holdOrder: { write: true, fn: (c, cart) => orders.holdOrder(c, cart), key: ([cart]) => cart?.clientKey },

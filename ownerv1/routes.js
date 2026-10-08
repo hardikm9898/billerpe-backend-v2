@@ -97,15 +97,48 @@ const HANDLERS = {
     daySummary: (o, date) => alerts.daySummary(o, date),
     pcHistory: (o, outletId) => alerts.pcHistory(o, outletId),
 
+    /* the plan lock (owner 2026-10-08): renew / extend 1 day from the app */
+    planStatus: (o, outletId) => planCall(o, outletId, (id) => require("../adminv1/bil/renewals").planState(id)),
+    planExtend: (o, outletId) => planCall(o, outletId, (id) => require("../adminv1/bil/renewals").extendOneDay(id, "Owner App")),
+    planPayLink: (o, outletId) => planCall(o, outletId, (id) => require("../adminv1/bil/renewals").payLink(id)),
+
     /* phase 2 - reports */
     reportCatalog: () => reports.catalog(),
     report: (o, query) => reports.report(o, query || {}),
 };
 
+function planCall(o, outletId, fn) {
+    const id = Number(outletId) || 0;
+    if (!o.outletIds.has(id)) throw new RuleError("This outlet is not yours.");
+    return fn(id);
+}
+
+// Calls about one outlet (its id first) that stop while its plan has ended.
+const OUTLET_CALLS = new Set(["outlet", "tables", "bill", "manage", "manageMenu", "manageStaff", "manageTables", "manageSettings", "manageStock", "setItemActive", "saveItem", "deleteItem", "saveCategory", "saveStaff", "setStaffActive", "setStaffPermissions", "saveSection", "deleteSection", "addTables", "editTable", "removeTable", "saveTax", "saveCharge", "savePaymentMode", "savePromo", "saveExpenseHead", "saveRaw", "saveSupplier", "saveUnit", "pcHistory"]);
+
+/** The outlet a call is about, when its plan has ended (BillerPe support is never locked out). */
+function lockedOutlet(o, name, args) {
+    if (o.support) return null;
+    let id = null;
+    if (OUTLET_CALLS.has(name)) id = Number(args[0]) || 0;
+    else if ((name === "bills" || name === "report") && args[0] && args[0].outletId && args[0].outletId !== "all") id = Number(args[0].outletId) || 0;
+    if (!id) return null;
+    const own = o.owned.find((x) => x.hotel.id === id);
+    const end = own && own.hotel.plan_end_date;
+    return end && new Date(end) <= new Date() ? id : null;
+}
+
 router.post("/:name", (req, res) => {
     const fn = HANDLERS[req.params.name];
     if (!fn) return res.status(404).json({ ok: false, error: "Unknown call" });
     const args = Array.isArray(req.body?.args) ? req.body.args : [];
+    const locked = lockedOutlet(req.owner, req.params.name, args);
+    if (locked) {
+        return void require("../adminv1/bil/renewals").planState(locked).then(
+            (plan) => res.status(402).json({ ok: false, error: plan?.message || "This outlet's BillerPe plan has ended.", code: "plan-expired", plan }),
+            () => res.status(402).json({ ok: false, error: "This outlet's BillerPe plan has ended.", code: "plan-expired" }),
+        );
+    }
     const name = req.params.name;
     // A BillerPe support session: some calls are the owner's own, every change is audited.
     const sp = req.owner.support ? require("./support") : null;

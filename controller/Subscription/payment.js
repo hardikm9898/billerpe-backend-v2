@@ -371,6 +371,12 @@ const webHook = async (req, res) => {
     try {
         const { payload } = req.body
         console.log(payload, "Payload::::")
+        // SuperAdmin invoice links ("BPE..."): never trusted from the
+        // callback - billing reads the order back from PhonePe itself.
+        if (payload && String(payload.merchantOrderId || "").startsWith("BPE")) {
+            await require("../../adminv1/bil/payments").check(payload.merchantOrderId).catch((e) => console.error("[billing] webhook check:", e && e.message))
+            return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, {}, STATUSCODE.SUCCESS))
+        }
         if (payload) {
 
             const { merchantId,

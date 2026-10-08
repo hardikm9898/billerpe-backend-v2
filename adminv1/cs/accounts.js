@@ -265,9 +265,27 @@ async function detail(s, id) {
         onboarding: items.map((i) => onboarding.view(i, who)),
         tasks: tasks.map((x) => ({ id: x.id, hotelId: x.hotel_id, type: x.type, note: x.note, dueAt: x.due_at, status: x.status, origin: x.origin, owner: x.owner_id ? { id: x.owner_id, name: who.get(x.owner_id) || `#${x.owner_id}` } : null, doneAt: x.done_at, doneBy: x.done_by ? who.get(x.done_by) || `#${x.done_by}` : null, result: x.result })),
         activity: acts.map((a) => ({ id: a.id, type: a.type, hotelId: a.hotel_id, actor: a.actor_id ? who.get(a.actor_id) || `#${a.actor_id}` : null, body: a.body, at: a.at })),
-        money: { planEnds: ends.length ? new Date(Math.min(...ends)).toISOString() : null, ebillCredits: outlets.some((o) => o.ebill) ? credits : null },
+        money: { planEnds: ends.length ? new Date(Math.min(...ends)).toISOString() : null, ebillCredits: outlets.some((o) => o.ebill) ? credits : null, ...(await moneyOf(acc.id)) },
         people: (await successPeople()).map((p) => ({ id: p.id, name: p.name })),
     };
+}
+
+/** Paid this financial year (approved payments), due now, and the latest invoices (phase 6). */
+async function moneyOf(accountId) {
+    try {
+        const { BilInvoice, BilPayment } = require("../../model");
+        const { fyOf } = require("../bil/common");
+        const fy = fyOf();
+        const fyStart = moment.tz(`20${fy.slice(0, 2)}-04-01`, "YYYY-MM-DD", "Asia/Kolkata").toDate();
+        const paid = Number((await BilPayment.sum("amount", { where: { account_id: accountId, status: "approved", createdAt: { [Op.gte]: fyStart } } })) || 0);
+        const open = await BilInvoice.findAll({ where: { account_id: accountId, kind: "invoice", status: ["issued", "part_paid"] }, attributes: ["total", "paid"], raw: true });
+        const due = open.reduce((n, i) => n + Number(i.total) - Number(i.paid), 0);
+        const recent = await BilInvoice.findAll({ where: { account_id: accountId, status: { [Op.ne]: "draft" } }, order: [["id", "DESC"]], limit: 6, attributes: ["id", "number", "kind", "status", "total", "paid", "issued_at"], raw: true });
+        return { paidThisYear: Math.round(paid * 100) / 100, due: Math.round(due * 100) / 100, invoices: recent.map((i) => ({ id: i.id, number: i.number, kind: i.kind, status: i.status, total: Number(i.total), due: Math.max(0, Number(i.total) - Number(i.paid)), issuedAt: i.issued_at })) };
+    } catch {
+        // billing tables not migrated yet
+        return { paidThisYear: null, due: null, invoices: [] };
+    }
 }
 
 /* ------------------------------ changes ------------------------------ */

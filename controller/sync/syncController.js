@@ -170,8 +170,12 @@ const heartbeat = async (req, res) => {
             return null;
         });
 
+        // The plan lock (owner 2026-10-08): the PC locks billing when it ends.
+        const plan = await require("../../adminv1/bil/renewals").planState(hotelId).catch(() => null);
+
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, {
             serverTime: new Date().toISOString(),
+            plan,
             versions,
             pendingQrOrders,
             bookingsVersion: bookingsVersion ? new Date(bookingsVersion).toISOString() : null,

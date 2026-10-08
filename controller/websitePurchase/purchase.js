@@ -26,11 +26,19 @@ const checkHeader = (req) => {
 
     return isAllowed;
 };
-const calculateItemData = (items) => {
-
+// Prices come from the product list (hms_website_products), never from the
+// browser: an item's price is its offer price when the offer is on and
+// lower (the same rule the website shows). An unknown item = no order.
+const calculateItemData = async (items) => {
+    const { hardwarePrice } = require("../../adminv1/bil/catalog");
     let subtotalCheck = 0, grandAmountCheck = 0, gstCheck = 0
     for (const cur of items) {
-        subtotalCheck += cur.price * cur.quantity
+        const product = await WebSiteProducts.findOne({ where: { id: Number(cur && cur.id) || 0 }, raw: true })
+        const quantity = Math.floor(Number(cur && cur.quantity))
+        if (!product || !(quantity >= 1 && quantity <= 99)) return null
+        cur.price = hardwarePrice(product)
+        cur.quantity = quantity
+        subtotalCheck += cur.price * quantity
     }
 
     gstCheck = (subtotalCheck * 18) / 100
@@ -46,7 +54,9 @@ const createRollAndPrinterPurchase = async (req, res) => {
         if (!checkFor) return res.json(error("ForBidden", STATUSCODE.FORBIDDEN))
         const { name, email, mobile, address1, address2, city, state, Country = "india", pincode, items, subtotal, gst, grandAmount } = req.body
         console.log(req.body, "Body::::")
-        const { subtotalCheck, grandAmountCheck, gstCheck } = calculateItemData(items)
+        const checked = Array.isArray(items) && items.length ? await calculateItemData(items) : null
+        if (!checked) return res.json(error("An item in your cart is no longer available", STATUSCODE.BAD_REQUEST))
+        const { subtotalCheck, grandAmountCheck, gstCheck } = checked
         console.log(subtotalCheck, grandAmountCheck, gstCheck)
         if (subtotal !== subtotalCheck || grandAmountCheck !== grandAmount || gstCheck !== gst) {
             return res.json(error("Something went Wrong ", STATUSCODE.BAD_REQUEST))

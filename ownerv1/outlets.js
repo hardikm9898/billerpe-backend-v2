@@ -41,6 +41,8 @@ async function outlets(o) {
             id: hotel.id,
             name: hotel.hotel_name,
             subscriptionEndsOn: hotel.plan_end_date ? new Date(hotel.plan_end_date).toISOString().slice(0, 10) : null,
+            // Ended plan = this outlet is locked in the app (owner 2026-10-08) until renewed.
+            planExpired: !!hotel.plan_end_date && new Date(hotel.plan_end_date).getTime() <= now,
             pc: pcView(regs.find((r) => r.hotel_id === hotel.id), now),
         })),
     };

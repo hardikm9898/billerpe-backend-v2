@@ -931,6 +931,7 @@ const { AdmRole, AdmTeam, AdmUser, AdmLeave, AdmSession, AdmAuditLog, AdmSetting
 const { CrmStage, CrmLostReason, CrmOutcome, CrmLeadV2, CrmInquiry, CrmTaskV2, CrmActivity, CrmCall, CrmAssignment, AdmNotification, AdmBreak } = require("./crmCore");
 const { CrmWaChat, CrmWaMessage, CrmWaTemplate, CrmWaOptout, CrmRule, CrmRuleRun, CrmCadence, CrmCadenceStep, CrmCadenceEnrollment, CrmCampaign, CrmCampaignRcpt, CrmEscalation } = require("./crmAuto");
 const { CsAccount, CsAccountOutlet, CsOnboardingItem, CsOutletDay, CsTask, CsActivity, AdmSupportSession } = require("./customers");
+const { BilItem, BilCounter, BilInvoice, BilInvoiceLine, BilPayment, BilPayLink, CsRenewal } = require("./billing");
 const StockMovement = require("./stockMovement");
 StockMovement.belongsTo(RawMaterial, { foreignKey: "raw_material_id" });
 StockMovement.belongsTo(HotelUser, { foreignKey: "user_id" });
@@ -995,6 +996,14 @@ module.exports = {
     CsTask,
     CsActivity,
     AdmSupportSession,
+    // SuperAdmin billing and renewals (phase 6)
+    BilItem,
+    BilCounter,
+    BilInvoice,
+    BilInvoiceLine,
+    BilPayment,
+    BilPayLink,
+    CsRenewal,
 
     RestaurantSetting,
     UserSession,

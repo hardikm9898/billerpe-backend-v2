@@ -49,6 +49,20 @@ router.get("/app-downloads/file", deviceAuth, getAppDownloadFile);
 // Support tickets raised from the outlet's Web POS, forwarded by the exe
 // (controller/sync/supportController.js). Only when staff raise one.
 router.post("/support/ticket", deviceAuth, createTicket);
+
+// The plan lock (owner 2026-10-08): the outlet PC's lock banner asks for the
+// state, uses the one "Extend 1 day", and gets the renewal payment link.
+const planReply = (fn) => (req, res) =>
+    Promise.resolve()
+        .then(() => fn(req))
+        .then(
+            (result) => res.json({ ok: true, result }),
+            (err) => res.json({ ok: false, error: err instanceof require("../appv1/core").RuleError ? err.message : "Something went wrong. Please try again." }),
+        );
+const renewals = () => require("../adminv1/bil/renewals");
+router.get("/plan", deviceAuth, planReply((req) => renewals().planState(req.user)));
+router.post("/plan/extend", deviceAuth, planReply((req) => renewals().extendOneDay(req.user, `Outlet PC${req.body && req.body.staff ? `: ${String(req.body.staff).slice(0, 30)}` : ""}`)));
+router.post("/plan/pay", deviceAuth, planReply((req) => renewals().payLink(req.user)));
 router.get("/support/tickets", deviceAuth, listTickets);
 
 module.exports = router;

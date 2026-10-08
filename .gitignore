@@ -38,4 +38,5 @@ yarn-error.log*
 
 # SuperAdmin test servers keep WhatsApp files and call recordings here (live servers use S3).
 public/crm-calls/
+public/bil-proofs/
 public/crm-wa/

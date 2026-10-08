@@ -25,6 +25,14 @@ const csOutlets = require("./cs/outlets");
 const csOnboarding = require("./cs/onboarding");
 const csWon = require("./cs/won");
 const csToday = require("./cs/today");
+const bilCatalog = require("./bil/catalog");
+const bilInvoices = require("./bil/invoices");
+const bilPayments = require("./bil/payments");
+const bilRenewals = require("./bil/renewals");
+const bilHardware = require("./bil/hardware");
+const bilPdf = require("./bil/pdf");
+const bilShare = require("./bil/share");
+const bilCommon = require("./bil/common");
 const perms = require("./permissions");
 
 // BillerPe SuperAdmin API (admin.billerpe.in and the sales app): /admin/v1.
@@ -241,6 +249,59 @@ const HANDLERS = {
     outletMove: (s, hotelId, accountId, reason) => csAccounts.moveOutlet(s, hotelId, accountId, reason),
     outletOpenAs: (s, hotelId, reason) => csOutlets.openAs(s, hotelId, reason),
     supportEnd: (s, sessionId) => csOutlets.endSupport(s, sessionId),
+    /* billing and renewals (phase 6) */
+    billingInfo: async (s) => {
+        auth.need(s, "billing.view");
+        const sel = await bilCommon.seller();
+        const { BilCounter } = require("../model");
+        const fy = bilCommon.fyOf();
+        const counters = await BilCounter.findAll({ where: { fy }, raw: true });
+        return { live: bilPayments.live(), fy, states: bilCommon.STATES, seller: sel, reminderTemplateText: bilRenewals.TEMPLATE_TEXT, next: Object.fromEntries(["invoice", "credit", "receipt"].map((k) => [k, (counters.find((c) => c.kind === k) || {}).next || 1])) };
+    },
+    billingCounter: async (s, kind, next) => {
+        auth.need(s, "billing.approve");
+        auth.need(s, "settings.manage");
+        if (!["invoice", "credit", "receipt"].includes(kind)) throw new RuleError("Unknown series.");
+        const n = Number(next);
+        if (!Number.isInteger(n) || n < 1 || n > 99999) throw new RuleError("The next number: from 1 to 99999.");
+        const { BilCounter, sequelize } = require("../model");
+        const fy = bilCommon.fyOf();
+        return sequelize.transaction(async (t) => {
+            const [row] = await BilCounter.findOrCreate({ where: { kind, fy }, defaults: { next: 1 }, transaction: t, lock: t.LOCK.UPDATE });
+            if (n < row.next) throw new RuleError(`Numbers up to ${row.next - 1} are already used this year: the next can only go up.`);
+            await row.update({ next: n }, { transaction: t });
+            await require("./audit").write(s, { action: "billing.counter", entity: "bil_counter", entityId: `${kind}:${fy}`, summary: `Next ${kind} number for ${fy} set to ${n}` }, { transaction: t });
+            return { kind, fy, next: n };
+        });
+    },
+    catalog: (s) => bilCatalog.list(s),
+    catalogSave: (s, input) => bilCatalog.save(s, input || {}),
+    invoices: (s, query) => bilInvoices.list(s, query || {}),
+    invoice: (s, id) => bilInvoices.detail(s, id),
+    invoiceDraft: (s, input) => bilInvoices.saveDraft(s, input || {}),
+    invoiceUpdate: (s, id, input) => bilInvoices.saveDraft(s, input || {}, id),
+    invoiceIssue: (s, id) => bilInvoices.issue(s, id),
+    invoiceApprove: (s, id) => bilInvoices.approve(s, id),
+    invoiceToDraft: (s, id, reason) => bilInvoices.toDraft(s, id, reason),
+    invoiceCancel: (s, id, reason) => bilInvoices.cancel(s, id, reason),
+    invoicePdf: (s, id) => bilPdf.pdf(s, id),
+    invoiceSend: (s, id) => bilShare.send(s, id),
+    invoiceLink: (s, id) => bilPayments.createLink(s, id),
+    dues: (s) => bilInvoices.dues(s),
+    payments: (s) => bilPayments.pendingList(s),
+    paymentRecord: (s, invoiceId, input) => bilPayments.record(s, invoiceId, input || {}),
+    paymentDecide: (s, id, ok, reason) => bilPayments.decide(s, id, !!ok, reason),
+    paymentProof: (s, id) => bilPayments.proofLink(s, id),
+    payLinkSimulate: (s, linkId, state) => bilPayments.simulate(s, linkId, state),
+    renewals: (s, query) => bilRenewals.list(s, query || {}),
+    renewalStage: (s, id, stage, note) => bilRenewals.setStage(s, id, stage, note),
+    renewalInvoice: (s, id) => bilRenewals.makeInvoice(s, id),
+    renewalChurn: (s, id, reason) => bilRenewals.churn(s, id, reason),
+    renewalExtend: (s, id, reason) => bilRenewals.staffExtend(s, id, reason),
+    hardwareOrders: (s, query) => bilHardware.list(s, query || {}),
+    hardwareStatus: (s, id, input) => bilHardware.setStatus(s, id, input || {}),
+    hardwareCreate: (s, input) => bilHardware.create(s, input || {}),
+
     healthRun: async (s) => {
         auth.need(s, "settings.manage");
         const job = await queue.enqueue({ kind: "cs.health", maxAttempts: 1 });

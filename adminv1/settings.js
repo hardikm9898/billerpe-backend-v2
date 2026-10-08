@@ -58,6 +58,17 @@ const DEFAULTS = {
         ],
         health: { noBillsDays: 3, lowBillsPct: 30, dipBillsPct: 60, minNormalBills: 5, pcOfflineHours: 24, pcAmberHours: 16, backlogHours: 6, versionsBehind: 2, planWarnDays: 15, ticketDays: 3, onboardingLateDays: 1, ebillLow: 100 },
     },
+    // BillerPe's own billing (phase 6, owner 2026-10-08): discounts up to
+    // discountFreePct need no approval; the one renewal reminder goes 1 day
+    // before the plan ends (WhatsApp template, else a task); invoices are due
+    // dueDays after issue.
+    billing: {
+        discountFreePct: 25,
+        dueDays: 7,
+        reminderTemplate: "renewal_reminder",
+        terms: "Prices in Indian rupees. Subscription fees are not refundable once the plan has started.",
+        bankDetails: "",
+    },
 };
 
 const AUTO_ITEMS = ["payment", "outlet", "menu", "pc", "app_devices", "first_bill"];
@@ -184,6 +195,13 @@ const VALIDATE = {
             health,
         };
     },
+    billing: (v) => ({
+        discountFreePct: int(v.discountFreePct ?? 25, 0, 100, "Discount without approval"),
+        dueDays: int(v.dueDays ?? 7, 0, 90, "Invoice due after"),
+        reminderTemplate: text(v.reminderTemplate, 80) || "renewal_reminder",
+        terms: text(v.terms, 600),
+        bankDetails: text(v.bankDetails, 400),
+    }),
     digest: (v) => ({
         enabled: v.enabled !== false,
         time: time(v.time, "Digest time"),

@@ -26,13 +26,30 @@ function staffView(u, hotel) {
     };
 }
 
-/** Plan + subscription gate, shared by every login path. */
+/**
+ * Plan gate, shared by every login path. An ended subscription does NOT stop
+ * the login any more (owner 2026-10-08): the app logs in and shows the lock
+ * screen (renew / extend 1 day) - see requireApp and planExpired.
+ */
 function outletGate(hotel) {
     if (!hotel || hotel.active === false) return { ok: false, error: "inactive", message: "This outlet is switched off." };
     if (hotel.product_plan !== "CLOUD_APP") return { ok: false, error: "plan-mismatch" };
-    if (hotel.plan_end_date && new Date(hotel.plan_end_date) < new Date()) return { ok: false, error: "subscription-expired" };
     return null;
 }
+
+/** The subscription has ended: everything is locked except the plan calls. */
+const planExpired = (hotel) => !!hotel && !!hotel.plan_end_date && new Date(hotel.plan_end_date) <= new Date();
+// Apps from 1.1.0 show the lock screen; older ones (they all report "1.0.0")
+// do not understand it, so they keep the old rule: no login, session ended.
+const LOCK_SCREEN_FROM = [1, 1, 0];
+function hasLockScreen(appVersion) {
+    const v = String(appVersion || "").split(".").map((x) => Number(x) || 0);
+    for (let i = 0; i < 3; i++) if ((v[i] || 0) !== LOCK_SCREEN_FROM[i]) return (v[i] || 0) > LOCK_SCREEN_FROM[i];
+    return true;
+}
+const oldAppExpired = (hotel, appVersion) => planExpired(hotel) && !hasLockScreen(appVersion);
+// What a locked outlet's app may still call.
+const PLAN_CALLS = new Set(["planStatus", "planExtend", "planPayLink", "logout", "shiftStaff"]);
 
 const cleanDevice = (d = {}) => ({
     device_id: String(d.deviceId || "").slice(0, 64),
@@ -72,6 +89,7 @@ async function loginWithPassword({ mobile, password, device }) {
     const hotel = await Hotel.findOne({ where: { id: user.hotel_id } });
     const gate = outletGate(hotel);
     if (gate) return gate;
+    if (oldAppExpired(hotel, device?.appVersion)) return { ok: false, error: "subscription-expired" };
     const blocked = await registerDevice(hotel, user, device);
     if (blocked) return blocked;
     return session(hotel, user, device);
@@ -88,6 +106,7 @@ async function loginWithPin({ staffId, pin, device }) {
     const hotel = await Hotel.findOne({ where: { id: user.hotel_id } });
     const gate = outletGate(hotel);
     if (gate) return gate;
+    if (oldAppExpired(hotel, device?.appVersion)) return { ok: false, error: "subscription-expired" };
     await known.update({ hotel_user_id: user.id, last_active: new Date() });
     return session(hotel, user, device);
 }
@@ -114,7 +133,8 @@ async function resume({ token, device }) {
     if (!user || user.active === false || !dev) return { ok: false, error: "inactive" };
     const gate = outletGate(hotel);
     if (gate) return gate;
-    await dev.update({ last_active: new Date() });
+    if (oldAppExpired(hotel, device?.appVersion)) return { ok: false, error: "subscription-expired" };
+    await dev.update({ last_active: new Date(), ...(device?.appVersion ? { app_version: String(device.appVersion).slice(0, 20) } : {}) });
     return { ok: true, session: { token, user: staffView(user, hotel), deviceId: String(p.did) } };
 }
 
@@ -131,9 +151,13 @@ async function requireApp(req, res, next) {
     try {
         const [hotel, dev] = await Promise.all([
             Hotel.findOne({ where: { id: p.hid }, attributes: ["id", "active", "product_plan", "plan_end_date"] }),
-            AppDevice.findOne({ where: { hotel_id: p.hid, device_id: String(p.did), status: "active" }, attributes: ["id", "last_active"] }),
+            AppDevice.findOne({ where: { hotel_id: p.hid, device_id: String(p.did), status: "active" }, attributes: ["id", "last_active", "app_version"] }),
         ]);
-        if (!dev || outletGate(hotel)) return ended();
+        if (!dev || outletGate(hotel) || oldAppExpired(hotel, dev.app_version)) return ended();
+        if (planExpired(hotel) && !PLAN_CALLS.has(req.params.name || String(req.path || "").replace(/^\//, ""))) {
+            const plan = await require("../adminv1/bil/renewals").planState(hotel.id).catch(() => null);
+            return res.status(402).json({ ok: false, error: plan?.message || "Your BillerPe plan has ended. Renew to unlock the app.", code: "plan-expired", plan });
+        }
         const ctx = await buildContext(p.hid, p.uid, String(p.did));
         if (!ctx) return ended();
         req.ctx = ctx;
@@ -175,4 +199,4 @@ async function shiftStaff(ctx) {
     return users.map((u) => ({ id: String(u.id), name: u.name, role: resolveRole(u.role_mst?.role_name) }));
 }
 
-module.exports = { loginWithPassword, loginWithPin, resume, requireApp, shiftStaff, selectOutlet, staffView, outletGate };
+module.exports = { loginWithPassword, loginWithPin, resume, requireApp, shiftStaff, selectOutlet, staffView, outletGate, planExpired };
