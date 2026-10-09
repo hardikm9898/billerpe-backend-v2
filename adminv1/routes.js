@@ -29,7 +29,6 @@ const bilCatalog = require("./bil/catalog");
 const bilInvoices = require("./bil/invoices");
 const bilPayments = require("./bil/payments");
 const bilRenewals = require("./bil/renewals");
-const bilHardware = require("./bil/hardware");
 const bilPdf = require("./bil/pdf");
 const bilShare = require("./bil/share");
 const bilCommon = require("./bil/common");
@@ -334,9 +333,6 @@ const HANDLERS = {
     renewalInvoice: (s, id) => bilRenewals.makeInvoice(s, id),
     renewalChurn: (s, id, reason) => bilRenewals.churn(s, id, reason),
     renewalExtend: (s, id, reason) => bilRenewals.staffExtend(s, id, reason),
-    hardwareOrders: (s, query) => bilHardware.list(s, query || {}),
-    hardwareStatus: (s, id, input) => bilHardware.setStatus(s, id, input || {}),
-    hardwareCreate: (s, input) => bilHardware.create(s, input || {}),
     ebillFree: (s, hotelId, count, reason) => require("./bil/ebill").grantFree(s, hotelId, count, reason),
     // Inventory: the office stock (owner 2026-10-09)
     invItems: (s) => require("./inv/stock").items(s),
@@ -349,8 +345,6 @@ const HANDLERS = {
     invMoves: (s, query) => require("./inv/stock").moves(s, query || {}),
     invOutlet: (s, hotelId) => require("./inv/stock").outlet(s, hotelId),
     invProof: (s, id) => require("./inv/stock").proofLink(s, id),
-    products: (s) => require("./bil/products").list(s),
-    productSave: (s, input) => require("./bil/products").save(s, input || {}),
     ebillHistory: (s, query) => require("./bil/ebill").history(s, query || {}),
 
     /* support tickets (phase 7) */

@@ -1,5 +1,4 @@
 const { BilItem, InvItem } = require("../../model");
-const WebSiteProducts = require("../../model/webSiteProducts");
 const { RuleError } = require("../../appv1/core");
 const { need } = require("../auth");
 const audit = require("../audit");
@@ -7,8 +6,8 @@ const { txt, parse } = require("./common");
 
 // What BillerPe sells, with prices before GST (design doc "Plans, prices and
 // invoices", approved and on the website 2026-10-07). Editable in Billing >
-// Catalog; a price change never touches invoices already made. Hardware
-// prices come from the website's product list (one place for both).
+// Catalog; a price change never touches invoices already made. Printers and
+// rolls are office-stock items (Inventory), priced there.
 
 const DEFAULT_ITEMS = [
     ["SUITE_STARTER_Y", "Suite Starter - 1 year", "plan", "LOCAL_SUITE", "Suite Starter", 7999, 365, null, null],
@@ -60,24 +59,12 @@ function includesOf(i) {
     return Array.isArray(v) ? v.filter((x) => x && Number(x.itemId) > 0 && Number(x.qty) > 0).map((x) => ({ itemId: Number(x.itemId), qty: Number(x.qty) })) : [];
 }
 
-/** The website's price for a hardware product: the offer price when it is on and lower. */
-const hardwarePrice = (p) => {
-    const base = Number(p.price) || 0;
-    const offer = p.offer_active && Number(p.offer_price) > 0 && Number(p.offer_price) < base ? Number(p.offer_price) : null;
-    return offer ?? base;
-};
-
-async function hardware() {
-    const rows = await WebSiteProducts.findAll({ raw: true });
-    return rows.map((p) => ({ id: p.id, title: p.title, price: hardwarePrice(p), active: p.status === undefined || p.status === null || p.status === true || p.status === 1 || p.status === "active" }));
-}
-
 async function list(s) {
     need(s, "billing.view");
     await ensureCatalog();
     const items = await BilItem.findAll({ order: [["sort", "ASC"], ["id", "ASC"]], raw: true });
     const stock = await InvItem.findAll({ where: { active: true }, order: [["sort", "ASC"], ["name", "ASC"]], raw: true });
-    return { items: items.map(view), hardware: await hardware(), stock: stock.map((i) => ({ id: i.id, name: i.name, unit: i.unit, price: Number(i.price), gstRate: Number(i.gst_rate) })) };
+    return { items: items.map(view), hardware: [], stock: stock.map((i) => ({ id: i.id, name: i.name, unit: i.unit, price: Number(i.price), gstRate: Number(i.gst_rate) })) };
 }
 
 const KINDS = ["plan", "addon", "ebill", "service"];
@@ -138,4 +125,4 @@ async function save(s, input = {}) {
     return { item: view(row) };
 }
 
-module.exports = { DEFAULT_ITEMS, ensureCatalog, list, save, view, hardware, hardwarePrice, includesOf };
+module.exports = { DEFAULT_ITEMS, ensureCatalog, list, save, view, includesOf };

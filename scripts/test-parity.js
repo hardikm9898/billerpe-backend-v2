@@ -275,26 +275,9 @@ async function run() {
     r = await call("ebillHistory", cs.token, {});
     check("the all-outlets history includes it", r.ok && r.result.entries.some((x) => x.hotelId === newHotel.id));
 
-    console.log("\nWebsite products (old panel: Product Management)");
-    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-    r = await call("productSave", cs.token, { title: `Par Printer ${stamp}`, price: 6500, newImages: [{ data: PNG, mime: "image/png", name: "p.png" }] });
-    check("only an admin edits products", !r.ok, r);
-    r = await call("productSave", admin.token, { title: `Par Printer ${stamp}`, price: 6500, keyFeatures: ["80mm", "", "USB + LAN"], offerActive: true, offerPrice: 5999, offer: "Diwali", newImages: [{ data: PNG, mime: "image/png", name: "p.png" }] });
-    const prod = r.ok && r.result.product;
-    created.products = prod ? [prod.id] : [];
-    check("a product is added with its photo, features and offer", prod && prod.images.length === 1 && prod.keyFeatures.join("|") === "80mm|USB + LAN" && prod.offerActive && prod.offerPrice === 5999, r);
-    r = await call("productSave", admin.token, { id: prod.id, title: `Par Printer ${stamp}`, price: 6800, images: prod.images, newImages: [{ data: PNG, mime: "image/png", name: "q.png" }], offerActive: false });
-    check("edit: price changed, photo added, offer off", r.ok && r.result.product.price === 6800 && r.result.product.images.length === 2 && !r.result.product.offerActive, r);
-    r = await call("productSave", admin.token, { id: prod.id, title: `Par Printer ${stamp}`, price: 6800, images: [] });
-    check("a product keeps at least one photo", !r.ok && /photo/.test(r.error));
-    r = await call("productSave", admin.token, { title: `Par Bad ${stamp}`, price: 100, offerActive: true, offerPrice: 200, newImages: [{ data: PNG, mime: "image/png", name: "p.png" }] });
-    check("an offer above the price is refused", !r.ok);
-    r = await call("productSave", admin.token, { title: `Par Bad ${stamp}`, price: 100, newImages: [{ data: "aGVsbG8=", mime: "text/plain", name: "x.txt" }] });
-    check("only photos (JPG / PNG / WEBP)", !r.ok && /JPG/.test(r.error));
-    r = await call("products", cs.token);
-    check("the list shows it to billing staff", r.ok && r.result.products.some((x) => x.id === prod.id && x.price === 6800));
-    const hw = await require("../adminv1/bil/catalog").hardware();
-    check("hardware invoices use the new price", hw.some((x) => x.id === prod.id && x.price === 6800));
+    console.log("\nWebsite products: removed (owner 2026-10-09: the website sells no hardware)");
+    r = await call("products", admin.token);
+    check("the website products screen is gone", !r.ok, r);
 
     console.log("\nQuick payment link (old panel: Generate Payment Link; it makes the invoice)");
     await require("../adminv1/bil/catalog").ensureCatalog();

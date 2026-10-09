@@ -1,12 +1,11 @@
 const { Op } = require("sequelize");
 const { sequelize, Hotel, BilItem, InvItem, BilInvoice, BilInvoiceLine, BilPayment, BilPayLink, CsAccount, CsAccountOutlet, CsRenewal, CsOnboardingItem, AdmUser, EBillCredit, EBillCreditDebit, PurchaseRollsAndPrinter } = require("../../model");
-const WebSiteProducts = require("../../model/webSiteProducts");
 const { RuleError } = require("../../appv1/core");
 const { need } = require("../auth");
 const audit = require("../audit");
 const { notify, peopleWith } = require("../crm/notify");
 const { addActivity } = require("../cs/common");
-const { hardwarePrice, ensureCatalog } = require("./catalog");
+const { ensureCatalog } = require("./catalog");
 const { STATE_NAME, GSTIN_RE, supplyState, totals, nextNumber, billingSettings, seller, money, moment, TZ, txt, json, parse } = require("./common");
 
 // BillerPe's GST invoices (the panel is the invoice book, owner 2026-10-08).
@@ -104,9 +103,8 @@ async function buildLines(s, rawLines, hotel, t, opts = {}) {
             const included = !!l.included && !!opts.setupPeriod;
             out.push({ kind: "goods", description: `${it.name}${included ? " (included with the plan)" : ""}`, sac: it.hsn || "", qty, unit_price: included ? 0 : Number(it.price), gst_rate: Number(it.gst_rate), effect: { goods: { itemId: it.id, included } } });
         } else if (l.productId) {
-            const p = await WebSiteProducts.findOne({ where: { id: Number(l.productId) }, raw: true, transaction: t });
-            if (!p) throw new RuleError(`Line ${i + 1}: this hardware is not in the list.`);
-            out.push({ product_id: p.id, kind: "hardware", description: txt(p.title, 200), sac: "", qty, unit_price: hardwarePrice(p), gst_rate: 18, effect: { hardware: true } });
+            // The website shop is closed (owner 2026-10-09): printers and rolls are sold from the office stock.
+            throw new RuleError(`Line ${i + 1}: sell printers and rolls as stock items (Inventory).`);
         } else {
             if (!s || !s.can("billing.approve")) throw new RuleError(`Line ${i + 1}: choose an item from the catalog. Only an admin can write a free line.`);
             const desc = txt(l.description, 200);
