@@ -71,7 +71,9 @@ const RestaurantSetting = sequelize.define("hms_res_setting", {
     // POS App tables screen: "tabs" | "sections" (the Web POS Table grid view).
     table_grid_view: { type: DataTypes.STRING(10), allowNull: false, defaultValue: "tabs" },
     // POS App owner alerts JSON (migration 20260929110000; appv1/ownerAlerts.js).
-    owner_alerts: { type: DataTypes.TEXT, allowNull: true }
+    owner_alerts: { type: DataTypes.TEXT, allowNull: true },
+    // Menu photos on the billing screens (migration 20261019110000, owner 2026-10-09).
+    billing_photos: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true }
 }, {
     indexes: [
         {

@@ -72,6 +72,17 @@ router.get("/support/tickets", deviceAuth, listTickets);
 // for its own menu (by item names: its ids are its own) and asks BillerPe for
 // a missing photo. Search itself is GET /getProductImages/:search.
 router.post("/photos/suggest", deviceAuth, planReply((req) => require("../adminv1/photos/outlet").suggest(req.body && req.body.items)));
+// Outlet choices set from the Web POS (Menu items -> "Show photos while billing").
+router.post("/prefs", deviceAuth, planReply(async (req) => {
+    const M = require("../model");
+    const b = req.body || {};
+    if (b.billingPhotos !== undefined) {
+        const [row] = await M.RestaurantSetting.findOrCreate({ where: { hotel_id: req.user }, defaults: { hotel_id: req.user } });
+        await row.update({ billing_photos: !!b.billingPhotos });
+    }
+    const row = await M.RestaurantSetting.findOne({ where: { hotel_id: req.user }, attributes: ["billing_photos"], raw: true });
+    return { billingPhotos: row ? !!row.billing_photos : true };
+}));
 router.post("/photos/request", deviceAuth, planReply((req) => require("../adminv1/photos/library").request(req.user, { itemName: req.body && req.body.itemName, askedBy: req.body && req.body.by })));
 router.post("/support/ticket/:id/reply", deviceAuth, replyTicket);
 

@@ -172,10 +172,14 @@ const heartbeat = async (req, res) => {
 
         // The plan lock (owner 2026-10-08): the PC locks billing when it ends.
         const plan = await require("../../adminv1/bil/renewals").planState(hotelId).catch(() => null);
+        // Outlet choices the PC keeps for its Web POS / Captain (menu photos while billing).
+        const pref = await require("../../model").RestaurantSetting.findOne({ where: { hotel_id: hotelId }, attributes: ["billing_photos"], raw: true }).catch(() => null);
+        const prefs = { billingPhotos: pref ? pref.billing_photos !== false && pref.billing_photos !== 0 : true };
 
         return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, {
             serverTime: new Date().toISOString(),
             plan,
+            prefs,
             versions,
             pendingQrOrders,
             bookingsVersion: bookingsVersion ? new Date(bookingsVersion).toISOString() : null,

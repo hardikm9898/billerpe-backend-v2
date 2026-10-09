@@ -189,6 +189,7 @@ async function settingsView(hotelId, hotel, setting, tables) {
         cashSessionOn: !!setting?.opening_closing_show,
         qrOrdering: setting ? !isOff(setting.qr_ordering) : true,
         tableGridView: setting?.table_grid_view === "sections" ? "sections" : "tabs",
+        billingPhotos: setting ? !isOff(setting.billing_photos) : true,
         supplierPaymentsAsExpense: setting ? !isOff(setting.supplier_payment_expense) : true,
         ownerAlerts: { ...OWNER_ALERT_DEFAULTS, ...(parseJson(setting?.owner_alerts, {}) || {}) },
     };

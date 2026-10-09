@@ -102,7 +102,7 @@ async function saveFormat(Model, hotelId, format) {
 
 async function updateSettings(c, patch) {
     const HARDWARE = ["kitchens", "kotFormat"];
-    const EXPERIENCE = ["qrOrdering", "tableGridView"];
+    const EXPERIENCE = ["qrOrdering", "tableGridView", "billingPhotos"];
     for (const k of Object.keys(patch || {})) {
         // Owner alerts are the owner's own choice (owner list 2026-09-29 #10).
         if (k === "ownerAlerts") {
@@ -136,6 +136,7 @@ async function updateSettings(c, patch) {
     if (patch.financialYearStartMonth !== undefined) setting.financial_year_start_month = Number(patch.financialYearStartMonth);
     if (patch.cashSessionOn !== undefined) setting.opening_closing_show = !!patch.cashSessionOn;
     if (patch.qrOrdering !== undefined) setting.qr_ordering = !!patch.qrOrdering;
+    if (patch.billingPhotos !== undefined) setting.billing_photos = !!patch.billingPhotos;
     if (patch.tableGridView !== undefined) {
         if (!["tabs", "sections"].includes(patch.tableGridView)) fail("Pick Tabs or Sections");
         setting.table_grid_view = patch.tableGridView;

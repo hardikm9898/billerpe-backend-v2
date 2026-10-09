@@ -9,7 +9,7 @@ const { need } = require("../auth");
 const audit = require("../audit");
 const { notify, peopleWith } = require("../crm/notify");
 const { txt } = require("../crm/util");
-const { search, keyOf } = require("./search");
+const { search, keyOf, words } = require("./search");
 
 // BillerPe's menu photo library (owner 2026-10-09). SuperAdmin staff with
 // "Manage menu photos" upload; every photo is turned into one standard square
@@ -63,7 +63,7 @@ async function render(buffer) {
 
 async function store(name, buffer) {
     const { big, small } = await render(buffer);
-    const slug = (keyOf(name).replace(/[^a-z0-9]+/g, "-") || "photo").slice(0, 60);
+    const slug = (words(name).join("-").replace(/[^a-z0-9-]+/g, "") || "photo").slice(0, 60);
     const key = `${PREFIX}${slug}-${crypto.randomBytes(4).toString("hex")}`;
     const url = await put(`${key}.webp`, big);
     await put(`${key}-t.webp`, small);
