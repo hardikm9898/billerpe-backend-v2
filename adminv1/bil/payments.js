@@ -68,9 +68,8 @@ async function approveIn(pay, inv, t, actorId) {
     return invoices.addPaid(inv, pay.amount, t, actorId);
 }
 
-/** Records money received by hand. */
-async function record(s, invoiceId, input = {}) {
-    need(s, "billing.manage");
+/** A hand payment's fields, checked before any write. proofRef = a proof stored earlier (outlet setup). */
+async function cleanPayment(s, input = {}, { proofRef = null, payer = s } = {}) {
     const method = METHODS.includes(input.method) ? input.method : null;
     if (!method) throw new RuleError("Choose how it was paid.");
     const amount = Math.round(Number(input.amount) * 100) / 100;
@@ -79,25 +78,38 @@ async function record(s, invoiceId, input = {}) {
     if (["upi", "bank", "cheque"].includes(method) && reference.length < 4) throw new RuleError("Write the UTR / transaction or cheque number.");
     const on = input.receivedOn ? moment.tz(String(input.receivedOn).slice(0, 10), "YYYY-MM-DD", true, TZ) : moment().tz(TZ);
     if (!on.isValid() || on.isAfter(moment().tz(TZ).endOf("day"))) throw new RuleError("Choose the day it was received (not in the future).");
-    const proof = await saveProof(input.proof);
-    if (["upi", "bank"].includes(method) && !proof && !s.can("billing.approve")) throw new RuleError("Attach the payment screenshot.");
-    return sequelize.transaction(async (t) => {
-        const inv = await invoices.getInvoice(invoiceId, t, true);
-        if (inv.kind !== "invoice" || !invoices.OPEN.includes(inv.status)) throw new RuleError("This invoice is not waiting for payment.");
-        const pending = Number((await BilPayment.sum("amount", { where: { invoice_id: inv.id, status: "pending" }, transaction: t })) || 0);
-        if (amount > invoices.due(inv) - pending + 0.005) throw new RuleError(`More than is due: ${money(invoices.due(inv) - pending)}.`);
-        if (reference && (await BilPayment.findOne({ where: { reference, method, status: { [Op.ne]: "rejected" } }, transaction: t }))) throw new RuleError("A payment with this reference is already recorded.");
-        const pay = await BilPayment.create({ invoice_id: inv.id, account_id: inv.account_id, method, amount, reference, proof, status: "pending", received_on: on.format("YYYY-MM-DD"), note: txt(input.note, 300), created_by: s.user.id }, { transaction: t });
-        let done = [];
-        if (s.can("billing.approve")) done = await approveIn(pay, inv, t, s.user.id);
-        else {
-            for (const p of await peopleWith("billing.approve")) {
-                await notify(p.id, { type: "billing.payment", title: `Payment to approve: ${money(amount)}`, body: `${inv.bill_name} · ${inv.number} · ${method.toUpperCase()} ${reference}`, link: `/billing/payments`, ref: `pay:${pay.id}` }, { transaction: t });
-            }
+    const proof = proofRef || (await saveProof(input.proof));
+    if (["upi", "bank"].includes(method) && !proof && !payer.can("billing.approve")) throw new RuleError("Attach the payment screenshot.");
+    return { method, amount, reference, receivedOn: on.format("YYYY-MM-DD"), proof, note: txt(input.note, 300) };
+}
+
+/**
+ * Writes a checked payment against a locked invoice. createdBy = who took
+ * the money (outlet setup: the salesperson, also when an approver approves
+ * the setup later); an approver's own entry is approved at once.
+ */
+async function recordIn(s, inv, v, t, { createdBy = s.user.id } = {}) {
+    if (inv.kind !== "invoice" || !invoices.OPEN.includes(inv.status)) throw new RuleError("This invoice is not waiting for payment.");
+    const pending = Number((await BilPayment.sum("amount", { where: { invoice_id: inv.id, status: "pending" }, transaction: t })) || 0);
+    if (v.amount > invoices.due(inv) - pending + 0.005) throw new RuleError(`More than is due: ${money(invoices.due(inv) - pending)}.`);
+    if (v.reference && (await BilPayment.findOne({ where: { reference: v.reference, method: v.method, status: { [Op.ne]: "rejected" } }, transaction: t }))) throw new RuleError("A payment with this reference is already recorded.");
+    const pay = await BilPayment.create({ invoice_id: inv.id, account_id: inv.account_id, method: v.method, amount: v.amount, reference: v.reference, proof: v.proof, status: "pending", received_on: v.receivedOn, note: v.note, created_by: createdBy }, { transaction: t });
+    let done = [];
+    if (s.can("billing.approve")) done = await approveIn(pay, inv, t, s.user.id);
+    else {
+        for (const p of await peopleWith("billing.approve")) {
+            await notify(p.id, { type: "billing.payment", title: `Payment to approve: ${money(v.amount)}`, body: `${inv.bill_name} · ${inv.number} · ${v.method.toUpperCase()} ${v.reference}`, link: `/billing/payments`, ref: `pay:${pay.id}` }, { transaction: t });
         }
-        await audit.write(s, { action: "payment.record", entity: "bil_payment", entityId: pay.id, summary: `${money(amount)} by ${method} for ${inv.number}${pay.status === "approved" ? " (approved)" : ""}`, after: { reference, amount } }, { transaction: t });
-        return { id: pay.id, status: pay.status, number: pay.number, effects: done };
-    });
+    }
+    await audit.write(s, { action: "payment.record", entity: "bil_payment", entityId: pay.id, summary: `${money(v.amount)} by ${v.method} for ${inv.number}${pay.status === "approved" ? " (approved)" : ""}`, after: { reference: v.reference, amount: v.amount } }, { transaction: t });
+    return { id: pay.id, status: pay.status, number: pay.number, effects: done };
+}
+
+/** Records money received by hand. */
+async function record(s, invoiceId, input = {}) {
+    need(s, "billing.manage");
+    const v = await cleanPayment(s, input);
+    return sequelize.transaction(async (t) => recordIn(s, await invoices.getInvoice(invoiceId, t, true), v, t));
 }
 
 async function decide(s, paymentId, ok, reason) {
@@ -264,4 +276,4 @@ async function quickLink(s, input = {}) {
     return { invoiceId: draft.id, number: issued.number, status: "issued", url: l.url, amount: Number(l.amount), simulated: l.url.startsWith("sim:") };
 }
 
-module.exports = { record, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, saveProof, METHODS, quickLink };
+module.exports = { record, cleanPayment, recordIn, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, saveProof, METHODS, quickLink };

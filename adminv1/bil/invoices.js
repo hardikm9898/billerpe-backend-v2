@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const { sequelize, Hotel, BilItem, BilInvoice, BilInvoiceLine, BilPayment, BilPayLink, CsAccount, CsAccountOutlet, CsRenewal, CsOnboardingItem, AdmUser, EBillCredit, EBillCreditDebit, PurchaseRollsAndPrinter } = require("../../model");
+const { sequelize, Hotel, BilItem, InvItem, BilInvoice, BilInvoiceLine, BilPayment, BilPayLink, CsAccount, CsAccountOutlet, CsRenewal, CsOnboardingItem, AdmUser, EBillCredit, EBillCreditDebit, PurchaseRollsAndPrinter } = require("../../model");
 const WebSiteProducts = require("../../model/webSiteProducts");
 const { RuleError } = require("../../appv1/core");
 const { need } = require("../auth");
@@ -60,7 +60,7 @@ async function billTo(hotel, account) {
  * Lines as asked -> lines with prices from the catalog (or the website's
  * hardware list); only someone who approves payments may write a free line.
  */
-async function buildLines(s, rawLines, hotel, t) {
+async function buildLines(s, rawLines, hotel, t, opts = {}) {
     if (!Array.isArray(rawLines) || !rawLines.length) throw new RuleError("Add at least one line.");
     if (rawLines.length > 30) throw new RuleError("Keep an invoice to 30 lines or fewer.");
     await ensureCatalog();
@@ -79,11 +79,12 @@ async function buildLines(s, rawLines, hotel, t) {
                 if (!Number.isInteger(qty)) throw new RuleError(`Line ${i + 1}: a plan is sold in whole periods.`);
                 planLines += 1;
                 const days = item.days * qty;
-                const p = periodFor(end, days);
+                // An outlet's first invoice (outlet setup): the plan already runs from these dates.
+                const p = opts.setupPeriod || periodFor(end, days);
                 line.period_from = p.from;
                 line.period_to = p.to;
                 line.description = `${item.name}${qty > 1 ? ` x ${qty}` : ""} · ${hotel.hotel_name}`;
-                line.effect = { plan: { product: item.product, planName: item.plan_name, days, devices: item.devices || null } };
+                line.effect = { plan: { product: item.product, planName: item.plan_name, days, devices: item.devices || null, ...(opts.setupPeriod ? { setup: true } : {}) } };
             } else if (item.kind === "addon") {
                 if (!hotel) throw new RuleError("An add-on needs the outlet it is for.");
                 line.effect = { devices: (item.devices || 1) * qty };
@@ -94,6 +95,14 @@ async function buildLines(s, rawLines, hotel, t) {
                 line.description = `${item.name} · ${hotel.hotel_name}`;
             }
             out.push(line);
+        } else if (l.invItemId) {
+            // Goods from the office stock (printers, rolls): sold at the item's price, or
+            // included free with the plan (outlet setup only). Sending them is Inventory's job.
+            const it = await InvItem.findOne({ where: { id: Number(l.invItemId) || 0 }, raw: true, transaction: t });
+            if (!it) throw new RuleError(`Line ${i + 1}: this stock item does not exist.`);
+            if (!Number.isInteger(qty)) throw new RuleError(`Line ${i + 1}: goods are sold in whole pieces.`);
+            const included = !!l.included && !!opts.setupPeriod;
+            out.push({ kind: "goods", description: `${it.name}${included ? " (included with the plan)" : ""}`, sac: it.hsn || "", qty, unit_price: included ? 0 : Number(it.price), gst_rate: Number(it.gst_rate), effect: { goods: { itemId: it.id, included } } });
         } else if (l.productId) {
             const p = await WebSiteProducts.findOne({ where: { id: Number(l.productId) }, raw: true, transaction: t });
             if (!p) throw new RuleError(`Line ${i + 1}: this hardware is not in the list.`);
@@ -177,9 +186,11 @@ function view(inv, names = new Map()) {
 /* ------------------------------ draft ------------------------------ */
 
 /** Makes or replaces a draft. input: { hotelId, accountId?, renewalId?, lines, discountPct, discountReason, supplyState?, bill?, note } */
-async function saveDraft(s, input = {}, id = null) {
-    if (s) need(s, "billing.manage");
-    return sequelize.transaction(async (t) => {
+/** opts (outlet setup only): { setupPeriod, t } - the first invoice is made inside the setup's transaction. */
+async function saveDraft(s, input = {}, id = null, opts = {}) {
+    if (s && !opts.setupPeriod) need(s, "billing.manage");
+    const run = (fn) => (opts.t ? fn(opts.t) : sequelize.transaction(fn));
+    return run(async (t) => {
         let inv = id ? await getInvoice(id, t, true) : null;
         if (inv && inv.status !== "draft") throw new RuleError("Only a draft can be changed.");
         const hotelId = Number(input.hotelId) || (inv && inv.hotel_id) || null;
@@ -188,7 +199,7 @@ async function saveDraft(s, input = {}, id = null) {
         const link = hotel ? await CsAccountOutlet.findOne({ where: { hotel_id: hotel.id }, raw: true, transaction: t }) : null;
         const accountId = Number(input.accountId) || (link && link.account_id) || (inv && inv.account_id) || null;
         const account = accountId ? await CsAccount.findOne({ where: { id: accountId }, raw: true, transaction: t }) : null;
-        const lines = await buildLines(s, input.lines, hotel, t);
+        const lines = await buildLines(s, input.lines, hotel, t, opts);
         const pct = Math.round((Number(input.discountPct) || 0) * 100) / 100;
         if (pct < 0 || pct > 100) throw new RuleError("Discount: from 0 to 100%.");
         const reason = txt(input.discountReason, 200);
@@ -339,7 +350,11 @@ async function applyPaid(inv, t, actorId = null) {
     for (const l of lines) {
         const e = parse(l.effect);
         if (!e || !hotel) continue;
-        if (e.plan) {
+        if (e.plan && e.plan.setup) {
+            // The outlet was set up with this plan's dates already: nothing moves.
+            await CsAccountOutlet.update({ plan_name: e.plan.planName || "" }, { where: { hotel_id: hotel.id }, transaction: t });
+            done.push("plan paid in full");
+        } else if (e.plan) {
             const renewal = await CsRenewal.findOne({ where: { hotel_id: hotel.id, stage: { [Op.notIn]: ["paid", "churned"] } }, order: [["ends_on", "ASC"]], transaction: t });
             const end = renewal ? renewal.ends_on : hotel.plan_end_date;
             const p = periodFor(end, e.plan.days);
@@ -530,4 +545,4 @@ async function ownerMobileOf(hotelId) {
     return m.length === 10 ? m : "";
 }
 
-module.exports = { getInvoice, saveDraft, issue, approve, toDraft, cancel, applyPaid, addPaid, list, detail, dues, renewalInvoice, ownerMobileOf, view, lineView, due, periodFor, paidEnd, OPEN };
+module.exports = { getInvoice, saveDraft, issueIn, issue, approve, toDraft, cancel, applyPaid, addPaid, list, detail, dues, renewalInvoice, ownerMobileOf, view, lineView, due, periodFor, paidEnd, OPEN };

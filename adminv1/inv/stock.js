@@ -1,11 +1,11 @@
 const { Op } = require("sequelize");
-const { sequelize, Hotel, InvItem, InvMove, BilInvoice, CsAccountOutlet, AdmUser } = require("../../model");
+const { sequelize, Hotel, InvItem, InvMove, BilInvoice, BilInvoiceLine, CsAccountOutlet, AdmUser } = require("../../model");
 const { RuleError } = require("../../appv1/core");
 const { need } = require("../auth");
 const audit = require("../audit");
 const { notify, peopleWith } = require("../crm/notify");
 const { addActivity } = require("../cs/common");
-const { txt } = require("../crm/util");
+const { txt, parse } = require("../crm/util");
 
 // BillerPe's office stock (owner 2026-10-09): ONE stock for the company, any
 // item type (printers, rolls, mobile POS later). Every change is a move with
@@ -218,6 +218,14 @@ async function dispatch(s, input = {}) {
         if (basis === "invoice") {
             const inv = await BilInvoice.findOne({ where: { id: Number(input.invoiceId) || 0, hotel_id: hotel.id, kind: "invoice" }, attributes: ["id", "number", "status"], raw: true, transaction: t });
             if (!inv || !["issued", "part_paid", "paid"].includes(inv.status)) throw new RuleError("Choose an issued invoice of this outlet that sells it.");
+            const lines = await BilInvoiceLine.findAll({ where: { invoice_id: inv.id, kind: "goods" }, attributes: ["qty", "effect"], raw: true, transaction: t });
+            const sold = lines.reduce((n, l) => {
+                const g = (parse(l.effect) || {}).goods;
+                return n + (g && Number(g.itemId) === item.id && !g.included ? Number(l.qty) : 0);
+            }, 0);
+            if (!sold) throw new RuleError(`Invoice ${inv.number} does not sell ${item.name}. Add it to an invoice first (or send what the plan includes).`);
+            const already = Number((await InvMove.sum("qty", { where: { invoice_id: inv.id, item_id: item.id, kind: "dispatch", status: ["done", "pending"] }, transaction: t })) || 0);
+            if (already + qty > sold) throw new RuleError(`Invoice ${inv.number} sells ${sold} ${item.unit} of ${item.name}; ${already} already sent.`);
             invoiceId = inv.id;
         }
         if (basis === "plan") {

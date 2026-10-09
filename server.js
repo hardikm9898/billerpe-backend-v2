@@ -242,6 +242,8 @@ server.listen(PORT, (err) => {
                 "sup_tickets", "sup_ticket_messages",
                 // SuperAdmin inventory: schema owned by migration 20261015100000.
                 "inv_items", "inv_moves",
+                // Outlet setup at creation: schema owned by migration 20261016100000.
+                "cs_outlet_setups",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',

@@ -233,9 +233,10 @@ const HANDLERS = {
     callRecording: (s, callId) => calls.play(s, callId),
 
     /* customers and outlet operations (phase 5) */
-    leadWonCustomer: (s, id, input) => csWon.win(s, id, input || {}),
+    // Mark won: "create" sets the outlet up (order + token, owner 2026-10-09); link / later as before.
+    leadWonCustomer: (s, id, input) => ((input || {}).mode === "create" ? require("./cs/setup").create(s, { ...input, source: "won", leadId: id }) : csWon.win(s, id, input || {})),
     wonFindOutlets: (s, q) => csWon.findOutlets(s, q),
-    accountAddOutlet: (s, id, input) => csWon.addOutlet(s, id, input || {}),
+    accountAddOutlet: (s, id, input) => require("./cs/setup").create(s, { ...(input || {}), source: "account", accountId: id }),
     planNames: () => ({ plans: csWon.PLAN_NAMES }),
     csToday: (s) => csToday.today(s),
     accounts: (s, query) => csAccounts.list(s, query || {}),
@@ -256,7 +257,13 @@ const HANDLERS = {
     outletReleasePc: (s, hotelId, reason) => csOutlets.releasePc(s, hotelId, reason),
     outletDeviceLogout: (s, hotelId, deviceId, reason) => csOutlets.logoutDevice(s, hotelId, deviceId, reason),
     outletMove: (s, hotelId, accountId, reason) => csAccounts.moveOutlet(s, hotelId, accountId, reason),
-    outletCreate: (s, input) => require("./cs/outletEdit").create(s, input || {}),
+    outletCreate: (s, input) => require("./cs/setup").create(s, { ...(input || {}), source: "new" }),
+    // Outlet setup: the order form, its price check, approvals.
+    setupOptions: (s) => require("./cs/setup").options(s),
+    setupQuote: (s, order) => require("./cs/setup").quote(s, order || {}),
+    setupList: (s, query) => require("./cs/setup").list(s, query || {}),
+    setupDecide: (s, id, ok, reason) => require("./cs/setup").decide(s, id, ok === true, reason),
+    setupTokenProof: (s, id) => require("./cs/setup").tokenProof(s, id),
     outletDetails: (s, hotelId) => require("./cs/outletEdit").details(s, hotelId),
     outletUpdate: (s, hotelId, input) => require("./cs/outletEdit").update(s, hotelId, input || {}),
     outletOwnerPassword: (s, hotelId, reason) => require("./cs/outletEdit").resetOwnerPassword(s, hotelId, reason),

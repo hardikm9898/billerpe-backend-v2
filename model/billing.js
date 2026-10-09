@@ -30,6 +30,8 @@ const BilItem = sequelize.define("bil_item", {
     gst_rate: { type: T.DECIMAL(5, 2), allowNull: false, defaultValue: 18 },
     sort: { type: T.INTEGER, allowNull: false, defaultValue: 0 },
     active: { type: T.BOOLEAN, allowNull: false, defaultValue: true },
+    // A plan: the inventory items it includes free, JSON [{ itemId, qty }] (migration 20261016100000).
+    includes: { type: T.TEXT, allowNull: true },
 }, { tableName: "bil_items" });
 
 // One number series per document kind per financial year (GST rule).

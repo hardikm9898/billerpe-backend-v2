@@ -31,8 +31,12 @@ function dateOrNull(v, label) {
     return d;
 }
 
-/** The new outlet's fields, checked before anything is written. */
-async function cleanOutlet(input, cfg) {
+/**
+ * The new outlet's fields, checked before anything is written. opts.plan =
+ * the plan from the outlet setup's order ({ product, planName, start, end,
+ * devices }) instead of the plan fields in `input`.
+ */
+async function cleanOutlet(input, cfg, opts = {}) {
     const o = input || {};
     const name = txt(o.name, 120);
     if (name.length < 2) throw new RuleError("Write the outlet's name.");
@@ -47,15 +51,16 @@ async function cleanOutlet(input, cfg) {
     if (!/^[1-9]\d{5}$/.test(pin)) throw new RuleError("PIN code: 6 digits.");
     const email = txt(o.email, 120);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RuleError("The email does not look right.");
-    const product = o.productPlan === "CLOUD_APP" ? "CLOUD_APP" : "LOCAL_SUITE";
-    const planName = txt(o.planName, 40);
-    const known = PLAN_NAMES.find((p) => p.name === planName);
+    const fixed = opts.plan || null;
+    const product = fixed ? fixed.product : o.productPlan === "CLOUD_APP" ? "CLOUD_APP" : "LOCAL_SUITE";
+    const planName = fixed ? fixed.planName : txt(o.planName, 40);
+    const known = fixed ? { product, devices: fixed.devices } : PLAN_NAMES.find((p) => p.name === planName);
     if (!known) throw new RuleError("Choose the plan sold.");
     if (known.product !== "any" && known.product !== product) throw new RuleError(`${planName} is a ${known.product === "CLOUD_APP" ? "POS App" : "Local Suite"} plan.`);
-    const start = dateOrNull(o.planStart, "Plan starts") || moment().tz(TZ).startOf("day");
-    const end = dateOrNull(o.planEnd, "Plan ends") || (planName === "Free trial" ? start.clone().add(cfg.trialDays, "days") : start.clone().add(1, "year").subtract(1, "day"));
+    const start = fixed ? fixed.start : dateOrNull(o.planStart, "Plan starts") || moment().tz(TZ).startOf("day");
+    const end = fixed ? fixed.end : dateOrNull(o.planEnd, "Plan ends") || (planName === "Free trial" ? start.clone().add(cfg.trialDays, "days") : start.clone().add(1, "year").subtract(1, "day"));
     if (!end.isAfter(start)) throw new RuleError("The plan must end after it starts.");
-    let devices = o.deviceLimit !== undefined && o.deviceLimit !== "" ? Number(o.deviceLimit) : known.devices || 3;
+    let devices = fixed ? fixed.devices || 3 : o.deviceLimit !== undefined && o.deviceLimit !== "" ? Number(o.deviceLimit) : known.devices || 3;
     if (!Number.isInteger(devices) || devices < 1 || devices > 100) throw new RuleError("POS App devices: a whole number from 1 to 100.");
     const password = String(o.password || "");
     if (password && password.length < 6) throw new RuleError("The owner's password needs at least 6 characters (or leave it empty to make one).");

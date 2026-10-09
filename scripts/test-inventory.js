@@ -118,6 +118,12 @@ async function run() {
     created.invoices.push(inv.id);
     const otherInv = await M.BilInvoice.create({ kind: "invoice", number: `TINV2-${stamp}`, status: "issued", hotel_id: other.id, bill_name: other.hotel_name, total: 236, issued_at: new Date() });
     created.invoices.push(otherInv.id);
+    const goods = (invId, itemId, qty) => M.BilInvoiceLine.create({ invoice_id: invId, kind: "goods", description: "x", sac: "", qty, unit_price: 1, amount: qty, gst_rate: 18, effect: JSON.stringify({ goods: { itemId, included: false } }) });
+    r = await call("invDispatch", cs.token, { hotelId: cafe.id, itemId: roll, qty: 5, basis: "invoice", invoiceId: inv.id, carrier: "hand", proof: PHOTO });
+    check("an invoice that does not sell rolls is refused", !r.ok && /does not sell/.test(r.error), r);
+    await goods(inv.id, roll, 520);
+    await goods(inv.id, printer, 1);
+    await goods(otherInv.id, printer, 2);
     r = await call("invDispatch", cs.token, { hotelId: cafe.id, itemId: roll, qty: 5, basis: "invoice", invoiceId: otherInv.id, carrier: "hand", proof: PHOTO });
     check("another outlet's invoice is refused", !r.ok, r);
     r = await call("invDispatch", cs.token, { hotelId: cafe.id, itemId: roll, qty: 5, basis: "invoice", invoiceId: inv.id, carrier: "post", ref: "EM123456789IN", proof: PHOTO });
@@ -130,6 +136,8 @@ async function run() {
     check("the same serial cannot go out twice", !r.ok && /already at an outlet/.test(r.error), r);
     r = await call("invDispatch", cs.token, { hotelId: cafe.id, itemId: roll, qty: 500, basis: "invoice", invoiceId: inv.id, carrier: "hand", proof: PHOTO });
     check("cannot send more than the office holds", !r.ok && /Only 95/.test(r.error), r);
+    r = await call("invDispatch", cs.token, { hotelId: cafe.id, itemId: printer, qty: 1, basis: "invoice", invoiceId: inv.id, carrier: "hand", serials: P(2), proof: PHOTO });
+    check("no more than the invoice sells (1 printer, already sent)", !r.ok && /already sent/.test(r.error), r);
 
     console.log("\nFree items need an approver");
     r = await call("invDispatch", cs.token, { hotelId: cafe.id, itemId: roll, qty: 10, basis: "free", carrier: "hand", proof: PHOTO });
@@ -191,6 +199,7 @@ async function run() {
 async function cleanup() {
     if (created.items.length) await M.InvMove.destroy({ where: { item_id: created.items } });
     if (created.items.length) await M.InvItem.destroy({ where: { id: created.items } });
+    if (created.invoices.length) await M.BilInvoiceLine.destroy({ where: { invoice_id: created.invoices } });
     if (created.invoices.length) await M.BilInvoice.destroy({ where: { id: created.invoices } });
     if (created.hotels.length) {
         const hotels = created.hotels;

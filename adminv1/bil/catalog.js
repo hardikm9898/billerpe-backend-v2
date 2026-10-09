@@ -1,9 +1,9 @@
-const { BilItem } = require("../../model");
+const { BilItem, InvItem } = require("../../model");
 const WebSiteProducts = require("../../model/webSiteProducts");
 const { RuleError } = require("../../appv1/core");
 const { need } = require("../auth");
 const audit = require("../audit");
-const { txt } = require("./common");
+const { txt, parse } = require("./common");
 
 // What BillerPe sells, with prices before GST (design doc "Plans, prices and
 // invoices", approved and on the website 2026-10-07). Editable in Billing >
@@ -51,7 +51,14 @@ const view = (i) => ({
     sac: i.sac,
     gstRate: Number(i.gst_rate),
     active: !!i.active,
+    includes: includesOf(i),
 });
+
+/** What a plan gives free from the office stock: [{ itemId, qty }]. */
+function includesOf(i) {
+    const v = parse(i.includes);
+    return Array.isArray(v) ? v.filter((x) => x && Number(x.itemId) > 0 && Number(x.qty) > 0).map((x) => ({ itemId: Number(x.itemId), qty: Number(x.qty) })) : [];
+}
 
 /** The website's price for a hardware product: the offer price when it is on and lower. */
 const hardwarePrice = (p) => {
@@ -101,6 +108,19 @@ async function save(s, input = {}) {
         active: input.active !== false,
     };
     if (kind === "plan" && (!fields.product || !fields.days || !fields.plan_name)) throw new RuleError("A plan needs its product, plan name and days.");
+    // A plan with a printer (owner 2026-10-09): the stock items it includes free.
+    const inc = kind === "plan" && Array.isArray(input.includes) ? input.includes : [];
+    if (inc.length > 10) throw new RuleError("A plan includes at most 10 kinds of items.");
+    const includes = [];
+    for (const x of inc) {
+        const qty = Number(x && x.qty);
+        if (!Number.isInteger(qty) || qty < 1 || qty > 100) throw new RuleError("Included items: a quantity from 1 to 100.");
+        const it = await InvItem.findOne({ where: { id: Number(x.itemId) || 0 }, attributes: ["id"], raw: true });
+        if (!it) throw new RuleError("An included item is not in the inventory.");
+        if (includes.some((y) => y.itemId === it.id)) throw new RuleError("An included item is listed twice.");
+        includes.push({ itemId: it.id, qty });
+    }
+    fields.includes = includes.length ? JSON.stringify(includes) : null;
     if (kind === "ebill" && !fields.credits) throw new RuleError("An e-bill pack needs its number of credits.");
     if (input.id) {
         const row = await BilItem.findByPk(Number(input.id));
@@ -117,4 +137,4 @@ async function save(s, input = {}) {
     return { item: view(row) };
 }
 
-module.exports = { DEFAULT_ITEMS, ensureCatalog, list, save, view, hardware, hardwarePrice };
+module.exports = { DEFAULT_ITEMS, ensureCatalog, list, save, view, hardware, hardwarePrice, includesOf };

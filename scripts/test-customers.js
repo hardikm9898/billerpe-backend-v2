@@ -170,14 +170,19 @@ async function run() {
     const L4 = await leadByPhone(mob(13));
     created.leads.push(L1.id, L2.id, L3.id, L4.id);
     await M.CrmLeadV2.update({ owner_id: exec.u.id }, { where: { id: created.leads } });
-    const form = (o) => ({ name: `Spice Route ${stamp}`, ownerName: "Nikhil Patel", ownerMobile: mob(10), address: "MG Road", city: "Anand", pinCode: "388001", productPlan: "LOCAL_SUITE", planName: "Suite Pro", ...o });
-    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form({ pinCode: "12" }) });
+    // Outlet setup (owner 2026-10-09): the plan comes from the catalog and a token of Rs 500+ is taken.
+    await require("../adminv1/bil/catalog").ensureCatalog();
+    const planId = async (code) => (await M.BilItem.findOne({ where: { code }, raw: true })).id;
+    const suitePro = { planItemId: await planId("SUITE_PRO_Y") };
+    const cashToken = { method: "cash", amount: 500 };
+    const form = (o) => ({ name: `Spice Route ${stamp}`, ownerName: "Nikhil Patel", ownerMobile: mob(10), address: "MG Road", city: "Anand", pinCode: "388001", ...o });
+    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form({ pinCode: "12" }), order: suitePro, token: cashToken });
     check("a bad PIN code is refused", !r.ok && /PIN/.test(r.error), r);
-    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form({ planName: "App Lite" }) });
-    check("a POS App plan on a Local Suite outlet is refused", !r.ok && /POS App plan/.test(r.error), r);
-    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form({ ownerMobile: mob(1) }) });
+    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form(), order: { planItemId: 0 }, token: cashToken });
+    check("a plan that is not in the catalog is refused", !r.ok && /Choose the plan sold/.test(r.error), r);
+    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form({ ownerMobile: mob(1) }), order: suitePro, token: cashToken });
     check("a mobile that is already an outlet login is refused", !r.ok && /already the login/.test(r.error), r);
-    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form(), payment: "Paid 14,159 by UPI, ref 998877", note: "Suite Pro yearly" });
+    r = await call("leadWonCustomer", exec.token, L1.id, { mode: "create", outlet: form(), order: suitePro, token: { method: "cash", amount: 2000, note: "Cash at signing" }, note: "Suite Pro yearly" });
     check("won with a new outlet", r.ok && r.result.hotelId && r.result.accountId && r.result.password && r.result.login === mob(10), r);
     const W = r.ok ? r.result : {};
     if (W.hotelId) created.hotels.push(W.hotelId);
@@ -192,8 +197,8 @@ async function run() {
     const accW = W.accountId ? await M.CsAccount.findByPk(W.accountId) : null;
     check("account: origin won, won by the seller, success owner set", accW && accW.origin === "won" && accW.won_by_id === exec.u.id && [cs1.u.id, cs2.u.id].includes(accW.success_owner_id) && accW.lead_id === L1.id, accW && accW.toJSON());
     const wItems = W.hotelId ? await items(W.hotelId) : [];
-    check("onboarding started; payment ticked with the note; owner login ticked", wItems.length >= 8 && wItems.find((x) => x.item_key === "payment")?.note === "Paid 14,159 by UPI, ref 998877" && !!wItems.find((x) => x.item_key === "outlet")?.done_at, wItems.map((x) => [x.item_key, !!x.done_at]));
-    check("the success owner is told", accW && !!(await M.AdmNotification.findOne({ where: { user_id: accW.success_owner_id, ref: `won:${L1.id}` } })));
+    check("onboarding started; payment NOT ticked by a token; owner login ticked", wItems.length >= 8 && !wItems.find((x) => x.item_key === "payment")?.done_at && !!wItems.find((x) => x.item_key === "outlet")?.done_at, wItems.map((x) => [x.item_key, !!x.done_at]));
+    check("the success owner is told", accW && !!(await M.AdmNotification.findOne({ where: { user_id: accW.success_owner_id, type: "account.won" } })));
     check("outlet creation is in the audit log", !!(await M.AdmAuditLog.findOne({ where: { action: "outlet.create", entity_id: String(W.hotelId) } })));
     r = await call("lead", exec.token, L1.id);
     check("the lead page links the customer", r.ok && r.result.customer && r.result.customer.accountId === W.accountId && r.result.customer.onboarding === "active", r.ok ? r.result.customer : r);
@@ -212,7 +217,7 @@ async function run() {
     const aLater = lLater ? await M.CsAccount.findByPk(lLater.account_id) : null;
     check("the outlet that appears later joins the won lead", aLater && aLater.origin === "won" && aLater.lead_id === L3.id && (await M.CrmLeadV2.findByPk(L3.id)).hotel_id === hLater.id && lLater.onboarding === "active");
 
-    r = await call("leadWonCustomer", exec.token, L4.id, { mode: "create", outlet: form({ name: `Momo Hub ${stamp}`, ownerMobile: mob(13), productPlan: "CLOUD_APP", planName: "App Standard", password: "momo-123" }) });
+    r = await call("leadWonCustomer", exec.token, L4.id, { mode: "create", outlet: form({ name: `Momo Hub ${stamp}`, ownerMobile: mob(13), password: "momo-123" }), order: { planItemId: await planId("APP_STD_Y") }, token: cashToken });
     if (r.ok) created.hotels.push(r.result.hotelId);
     const hApp = r.ok ? await M.Hotel.findByPk(r.result.hotelId) : null;
     check("POS App customer: 6 devices, no password shown when typed", r.ok && !r.result.password && hApp.product_plan === "CLOUD_APP" && hApp.app_device_limit === 6, r);
@@ -384,6 +389,12 @@ async function cleanup() {
     const hotels = created.hotels;
     const accIds = (await M.CsAccountOutlet.findAll({ where: { hotel_id: hotels }, attributes: ["account_id"], raw: true })).map((x) => x.account_id);
     const accs = [...new Set([...accIds, ...(await M.CsAccount.findAll({ where: { owner_mobile: { [Op.like]: `9%${stamp}` } }, attributes: ["id"], raw: true })).map((a) => a.id)])];
+    const invs = (await M.BilInvoice.findAll({ where: { hotel_id: hotels }, attributes: ["id"], raw: true })).map((x) => x.id);
+    if (invs.length) {
+        for (const m of [M.BilPayment, M.BilPayLink, M.BilInvoiceLine]) await m.destroy({ where: { invoice_id: invs } });
+        await M.BilInvoice.destroy({ where: { id: invs } });
+    }
+    await M.CsOutletSetup.destroy({ where: { hotel_id: hotels } });
     for (const m of [M.CsOnboardingItem, M.CsTask, M.CsOutletDay, M.CsAccountOutlet, M.AdmSupportSession]) await m.destroy({ where: { hotel_id: hotels } });
     await M.CsActivity.destroy({ where: { account_id: accs } });
     await M.CsTask.destroy({ where: { account_id: accs } });

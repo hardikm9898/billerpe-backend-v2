@@ -128,6 +128,8 @@ async function detail(s, hotelId) {
         activity: acts.map((a) => ({ id: a.id, type: a.type, actor: a.actor_id ? who.get(a.actor_id) || `#${a.actor_id}` : null, body: a.body, at: a.at })),
         supportSessions: sessions.map((x) => ({ id: x.id, by: who.get(x.user_id) || `#${x.user_id}`, reason: x.reason, at: x.createdAt, expiresAt: x.expires_at, endedAt: x.ended_at, writes: x.writes, open: !x.ended_at && new Date(x.expires_at) > new Date() })),
         canOpenAs: { dashboard: !!cfg.ownerDashboardUrl, plan: hotel.product_plan !== "CLOUD_APP", ownerLogin: !!ownerLogin, active: hotel.active !== false && hotel.active !== 0 },
+        // Outlet setup (owner 2026-10-09): plan, what it includes and how much went out, the first invoice.
+        setup: await require("./setup").forHotel(hotel.id),
     };
 }
 

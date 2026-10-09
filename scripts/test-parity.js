@@ -192,7 +192,10 @@ async function run() {
     const wonLead = (await intake.receive({ source: "website", name: "Won From App", phone: phone(40), message: "test" })).leadId;
     const wl = await lead(wonLead);
     const wTok = wl.owner_id === A.u.id ? A.token : B.token;
-    r = await call("leadWonCustomer", wTok, wonLead, { mode: "create", note: "", payment: "UPI 11999", outlet: { name: `Par Cafe ${stamp}`, city: "Surat", address: "Ring road", pinCode: "395001", ownerName: "Won Owner", ownerMobile: phone(40), productPlan: "LOCAL_SUITE", planName: "Suite Pro" } });
+    await require("../adminv1/bil/catalog").ensureCatalog();
+    const planId = async (code) => (await M.BilItem.findOne({ where: { code }, raw: true })).id;
+    const cash = { method: "cash", amount: 500 };
+    r = await call("leadWonCustomer", wTok, wonLead, { mode: "create", note: "", outlet: { name: `Par Cafe ${stamp}`, city: "Surat", address: "Ring road", pinCode: "395001", ownerName: "Won Owner", ownerMobile: phone(40) }, order: { planItemId: await planId("SUITE_PRO_Y") }, token: cash });
     const hotel = await M.Hotel.findOne({ where: { hotel_name: `Par Cafe ${stamp}` } });
     created.hotels = hotel ? [hotel.id] : [];
     check("the app's short form creates the outlet and gives the owner's login once", r.ok && !!r.result.password && r.result.login === phone(40) && !!hotel, r);
@@ -203,16 +206,17 @@ async function run() {
 
     console.log("\nAdd and edit a restaurant (old panel: Add Restaurant, edit)");
     const cs = await person("Success", "Customer success");
-    r = await call("outletCreate", A.token, { name: `Par New ${stamp}`, address: "MG road", city: "Vadodara", pinCode: "390001", ownerName: "New Owner", ownerMobile: phone(50), productPlan: "CLOUD_APP", planName: "App Standard" });
+    const appStd = { planItemId: await planId("APP_STD_Y") };
+    r = await call("outletCreate", A.token, { outlet: { name: `Par New ${stamp}`, address: "MG road", city: "Vadodara", pinCode: "390001", ownerName: "New Owner", ownerMobile: phone(50) }, order: appStd, token: cash });
     check("a salesperson cannot add a restaurant directly", !r.ok, r);
-    r = await call("outletCreate", cs.token, { name: `Par New ${stamp}`, address: "MG road", city: "Vadodara", pinCode: "390001", ownerName: "New Owner", ownerMobile: phone(50), productPlan: "CLOUD_APP", planName: "App Standard", payment: "Cash 9999" });
+    r = await call("outletCreate", cs.token, { outlet: { name: `Par New ${stamp}`, address: "MG road", city: "Vadodara", pinCode: "390001", ownerName: "New Owner", ownerMobile: phone(50) }, order: appStd, token: { method: "cash", amount: 9999 } });
     const newHotel = r.ok && (await M.Hotel.findByPk(r.result.hotelId));
     if (newHotel) created.hotels = [...(created.hotels || []), newHotel.id];
     check("customer success adds a restaurant for a new owner: outlet, owner login shown once", r.ok && !!r.result.password && r.result.login === phone(50) && newHotel && newHotel.product_plan === "CLOUD_APP" && newHotel.app_device_limit === 6, r);
     const newAcc = newHotel && (await M.CsAccount.findOne({ where: { owner_mobile: phone(50) } }));
     const newLink = newHotel && (await M.CsAccountOutlet.findOne({ where: { hotel_id: newHotel.id } }));
-    check("a new customer account with a success owner, onboarding started, payment ticked", newAcc && newAcc.origin === "outlet" && !!newAcc.success_owner_id && newLink && newLink.onboarding === "active" && (await M.CsOnboardingItem.findOne({ where: { hotel_id: newHotel.id, item_key: "payment" } })).done_at, [newAcc && newAcc.toJSON(), newLink && newLink.onboarding]);
-    r = await call("outletCreate", cs.token, { name: `Par Dup ${stamp}`, address: "MG road", city: "Vadodara", pinCode: "390001", ownerName: "Dup", ownerMobile: phone(50), productPlan: "LOCAL_SUITE", planName: "Suite Pro" });
+    check("a new customer account with a success owner, onboarding started, payment waits for the invoice", newAcc && newAcc.origin === "outlet" && !!newAcc.success_owner_id && newLink && newLink.onboarding === "active" && !(await M.CsOnboardingItem.findOne({ where: { hotel_id: newHotel.id, item_key: "payment" } })).done_at, [newAcc && newAcc.toJSON(), newLink && newLink.onboarding]);
+    r = await call("outletCreate", cs.token, { outlet: { name: `Par Dup ${stamp}`, address: "MG road", city: "Vadodara", pinCode: "390001", ownerName: "Dup", ownerMobile: phone(50) }, order: { planItemId: await planId("SUITE_PRO_Y") }, token: cash });
     check("the same owner mobile twice is refused (one login per mobile)", !r.ok && /already the login/.test(r.error), r);
     r = await call("outletDetails", cs.token, newHotel.id);
     check("the details load for editing", r.ok && r.result.ownerMobile === phone(50) && r.result.pinCode === "390001", r);
@@ -338,6 +342,7 @@ async function cleanup() {
             await M.BilInvoice.destroy({ where: { id: invs } });
         }
         await M.CsRenewal.destroy({ where: { hotel_id: hotels } }).catch(() => {});
+        await M.CsOutletSetup.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         await M.Order.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         const accIds = (await M.CsAccountOutlet.findAll({ where: { hotel_id: hotels }, attributes: ["account_id"], raw: true })).map((x) => x.account_id);
         for (const name of ["CsOnboardingItem", "CsTask", "CsOutletDay", "CsAccountOutlet", "UserAccess", "PaymentMode", "BillChargeRule", "NotificationSetting", "RolePermissionDefault", "MenuCatalog", "RestaurantSetting"]) if (M[name]) await M[name].destroy({ where: { hotel_id: hotels } }).catch(() => {});
