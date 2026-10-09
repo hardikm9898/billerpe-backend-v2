@@ -276,4 +276,15 @@ async function startFor(s, hotelId) {
     });
 }
 
-module.exports = { start, autoCheck, itemsFor, view, tick, setItem, startFor, facts, proofLink, checkNow };
+/** "Payment received" not done yet: how much of the outlet's first invoice is paid (part payments show). */
+async function withProgress(views) {
+    const freeze = require("./freeze");
+    for (const v of views) {
+        if (v.key !== "payment" || v.doneAt) continue;
+        const st = await freeze.state(v.hotelId);
+        if (st) v.progress = { paid: st.paid, total: st.total, invoice: st.invoice, payBy: st.payBy, frozen: st.frozen };
+    }
+    return views;
+}
+
+module.exports = { start, autoCheck, itemsFor, view, tick, setItem, startFor, facts, proofLink, checkNow, withProgress };

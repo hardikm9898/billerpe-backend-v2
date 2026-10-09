@@ -127,6 +127,8 @@ async function decide(s, paymentId, ok, reason) {
             const why = txt(reason, 200);
             if (why.length < 3) throw new RuleError("Write why it is rejected.");
             await pay.update({ status: "rejected", reject_reason: why, decided_by: s.user.id, decided_at: new Date() }, { transaction: t });
+            // A new outlet's token that turns out false: the outlet freezes at once (owner 2026-10-09).
+            await require("../cs/freeze").onTokenRejected(pay.id, t);
         }
         if (pay.created_by && pay.created_by !== s.user.id) await notify(pay.created_by, { type: "billing.decided", title: ok ? `Payment approved: ${money(pay.amount)}` : `Payment rejected: ${money(pay.amount)}`, body: ok ? `${inv.bill_name} · ${inv.number}` : txt(reason, 200), link: `/billing/invoices/${inv.id}`, ref: `paydec:${pay.id}` }, { transaction: t });
         await audit.write(s, { action: ok ? "payment.approve" : "payment.reject", entity: "bil_payment", entityId: pay.id, summary: `${ok ? "Approved" : "Rejected"} ${money(pay.amount)} for ${inv.number}`, reason: txt(reason, 300) }, { transaction: t });

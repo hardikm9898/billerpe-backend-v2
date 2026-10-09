@@ -226,6 +226,40 @@ async function run() {
     r = await call("onboardingTick", cs.token, (await step("outlet")).id, false, "Owner cannot log in");
     check("a data step cannot be unticked by hand", !r.ok && /cannot be unticked/.test(r.error), r);
 
+    console.log("\nUnpaid after 15 days: frozen");
+    const freeze = require("../adminv1/cs/freeze");
+    const renewals = require("../adminv1/bil/renewals");
+    const twoSetup = await setupOf(twoHotel);
+    await twoSetup.update({ pay_by: new Date(Date.now() - 60000) });
+    const n = await freeze.run();
+    check("the job freezes the outlet whose first invoice is not paid in 15 days", n >= 1 && !!(await setupOf(twoHotel)).frozen_at && (await freeze.isFrozen(twoHotel)), n);
+    let ps = await renewals.planState(twoHotel);
+    check("its plan state: locked 'payment pending', no extra day, a past lock date (exe 1.1.7 locks too)", ps.expired && ps.reason === "unpaid" && !ps.canExtend && ps.graceUsed && new Date(ps.endsAt) <= new Date() && /payment of Rs [\d,]+ to BillerPe is pending/.test(ps.message), ps);
+    const pl = await renewals.payLink(twoHotel);
+    const twoInv = await M.BilInvoice.findByPk(twoSetup.invoice_id);
+    check("'Pay now' gives the link for what is due on the first invoice", pl && pl.invoice === twoInv.number && Math.abs(pl.amount - (Number(twoInv.total) - Number(twoInv.paid))) < 1, pl);
+    check("the success owner / requester is told", !!(await M.AdmNotification.findOne({ where: { user_id: cs.u.id, type: "setup.frozen" } })));
+    r = await call("setupMoreTime", cs.token, twoHotel, 3, "Owner pays on Friday");
+    check("customer success cannot give more time", !r.ok, r);
+    r = await call("setupMoreTime", admin.token, twoHotel, 3, "Owner pays on Friday");
+    ps = await renewals.planState(twoHotel);
+    check("an approver gives 3 more days: unlocked, new date", r.ok && !(await freeze.isFrozen(twoHotel)) && !ps.expired && new Date((await setupOf(twoHotel)).pay_by) > new Date(), [r, ps]);
+    await (await setupOf(twoHotel)).update({ pay_by: new Date(Date.now() - 60000) });
+    await freeze.run();
+    check("…and freezes again when those days pass unpaid", await freeze.isFrozen(twoHotel));
+    r = await call("paymentRecord", admin.token, twoInv.id, { method: "bank", amount: Number(twoInv.total) - Number(twoInv.paid), reference: `NEFTF${stamp}` });
+    ps = await renewals.planState(twoHotel);
+    check("paid in full: the freeze lifts at once and the plan runs", r.ok && !(await freeze.isFrozen(twoHotel)) && !ps.expired && !ps.reason, [r.ok ? "" : r.error, ps]);
+
+    console.log("\nA rejected token freezes at once");
+    r = await call("outletCreate", cs.token, { outlet: outlet("Setup Fake Token"), order: { planItemId: noPrinter }, token: token(800) });
+    const fakeHotel = r.ok && r.result.hotelId;
+    const fakePay = fakeHotel && (await M.BilPayment.findByPk((await setupOf(fakeHotel)).token_payment_id));
+    r = await call("paymentDecide", admin.token, fakePay.id, false, "No such UTR in the bank");
+    check("token rejected: the outlet is frozen straight away", r.ok && (await freeze.isFrozen(fakeHotel)) && (await renewals.planState(fakeHotel)).reason === "unpaid", r);
+    const oldOutlet = await M.Hotel.findOne({ where: { id: { [Op.notIn]: [cafe, twoHotel, fakeHotel] } }, order: [["id", "ASC"]], attributes: ["id"], raw: true });
+    check("an outlet made before this rule (no setup) is never frozen", !(await freeze.state(oldOutlet.id)) && !(await freeze.isFrozen(oldOutlet.id)));
+
     console.log("\nPaying the first invoice in full");
     const before = (await M.Hotel.findByPk(cafe)).plan_end_date;
     r = await call("paymentDecide", admin.token, pay.id, true);

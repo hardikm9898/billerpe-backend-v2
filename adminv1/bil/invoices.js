@@ -381,6 +381,7 @@ async function applyPaid(inv, t, actorId = null) {
             done.push(`${e.credits.toLocaleString("en-IN")} e-bill credits`);
         }
     }
+    await require("../cs/freeze").onPaid(inv.id, t);
     if (inv.hardware_order_id) await PurchaseRollsAndPrinter.update({ payment_status: "completed" }, { where: { id: inv.hardware_order_id }, transaction: t });
     await inv.update({ applied_at: new Date() }, { transaction: t });
     if (inv.hotel_id) await CsOnboardingItem.update({ done_at: new Date(), done_by: actorId, note: `Invoice ${inv.number} paid`, invoice_id: inv.id }, { where: { hotel_id: inv.hotel_id, item_key: "payment", done_at: null }, transaction: t });

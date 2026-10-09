@@ -30,6 +30,7 @@ require("./adminv1/bil/payments");
 require("./adminv1/bil/renewals");
 require("./adminv1/sup/jobs");
 require("./adminv1/bil/hardware");
+require("./adminv1/cs/freeze");
 
 const log = { info: (...a) => logger.info(a.join(" ")), error: (...a) => logger.error(a.join(" ")) };
 // Built-in rules and cadences exist before the first event is handled.

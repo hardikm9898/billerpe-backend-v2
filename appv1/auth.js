@@ -154,7 +154,8 @@ async function requireApp(req, res, next) {
             AppDevice.findOne({ where: { hotel_id: p.hid, device_id: String(p.did), status: "active" }, attributes: ["id", "last_active", "app_version"] }),
         ]);
         if (!dev || outletGate(hotel) || oldAppExpired(hotel, dev.app_version)) return ended();
-        if (planExpired(hotel) && !PLAN_CALLS.has(req.params.name || String(req.path || "").replace(/^\//, ""))) {
+        const planCall = PLAN_CALLS.has(req.params.name || String(req.path || "").replace(/^\//, ""));
+        if (!planCall && (planExpired(hotel) || (await require("../adminv1/cs/freeze").isFrozen(hotel.id)))) {
             const plan = await require("../adminv1/bil/renewals").planState(hotel.id).catch(() => null);
             return res.status(402).json({ ok: false, error: plan?.message || "Your BillerPe plan has ended. Renew to unlock the app.", code: "plan-expired", plan });
         }

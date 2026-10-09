@@ -123,7 +123,7 @@ async function detail(s, hotelId) {
             staff,
             recentBills: recent.map((o) => ({ id: o.id, billNo: o.bill_no, amount: o.grandAmount, pay: o.payment_type || "", type: o.order_type || "", day: o.business_date, at: o.billed_at || o.createdAt })),
         },
-        onboarding: items.map((i) => onboarding.view(i, who)),
+        onboarding: await onboarding.withProgress(items.map((i) => onboarding.view(i, who))),
         tasks: tasks.map((x) => ({ id: x.id, type: x.type, note: x.note, dueAt: x.due_at, owner: x.owner_id ? who.get(x.owner_id) || `#${x.owner_id}` : null, origin: x.origin })),
         activity: acts.map((a) => ({ id: a.id, type: a.type, actor: a.actor_id ? who.get(a.actor_id) || `#${a.actor_id}` : null, body: a.body, at: a.at })),
         supportSessions: sessions.map((x) => ({ id: x.id, by: who.get(x.user_id) || `#${x.user_id}`, reason: x.reason, at: x.createdAt, expiresAt: x.expires_at, endedAt: x.ended_at, writes: x.writes, open: !x.ended_at && new Date(x.expires_at) > new Date() })),

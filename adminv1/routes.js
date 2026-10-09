@@ -266,6 +266,7 @@ const HANDLERS = {
     setupList: (s, query) => require("./cs/setup").list(s, query || {}),
     setupDecide: (s, id, ok, reason) => require("./cs/setup").decide(s, id, ok === true, reason),
     setupTokenProof: (s, id) => require("./cs/setup").tokenProof(s, id),
+    setupMoreTime: (s, hotelId, days, reason) => require("./cs/freeze").lift(s, hotelId, days, reason),
     outletDetails: (s, hotelId) => require("./cs/outletEdit").details(s, hotelId),
     outletUpdate: (s, hotelId, input) => require("./cs/outletEdit").update(s, hotelId, input || {}),
     outletOwnerPassword: (s, hotelId, reason) => require("./cs/outletEdit").resetOwnerPassword(s, hotelId, reason),

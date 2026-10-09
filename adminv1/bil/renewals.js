@@ -146,6 +146,27 @@ const payUrl = (link) => (link.url.startsWith("sim:") ? `https://pay.example.tes
 async function planState(hotelId, now = new Date()) {
     const h = await Hotel.findOne({ where: { id: hotelId }, attributes: ["id", "hotel_name", "plan_end_date", "active", "testing"], raw: true });
     if (!h) return null;
+    // The unpaid freeze (owner 2026-10-09): locked from the moment it froze. The
+    // outlet PC locks at the date it is given, so even exe 1.1.7 locks; no extra day.
+    const fz = await require("../cs/freeze").state(hotelId);
+    if (fz && fz.frozen) {
+        const since = new Date(fz.since);
+        return {
+            hotelId: h.id,
+            outlet: h.hotel_name,
+            endsAt: since.toISOString(),
+            paidUntil: h.plan_end_date ? new Date(h.plan_end_date).toISOString() : null,
+            expired: true,
+            inGrace: false,
+            graceUsed: true,
+            canExtend: false,
+            daysLeft: 0,
+            reason: "unpaid",
+            due: fz.due,
+            invoice: fz.invoice,
+            message: `Your payment of Rs ${Math.round(fz.due).toLocaleString("en-IN")} to BillerPe is pending. Pay now and your outlet starts again at once.`,
+        };
+    }
     const end = h.plan_end_date ? new Date(h.plan_end_date) : null;
     const expired = !!end && end <= now;
     const r = await CsRenewal.findOne({ where: { hotel_id: hotelId, stage: OPEN }, order: [["ends_on", "DESC"]], raw: true });
@@ -201,6 +222,12 @@ async function extendOneDay(hotelId, by = "outlet", now = new Date(), usedAt = n
 
 /** "Pay now" on the banner: the renewal invoice's payment link. */
 async function payLink(hotelId) {
+    // A frozen new outlet pays its first invoice (what is still due on it).
+    const fz = await require("../cs/freeze").state(hotelId);
+    if (fz && fz.due > 0 && (fz.frozen || (fz.payBy && new Date(fz.payBy) > new Date()))) {
+        const link = await require("./payments").linkFor(fz.invoiceId);
+        return { url: payUrl(link), amount: Number(link.amount), invoice: fz.invoice, simulated: link.url.startsWith("sim:") };
+    }
     const inv = await sequelize.transaction(async (t) => {
         const r = await openFor(hotelId, t);
         if (!r) throw new RuleError("Nothing to pay now. Call BillerPe if you want to renew early.");

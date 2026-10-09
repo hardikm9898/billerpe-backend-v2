@@ -262,7 +262,7 @@ async function detail(s, id) {
             lead: lead ? { id: lead.id, name: lead.name, phone: lead.phone, source: lead.source, wonAt: lead.won_at } : null,
         },
         outlets,
-        onboarding: items.map((i) => onboarding.view(i, who)),
+        onboarding: await onboarding.withProgress(items.map((i) => onboarding.view(i, who))),
         tasks: tasks.map((x) => ({ id: x.id, hotelId: x.hotel_id, type: x.type, note: x.note, dueAt: x.due_at, status: x.status, origin: x.origin, owner: x.owner_id ? { id: x.owner_id, name: who.get(x.owner_id) || `#${x.owner_id}` } : null, doneAt: x.done_at, doneBy: x.done_by ? who.get(x.done_by) || `#${x.done_by}` : null, result: x.result })),
         activity: acts.map((a) => ({ id: a.id, type: a.type, hotelId: a.hotel_id, actor: a.actor_id ? who.get(a.actor_id) || `#${a.actor_id}` : null, body: a.body, at: a.at })),
         money: { planEnds: ends.length ? new Date(Math.min(...ends)).toISOString() : null, ebillCredits: outlets.some((o) => o.ebill) ? credits : null, ...(await moneyOf(acc.id)) },

@@ -137,14 +137,16 @@ function lockedOutlet(o, name, args) {
     if (!id) return null;
     const own = o.owned.find((x) => x.hotel.id === id);
     const end = own && own.hotel.plan_end_date;
-    return end && new Date(end) <= new Date() ? id : null;
+    return end && new Date(end) <= new Date() ? id : -id;
 }
 
-router.post("/:name", (req, res) => {
+router.post("/:name", async (req, res) => {
     const fn = HANDLERS[req.params.name];
     if (!fn) return res.status(404).json({ ok: false, error: "Unknown call" });
     const args = Array.isArray(req.body?.args) ? req.body.args : [];
-    const locked = lockedOutlet(req.owner, req.params.name, args);
+    // A negative id = the plan runs: still locked while the outlet is frozen for an unpaid first invoice (owner 2026-10-09).
+    let locked = lockedOutlet(req.owner, req.params.name, args);
+    if (locked < 0) locked = (await require("../adminv1/cs/freeze").isFrozen(-locked).catch(() => false)) ? -locked : null;
     if (locked) {
         return void require("../adminv1/bil/renewals").planState(locked).then(
             (plan) => res.status(402).json({ ok: false, error: plan?.message || "This outlet's BillerPe plan has ended.", code: "plan-expired", plan }),
