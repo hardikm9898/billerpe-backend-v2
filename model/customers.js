@@ -68,6 +68,11 @@ const CsOnboardingItem = sequelize.define("cs_onboarding_item", {
     done_at: { type: T.DATE, allowNull: true },
     done_by: { type: T.INTEGER, allowNull: true },
     note: { type: T.STRING(300), allowNull: false, defaultValue: "" },
+    // Proof (owner 2026-10-09, migration 20261017100000): photo | call | note for steps
+    // ticked by hand; the stored photo; the paid invoice behind "Payment received".
+    proof_kind: { type: T.STRING(8), allowNull: true },
+    proof: { type: T.STRING(500), allowNull: true },
+    invoice_id: { type: T.INTEGER, allowNull: true },
 }, {
     tableName: "cs_onboarding_items",
     indexes: [{ unique: true, fields: ["hotel_id", "item_key"], name: "cs_onboarding_items_hotel_key" }, { fields: ["owner_id", "done_at", "due_at"], name: "cs_onboarding_items_owner" }],

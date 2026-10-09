@@ -50,11 +50,11 @@ const DEFAULTS = {
             { key: "menu", title: "Menu uploaded", auto: "menu", plan: "all", dueDays: 2 },
             { key: "pc", title: "Outlet PC installed and registered", auto: "pc", plan: "suite", dueDays: 3 },
             { key: "app_devices", title: "POS App installed on the outlet's phones", auto: "app_devices", plan: "app", dueDays: 3 },
-            { key: "printers", title: "Printers set up", auto: null, plan: "all", dueDays: 3 },
+            { key: "printers", title: "Printers set up", auto: null, proof: "photo", plan: "all", dueDays: 3 },
             { key: "first_bill", title: "First bill made", auto: "first_bill", plan: "all", dueDays: 4 },
-            { key: "training", title: "Staff training done", auto: null, plan: "all", dueDays: 5 },
-            { key: "day7", title: "Day-7 check call", auto: null, plan: "all", dueDays: 7 },
-            { key: "day30", title: "Day-30 review", auto: null, plan: "all", dueDays: 30 },
+            { key: "training", title: "Staff training done", auto: null, proof: "photo", plan: "all", dueDays: 5 },
+            { key: "day7", title: "Day-7 check call", auto: null, proof: "call", plan: "all", dueDays: 7 },
+            { key: "day30", title: "Day-30 review", auto: null, proof: "call", plan: "all", dueDays: 30 },
         ],
         health: { noBillsDays: 3, lowBillsPct: 30, dipBillsPct: 60, minNormalBills: 5, pcOfflineHours: 24, pcAmberHours: 16, backlogHours: 6, versionsBehind: 2, planWarnDays: 15, ticketDays: 3, onboardingLateDays: 1, ebillLow: 100 },
     },
@@ -206,9 +206,12 @@ const VALIDATE = {
             let key = text(it && it.key, 30).toLowerCase().replace(/[^a-z0-9_]/g, "_") || title.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 30);
             while (seen.has(key)) key = `${key.slice(0, 26)}_${i}`;
             seen.add(key);
-            const auto = AUTO_ITEMS.includes(it && it.auto) ? it.auto : null;
+            // "Payment received" always follows billing (owner 2026-10-09): never a step ticked on someone's word.
+            const auto = key === "payment" ? "payment" : AUTO_ITEMS.includes(it && it.auto) ? it.auto : null;
             const plan = ["suite", "app"].includes(it && it.plan) ? it.plan : "all";
-            return { key, title, auto, plan, dueDays: int(it && it.dueDays !== undefined ? it.dueDays : 0, 0, 120, `Days for "${title}"`) };
+            // A step ticked by hand needs proof: a photo, a call (from its due day, with what was said) or a note.
+            const proof = auto ? null : ["photo", "call", "note"].includes(it && it.proof) ? it.proof : "note";
+            return { key, title, auto, proof, plan, dueDays: int(it && it.dueDays !== undefined ? it.dueDays : 0, 0, 120, `Days for "${title}"`) };
         });
         if (!onboarding.length) throw new RuleError("Keep at least one onboarding step.");
         if (onboarding.length > 25) throw new RuleError("Keep the checklist to 25 steps or fewer.");

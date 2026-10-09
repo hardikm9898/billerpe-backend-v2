@@ -141,18 +141,31 @@ async function run() {
     const dish = await M.Menu.create({ item_name: "Paneer Tikka", price: "200", shortCode: "101", sub_categories: "Regular Veg", menu_categ_id: cat.id, hotel_id: hNew.id, active: true });
     await M.LocalServerRegistration.create({ hotel_id: hNew.id, device_id: `dev-${stamp}`, installation_id: `inst-${stamp}`, status: "active", hostname: "BILLING-PC-1", app_version: "1.1.4", registered_at: new Date(), last_seen_at: new Date() });
     await order(hNew.id, dayAgo(0));
+    // Payment received follows billing only (owner 2026-10-09): an old-style payment row does not tick it.
     await M.SubscriptionPayment.create({ hotel_id: hNew.id, amount_paid: 14159, payment_method: "upi", payment_date: new Date(), UTR_No: "UTR1", note: "" });
+    const paidInv = await M.BilInvoice.create({ kind: "invoice", number: `TPAID-${stamp}`, status: "paid", hotel_id: hNew.id, bill_name: "x", total: 14159, paid: 14159, issued_at: new Date() });
+    created.invoices = [paidInv.id];
     const ticked = await onboarding.autoCheck({ only: [hNew.id] });
     it = await items(hNew.id);
-    check("payment, menu, PC and first bill ticked by themselves", ticked === 4 && ["payment", "menu", "pc", "first_bill"].every((k) => it.find((x) => x.item_key === k)?.done_at), it.map((x) => [x.item_key, !!x.done_at, x.note]));
-    check("payment note shows the amount recorded", /14,159 recorded/.test(it.find((x) => x.item_key === "payment").note), it.find((x) => x.item_key === "payment").note);
+    check("payment (a paid invoice), menu, PC and first bill ticked by themselves", ticked === 4 && ["payment", "menu", "pc", "first_bill"].every((k) => it.find((x) => x.item_key === k)?.done_at), it.map((x) => [x.item_key, !!x.done_at, x.note]));
+    check("payment note names the paid invoice", new RegExp(`TPAID-${stamp} paid`).test(it.find((x) => x.item_key === "payment").note) && it.find((x) => x.item_key === "payment").invoice_id === paidInv.id, it.find((x) => x.item_key === "payment").note);
     check("auto note says what was seen", it.find((x) => x.item_key === "menu").note === "1 item on the menu", it.find((x) => x.item_key === "menu").note);
     const manual = it.filter((x) => !x.done_at);
     let r;
-    for (const x of manual) r = await call("onboardingTick", cs1.token, x.id, true, "");
-    check("staff tick the rest", r && r.ok, r);
+    const PHOTO = { name: "p.png", mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" };
+    r = await call("onboardingTick", cs1.token, manual[0].id, true, "");
+    check("a step done by staff needs its proof", !r.ok, r);
+    await M.CsOnboardingItem.update({ due_at: new Date(Date.now() - 86400000) }, { where: { id: manual.map((x) => x.id) } });
+    for (const x of manual) {
+        const kind = ["printers", "training"].includes(x.item_key) ? "photo" : ["day7", "day30"].includes(x.item_key) ? "call" : "note";
+        r = await call("onboardingTick", cs1.token, x.id, true, kind === "call" ? "Owner happy, billing daily" : "Done at the outlet", kind === "photo" ? { proof: PHOTO } : {});
+        if (!r.ok) break;
+    }
+    check("staff tick the rest with their proof", r && r.ok, r);
     check("all done = onboarding done", (await linkOf(hNew.id)).onboarding === "done");
     r = await call("onboardingTick", cs1.token, manual[0].id, false);
+    check("unticking needs a reason", !r.ok && /why/.test(r.error), r);
+    r = await call("onboardingTick", cs1.token, manual[0].id, false, "Printer stopped again");
     check("untick reopens onboarding", r.ok && (await linkOf(hNew.id)).onboarding === "active", r);
     r = await call("onboardingTick", exec.token, manual[0].id, true);
     check("a salesperson cannot tick onboarding", !r.ok && /permission/.test(r.error), r);

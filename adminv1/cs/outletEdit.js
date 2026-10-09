@@ -14,7 +14,7 @@ const { customerSettings, addActivity, mobile10, spellings, txt } = require("./c
 
 // Restaurant tools of the old panel, in the new one (owner 2026-10-08:
 // nothing the team used may go missing):
-// - Add a restaurant for a new owner without a lead (old "Add Restaurant").
+// - Add a restaurant: now the outlet setup (cs/setup.js, owner 2026-10-09).
 // - Edit a restaurant's details, the owner's login kept in step (old "edit").
 // - Reset the owner's password (shown once).
 
@@ -28,44 +28,6 @@ async function ownerUser(hotel, t) {
     if (byRole) return byRole;
     const m = mobile10(hotel.owner_number);
     return m ? HotelUser.findOne({ where: { hotel_id: hotel.id, number: spellings(m) }, transaction: t }) : null;
-}
-
-/** A new restaurant for a new owner: a new customer account, onboarding started. */
-async function create(s, input = {}) {
-    need(s, "customers.manage");
-    const cfg = await customerSettings();
-    const out = await won.cleanOutlet(input, cfg);
-    const generated = out.password ? null : newPassword();
-    const hash = await bcrypt.hash(out.password || generated, 10);
-    const result = await sequelize.transaction(async (t) => {
-        const hotel = await Hotel.create({
-            hotel_name: out.name, owner_name: out.ownerName, owner_number: Number(out.m), owner_email_id: out.email || null, address1: out.address, address2: out.city || null,
-            pinCode: out.pin, contact1: out.m, email_id: out.email || null, gst_no: out.gst, hotel_logo: "", password: hash, hotel_reg_date: new Date(),
-            plan_start_date: out.start.toDate(), plan_end_date: out.end.clone().endOf("day").toDate(), product_plan: out.product, app_device_limit: out.devices,
-        }, { transaction: t });
-        await seedOutlet(hotel, { name: out.ownerName, number: out.m, email: out.email || null, passwordHash: hash }, { transaction: t });
-        let acc = await CsAccount.findOne({ where: { owner_mobile: out.m }, transaction: t, lock: t.LOCK.UPDATE });
-        if (!acc) {
-            acc = await CsAccount.create({
-                name: out.ownerName, owner_mobile: out.m, owner_name: out.ownerName, email: out.email || "", city: out.city || "", origin: "outlet",
-                customer_since: new Date(), success_owner_id: await accounts.pickSuccessOwner(s.user.id, t),
-            }, { transaction: t });
-            await addActivity(acc.id, hotel.id, "created", s.user.id, `Customer account made by ${s.user.name} (new restaurant)`, null, t);
-        }
-        const link = await CsAccountOutlet.create({ account_id: acc.id, hotel_id: hotel.id, plan_name: out.planName, linked_by: s.user.id }, { transaction: t });
-        await addActivity(acc.id, hotel.id, "link", s.user.id, `New restaurant ${hotel.hotel_name} (#${hotel.id}) added by ${s.user.name}`, null, t);
-        await audit.write(s, { action: "outlet.create", entity: "hotel", entityId: hotel.id, summary: `Added the restaurant ${hotel.hotel_name}`, after: { hotel_name: hotel.hotel_name, owner_number: out.m, product_plan: out.product, plan: out.planName, plan_end_date: hotel.plan_end_date } }, { transaction: t });
-        await onboarding.start(link, { ownerId: acc.success_owner_id, actorId: s.user.id }, t);
-        const paid = txt(input.payment, 300);
-        if (paid) {
-            const { CsOnboardingItem } = require("../../model");
-            const it = await CsOnboardingItem.findOne({ where: { hotel_id: hotel.id, item_key: "payment", done_at: null }, transaction: t });
-            if (it) await it.update({ done_at: new Date(), done_by: s.user.id, note: paid }, { transaction: t });
-        }
-        return { accountId: acc.id, hotelId: hotel.id };
-    });
-    await onboarding.autoCheck({ only: [result.hotelId] });
-    return { ...result, ...(generated ? { password: generated, login: out.m } : {}) };
 }
 
 /** The editable details, as the outlet page shows them. */
@@ -180,4 +142,4 @@ async function resetOwnerPassword(s, hotelId, reason) {
     });
 }
 
-module.exports = { create, details, update, resetOwnerPassword, ownerUser };
+module.exports = { details, update, resetOwnerPassword, ownerUser };

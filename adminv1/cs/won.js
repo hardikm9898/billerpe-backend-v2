@@ -77,6 +77,8 @@ async function cleanOutlet(input, cfg, opts = {}) {
 async function win(s, leadId, input = {}) {
     need(s, "leads.edit");
     const mode = MODES.includes(input.mode) ? input.mode : "create";
+    // A new outlet is made only through the outlet setup (order + token, cs/setup.js).
+    if (mode === "create") throw new RuleError("Create the outlet with its plan and token (outlet setup).");
     const cfg = await customerSettings();
     const note = txt(input.note, 500);
     const out = mode === "create" ? await cleanOutlet(input.outlet, cfg) : null;
@@ -153,47 +155,13 @@ async function win(s, leadId, input = {}) {
         await addActivity(acc.id, hotel.id, "won", s.user.id, `Won by ${s.user.name}${mode === "create" ? `: outlet ${hotel.hotel_name} created` : `: outlet ${hotel.hotel_name} linked`}${note ? ` (${note})` : ""}`, { leadId: lead.id }, t);
 
         // Onboarding: a new outlet always; a linked one unless its checklist is already running or done.
-        if (link.onboarding === "none") await onboarding.start(link, { ownerId: acc.success_owner_id, actorId: s.user.id }, t);
-        const paid = txt(input.payment, 300);
-        if (paid) {
-            const it = await CsOnboardingItem.findOne({ where: { hotel_id: hotel.id, item_key: "payment", done_at: null }, transaction: t });
-            if (it) await it.update({ done_at: new Date(), done_by: s.user.id, note: paid }, { transaction: t });
-        }
+        if (link.onboarding === "none") await onboarding.start(link, { ownerId: acc.success_owner_id, actorId: s.user.id }, t);
         if (acc.success_owner_id && acc.success_owner_id !== s.user.id) {
             await notify(acc.success_owner_id, { type: "account.won", title: `New customer: ${acc.name}`, body: `${hotel.hotel_name} - won by ${s.user.name}. Onboarding has started.`, link: `/accounts/${acc.id}`, ref: `won:${lead.id}` }, { transaction: t });
         }
         return { leadId: lead.id, accountId: acc.id, hotelId: hotel.id };
     });
     if (result.hotelId) await onboarding.autoCheck({ only: [result.hotelId] });
-    return { ...result, ...(generated ? { password: generated, login: out.m } : {}) };
-}
-
-/**
- * "+ Add outlet" on an account: a new outlet for an existing customer (a
- * second branch). Its owner login needs its own mobile (one login per
- * mobile in the outlet tables); it starts onboarding like a won outlet.
- */
-async function addOutlet(s, accountId, input = {}) {
-    need(s, "customers.manage");
-    const cfg = await customerSettings();
-    const out = await cleanOutlet(input, cfg);
-    const generated = out.password ? null : newPassword();
-    const hash = await bcrypt.hash(out.password || generated, 10);
-    const result = await sequelize.transaction(async (t) => {
-        const acc = await accounts.getAccount(accountId, t, true);
-        const hotel = await Hotel.create({
-            hotel_name: out.name, owner_name: out.ownerName, owner_number: Number(out.m), owner_email_id: out.email || null, address1: out.address, address2: out.city || null,
-            pinCode: out.pin, contact1: out.m, email_id: out.email || null, gst_no: out.gst, hotel_logo: "", password: hash, hotel_reg_date: new Date(),
-            plan_start_date: out.start.toDate(), plan_end_date: out.end.clone().endOf("day").toDate(), product_plan: out.product, app_device_limit: out.devices,
-        }, { transaction: t });
-        await seedOutlet(hotel, { name: out.ownerName, number: out.m, email: out.email || null, passwordHash: hash }, { transaction: t });
-        const link = await CsAccountOutlet.create({ account_id: acc.id, hotel_id: hotel.id, plan_name: out.planName, linked_by: s.user.id }, { transaction: t });
-        await addActivity(acc.id, hotel.id, "link", s.user.id, `New outlet ${hotel.hotel_name} (#${hotel.id}) created by ${s.user.name}`, null, t);
-        await audit.write(s, { action: "outlet.create", entity: "hotel", entityId: hotel.id, summary: `Created outlet ${hotel.hotel_name} in account ${acc.name}`, after: { hotel_name: hotel.hotel_name, owner_number: out.m, product_plan: out.product, plan: out.planName, plan_end_date: hotel.plan_end_date } }, { transaction: t });
-        await onboarding.start(link, { ownerId: acc.success_owner_id, actorId: s.user.id }, t);
-        return { accountId: acc.id, hotelId: hotel.id };
-    });
-    await onboarding.autoCheck({ only: [result.hotelId] });
     return { ...result, ...(generated ? { password: generated, login: out.m } : {}) };
 }
 
@@ -214,4 +182,4 @@ async function findOutlets(s, q) {
     return { outlets: rows.map((h) => ({ id: h.id, name: h.hotel_name, owner: h.owner_name, mobile: mobile10(h.owner_number), plan: h.product_plan, city: h.address2 || "" })) };
 }
 
-module.exports = { win, addOutlet, findOutlets, cleanOutlet, PLAN_NAMES };
+module.exports = { win, findOutlets, cleanOutlet, PLAN_NAMES };

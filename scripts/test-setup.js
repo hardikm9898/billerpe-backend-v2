@@ -196,6 +196,36 @@ async function run() {
     r = await call("accountAddOutlet", cs.token, acc.id, { outlet: outlet("Setup Branch"), order: { planItemId: noPrinter }, token: token(1500) });
     check("Add outlet to the account (second branch) goes through the same setup", r.ok && r.result.status === "done" && r.result.accountId === acc.id, r);
 
+    console.log("\nOnboarding needs proof");
+    const step = async (key) => M.CsOnboardingItem.findOne({ where: { hotel_id: cafe, item_key: key } });
+    let st = await step("printers");
+    r = await call("onboardingTick", cs.token, st.id, true, "Done");
+    check("'Printers set up' without a photo: refused", !r.ok && /photo/.test(r.error), r);
+    r = await call("onboardingTick", cs.token, st.id, true, "Both printers print KOTs", { proof: PHOTO });
+    check("…with a photo: done, the photo kept", r.ok && !!(await step("printers")).proof, r);
+    r = await call("onboardingProof", cs.token, st.id);
+    check("…and the photo opens", r.ok && /bil-proofs/.test(r.result.url), r);
+    st = await step("day7");
+    r = await call("onboardingTick", cs.token, st.id, true, "Owner is happy with the billing");
+    check("Day-7 call before its due day: refused", !r.ok && /due on/.test(r.error), r);
+    await st.update({ due_at: new Date(Date.now() - 86400000) });
+    r = await call("onboardingTick", cs.token, st.id, true, "ok");
+    check("…on its day it needs what the owner said", !r.ok && /what the owner said/.test(r.error), r);
+    r = await call("onboardingTick", cs.token, st.id, true, "Owner happy, wants a second printer later");
+    check("…with the outcome: done", r.ok && !!(await step("day7")).done_at, r);
+    st = await step("menu");
+    r = await call("onboardingTick", cs.token, st.id, true, "Uploaded");
+    check("'Menu uploaded' cannot be ticked by hand (it ticks from the menu)", !r.ok && /ticks itself/.test(r.error), r);
+    await M.Menu.create({ hotel_id: cafe, item_name: "Proof dish", price: 100 });
+    r = await call("onboardingCheck", cs.token, cafe);
+    const menuStep = await step("menu");
+    check("Check now ticks it from the outlet's menu, with the date", r.ok && !!menuStep.done_at && /item/.test(menuStep.note), [r, menuStep && menuStep.toJSON()]);
+    st = await step("payment");
+    r = await call("onboardingTick", cs.token, st.id, true, "Paid", { invoiceId: inv.id });
+    check("'Payment received' with an invoice not yet paid in full: refused", !r.ok && /not paid in full/.test(r.error), r);
+    r = await call("onboardingTick", cs.token, (await step("outlet")).id, false, "Owner cannot log in");
+    check("a data step cannot be unticked by hand", !r.ok && /cannot be unticked/.test(r.error), r);
+
     console.log("\nPaying the first invoice in full");
     const before = (await M.Hotel.findByPk(cafe)).plan_end_date;
     r = await call("paymentDecide", admin.token, pay.id, true);
@@ -206,8 +236,8 @@ async function run() {
     const after = (await M.Hotel.findByPk(cafe)).plan_end_date;
     check("the rest paid: invoice paid", inv2.status === "paid", [r.ok ? "" : r.error, inv2.status]);
     check("…the plan is NOT extended a second time (it started at setup)", new Date(after).getTime() === new Date(before).getTime(), [before, after]);
-    const step = await M.CsOnboardingItem.findOne({ where: { hotel_id: cafe, item_key: "payment" } });
-    check("…'Payment received' ticks itself from the paid invoice", step && !!step.done_at && /paid/.test(step.note), step && step.toJSON());
+    const payDone = await M.CsOnboardingItem.findOne({ where: { hotel_id: cafe, item_key: "payment" } });
+    check("…'Payment received' ticks itself from the paid invoice (invoice kept)", payDone && !!payDone.done_at && /paid/.test(payDone.note) && payDone.invoice_id === inv.id, payDone && payDone.toJSON());
 }
 
 async function cleanup() {
@@ -221,6 +251,7 @@ async function cleanup() {
             await M.BilInvoice.destroy({ where: { id: invs } });
         }
         await M.InvMove.destroy({ where: { hotel_id: hotels } });
+        if (M.Menu) await M.Menu.destroy({ where: { hotel_id: hotels } }).catch(() => {});
         const accIds = (await M.CsAccountOutlet.findAll({ where: { hotel_id: hotels }, attributes: ["account_id"], raw: true })).map((x) => x.account_id);
         for (const name of ["CsRenewal", "CsOnboardingItem", "CsTask", "CsOutletDay", "CsAccountOutlet", "UserAccess", "PaymentMode", "BillChargeRule", "NotificationSetting", "RolePermissionDefault", "MenuCatalog", "RestaurantSetting"]) if (M[name]) await M[name].destroy({ where: { hotel_id: hotels } }).catch(() => {});
         if (accIds.length) {

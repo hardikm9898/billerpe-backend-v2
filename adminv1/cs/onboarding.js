@@ -1,15 +1,32 @@
 const { Op } = require("sequelize");
-const { sequelize, Hotel, HotelUser, Menu, Order, LocalServerRegistration, AppDevice, SubscriptionPayment, CsAccountOutlet, CsOnboardingItem } = require("../../model");
+const { sequelize, Hotel, HotelUser, Menu, Order, LocalServerRegistration, AppDevice, CsAccountOutlet, CsOnboardingItem, BilInvoice, CrmCall } = require("../../model");
 const { RuleError } = require("../../appv1/core");
 const { need } = require("../auth");
 const { workingHours } = require("../crm/util");
-const { customerSettings, addActivity, dueOnDay, mobile10, spellings, txt } = require("./common");
+const { customerSettings, addActivity, dueOnDay, mobile10, spellings, txt, moment, TZ } = require("./common");
 
 // An outlet's onboarding checklist (template in Settings > Customers). Steps
-// marked auto tick themselves from the outlet's own data - a payment recorded
-// with the outlet (the old add-restaurant call), the outlet and its owner login exist, menu items, the PC registration (Local Suite) or a POS
+// marked auto tick themselves from the outlet's own data - an invoice of the
+// outlet paid in full, the outlet and its owner login exist, menu items, the PC registration (Local Suite) or a POS
 // App phone (POS App), the first settled bill. The rest are ticked by staff.
 // All steps done = onboarding done.
+//
+// Proof (owner 2026-10-09): nothing is ticked on someone's word. Steps the
+// outlet's data proves (outlet, menu, PC, phones, first bill) tick only by
+// themselves, with the date. "Payment received" ticks when the outlet's
+// invoice is paid in full (by hand only by choosing such a paid invoice).
+// Steps done by people need their proof: a photo (printers set up,
+// training), a call (from its due day, with what the owner said; a call to
+// the owner's mobile in the call log is linked), or a written note.
+
+/** Steps saved before proof kinds existed: the built-in ones keep their sensible proof. */
+function defaultProof(key) {
+    if (key === "printers" || key === "training") return "photo";
+    if (key === "day7" || key === "day30") return "call";
+    return "note";
+}
+const isPayment = (it) => it.auto === "payment" || it.item_key === "payment";
+const proofKindOf = (it) => (it.auto || isPayment(it) ? null : it.proof_kind || defaultProof(it.item_key));
 
 /** Makes the checklist for one outlet (once) and ticks what is already true. */
 async function start(link, { ownerId = null, at = new Date(), actorId = null } = {}, t) {
@@ -23,7 +40,7 @@ async function start(link, { ownerId = null, at = new Date(), actorId = null } =
         sort += 1;
         const [row, made] = await CsOnboardingItem.findOrCreate({
             where: { hotel_id: link.hotel_id, item_key: s.key },
-            defaults: { account_id: link.account_id, title: s.title, sort, auto: s.auto, owner_id: ownerId, due_at: dueOnDay(wh, at, s.dueDays) },
+            defaults: { account_id: link.account_id, title: s.title, sort, auto: s.key === "payment" ? "payment" : s.auto, proof_kind: s.auto ? null : s.proof || defaultProof(s.key), owner_id: ownerId, due_at: dueOnDay(wh, at, s.dueDays) },
             transaction: t,
         });
         if (!made && row.account_id !== link.account_id) await row.update({ account_id: link.account_id }, { transaction: t });
@@ -53,8 +70,9 @@ async function facts(hotelIds) {
     for (const r of await AppDevice.findAll({ where: { hotel_id: hotelIds, status: "active" }, attributes: ["hotel_id", [sequelize.fn("COUNT", sequelize.col("id")), "n"]], group: ["hotel_id"], raw: true })) {
         if (out.has(r.hotel_id)) out.get(r.hotel_id).app_devices = Number(r.n) || 0;
     }
-    for (const r of await SubscriptionPayment.findAll({ where: { hotel_id: hotelIds }, attributes: ["hotel_id", [sequelize.fn("SUM", sequelize.col("amount_paid")), "paid"]], group: ["hotel_id"], raw: true })) {
-        if (out.has(r.hotel_id)) out.get(r.hotel_id).payment = Number(r.paid) || 0;
+    // Payment received = one of the outlet's invoices paid in full (owner 2026-10-09: never a typed note).
+    for (const r of await BilInvoice.findAll({ where: { hotel_id: hotelIds, kind: "invoice", status: "paid" }, attributes: ["id", "hotel_id", "number", "total"], order: [["id", "ASC"]], raw: true })) {
+        if (out.has(r.hotel_id) && !out.get(r.hotel_id).paidInvoice) out.get(r.hotel_id).paidInvoice = r;
     }
     for (const r of await Order.findAll({ where: { hotel_id: hotelIds, payment: "success", deleted: false }, attributes: ["hotel_id", [sequelize.fn("MIN", sequelize.col("business_date")), "first"]], group: ["hotel_id"], raw: true })) {
         if (out.has(r.hotel_id) && r.first) out.get(r.hotel_id).first_bill = String(r.first).slice(0, 10);
@@ -65,7 +83,7 @@ async function facts(hotelIds) {
 function autoNote(auto, f) {
     switch (auto) {
         case "payment":
-            return f.payment > 0 ? `Rs ${Math.round(f.payment).toLocaleString("en-IN")} recorded with the outlet` : null;
+            return f.paidInvoice ? `Invoice ${f.paidInvoice.number} paid (Rs ${Math.round(Number(f.paidInvoice.total)).toLocaleString("en-IN")})` : null;
         case "outlet":
             return f.outlet ? "Owner login works" : null;
         case "menu":
@@ -96,7 +114,8 @@ async function autoCheck({ only = null } = {}) {
         const note = f.has(it.hotel_id) ? autoNote(it.auto, f.get(it.hotel_id)) : null;
         if (!note) continue;
         await sequelize.transaction(async (t) => {
-            const [n] = await CsOnboardingItem.update({ done_at: new Date(), done_by: null, note }, { where: { id: it.id, done_at: null }, transaction: t });
+            const paidInv = it.auto === "payment" ? f.get(it.hotel_id).paidInvoice : null;
+            const [n] = await CsOnboardingItem.update({ done_at: new Date(), done_by: null, note, ...(paidInv ? { invoice_id: paidInv.id } : {}) }, { where: { id: it.id, done_at: null }, transaction: t });
             if (n) await addActivity(it.account_id, it.hotel_id, "onboarding", null, `${it.title}: done by itself (${note})`, { item: it.item_key }, t);
         });
         ticked += 1;
@@ -133,27 +152,94 @@ const view = (it, who) => ({
     doneAt: it.done_at,
     doneBy: it.done_at ? (it.done_by ? who.get(it.done_by) || `#${it.done_by}` : "auto") : null,
     note: it.note,
+    proofKind: proofKindOf(it),
+    hasProof: !!it.proof,
+    invoiceId: it.invoice_id || null,
+    // A call step opens on its due day (India time); before that it cannot be ticked.
+    opensAt: proofKindOf(it) === "call" && it.due_at ? moment(it.due_at).tz(TZ).startOf("day").toISOString() : null,
 });
 
-/** Staff tick (or untick) a step; an auto step can be ticked by hand too. */
-async function tick(s, itemId, done, note) {
+/**
+ * Staff tick (or untick) a step, with its proof. extra: { proof (photo:
+ * { name, mime, data }), invoiceId (Payment received) }. Steps the outlet's
+ * data proves cannot be ticked or unticked by hand ("Check now" re-reads them).
+ */
+async function tick(s, itemId, done, note, extra = {}) {
     need(s, "customers.manage");
+    const it0 = await CsOnboardingItem.findOne({ where: { id: Number(itemId) || 0 }, raw: true });
+    if (!it0) throw new RuleError("This step does not exist.");
+    const kind = proofKindOf(it0);
+    const text = txt(note, 300);
+    let proof = null;
+    let invoiceId = null;
+    let callNote = "";
+    if (done) {
+        if (it0.done_at) throw new RuleError("This step is already done.");
+        if (isPayment(it0)) {
+            const inv = await BilInvoice.findOne({ where: { id: Number(extra.invoiceId) || 0, hotel_id: it0.hotel_id, kind: "invoice" }, attributes: ["id", "number", "status"], raw: true });
+            if (!inv) throw new RuleError("Choose the outlet's invoice that was paid.");
+            if (inv.status !== "paid") throw new RuleError(`Invoice ${inv.number} is not paid in full yet. This step ticks itself when it is.`);
+            invoiceId = inv.id;
+        } else if (it0.auto) {
+            throw new RuleError("This step ticks itself from the outlet's own data. Use Check now after the outlet has done it.");
+        } else if (kind === "photo") {
+            proof = await require("../bil/payments").saveProof(extra.proof);
+            if (!proof) throw new RuleError("Add a photo that shows it is done.");
+        } else if (kind === "call") {
+            const opens = it0.due_at ? moment(it0.due_at).tz(TZ).startOf("day") : null;
+            if (opens && moment().tz(TZ).isBefore(opens)) throw new RuleError(`This call is due on ${opens.format("D MMM")}. It can be marked done from that day, after the call.`);
+            if (text.length < 10) throw new RuleError("Write what the owner said on the call.");
+            callNote = await callFound(it0.hotel_id, opens);
+        } else if (text.length < 5) {
+            throw new RuleError("Write what was done (a few words).");
+        }
+    } else {
+        if (!it0.done_at) throw new RuleError("This step is not done yet.");
+        if (it0.auto && !isPayment(it0)) throw new RuleError("This step follows the outlet's own data and cannot be unticked by hand.");
+        if (isPayment(it0) && !s.can("billing.approve")) throw new RuleError("Only an approver can untick a payment step.");
+        if (text.length < 5) throw new RuleError("Write why it is not done after all.");
+    }
     return sequelize.transaction(async (t) => {
-        const it = await CsOnboardingItem.findOne({ where: { id: Number(itemId) || 0 }, transaction: t, lock: t.LOCK.UPDATE });
-        if (!it) throw new RuleError("This step does not exist.");
+        const it = await CsOnboardingItem.findOne({ where: { id: it0.id }, transaction: t, lock: t.LOCK.UPDATE });
         if (done) {
             if (it.done_at) throw new RuleError("This step is already done.");
-            await it.update({ done_at: new Date(), done_by: s.user.id, note: txt(note, 300) }, { transaction: t });
-            await addActivity(it.account_id, it.hotel_id, "onboarding", s.user.id, `${it.title}: done${note ? ` (${txt(note, 200)})` : ""}`, { item: it.item_key }, t);
+            const saved = [text, callNote, invoiceId ? `invoice paid` : ""].filter(Boolean).join(" · ").slice(0, 300);
+            await it.update({ done_at: new Date(), done_by: s.user.id, note: saved, proof, invoice_id: invoiceId }, { transaction: t });
+            await addActivity(it.account_id, it.hotel_id, "onboarding", s.user.id, `${it.title}: done${saved ? ` (${saved})` : ""}${proof ? " - photo added" : ""}`, { item: it.item_key }, t);
             await finishIfDone(it.hotel_id, t);
         } else {
             if (!it.done_at) throw new RuleError("This step is not done yet.");
-            await it.update({ done_at: null, done_by: null, note: "" }, { transaction: t });
+            await it.update({ done_at: null, done_by: null, note: "", proof: null, invoice_id: null }, { transaction: t });
             await CsAccountOutlet.update({ onboarding: "active", onboarding_done_at: null }, { where: { hotel_id: it.hotel_id, onboarding: "done" }, transaction: t });
-            await addActivity(it.account_id, it.hotel_id, "onboarding", s.user.id, `${it.title}: marked not done`, { item: it.item_key }, t);
+            await addActivity(it.account_id, it.hotel_id, "onboarding", s.user.id, `${it.title}: marked not done (${text})`, { item: it.item_key }, t);
         }
         return { id: it.id };
     });
+}
+
+/** A call to the outlet owner's mobile on or after the due day, from the call log ("" when none). */
+async function callFound(hotelId, from) {
+    const h = await Hotel.findOne({ where: { id: hotelId }, attributes: ["owner_number"], raw: true });
+    const m = h ? String(h.owner_number || "").slice(-10) : "";
+    if (m.length !== 10) return "";
+    const c = await CrmCall.findOne({ where: { phone: { [Op.like]: `%${m}` }, ...(from ? { started_at: { [Op.gte]: from.toDate() } } : {}) }, order: [["started_at", "DESC"]], raw: true });
+    if (!c) return "";
+    const mins = Math.max(1, Math.round((c.duration_seconds || 0) / 60));
+    return `call in the log: ${c.answered ? `${mins} min` : "not answered"} on ${moment(c.started_at).tz(TZ).format("D MMM")}`;
+}
+
+/** The photo behind a step. */
+async function proofLink(s, itemId) {
+    need(s, "customers.view");
+    const it = await CsOnboardingItem.findOne({ where: { id: Number(itemId) || 0 }, attributes: ["proof"], raw: true });
+    if (!it || !it.proof) throw new RuleError("No photo for this step.");
+    return { url: await require("../bil/payments").store.link(it.proof) };
+}
+
+/** "Check now": re-reads the outlet's data for the steps it proves. */
+async function checkNow(s, hotelId) {
+    need(s, "customers.manage");
+    return { ticked: await autoCheck({ only: [Number(hotelId) || 0] }) };
 }
 
 /** Who does a step and by when. */
@@ -190,4 +276,4 @@ async function startFor(s, hotelId) {
     });
 }
 
-module.exports = { start, autoCheck, itemsFor, view, tick, setItem, startFor, facts };
+module.exports = { start, autoCheck, itemsFor, view, tick, setItem, startFor, facts, proofLink, checkNow };
