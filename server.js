@@ -240,6 +240,8 @@ server.listen(PORT, (err) => {
                 "bil_items", "bil_counters", "bil_invoices", "bil_invoice_lines", "bil_payments", "bil_pay_links", "cs_renewals",
                 // SuperAdmin support: schema owned by migration 20261013100000.
                 "sup_tickets", "sup_ticket_messages",
+                // SuperAdmin inventory: schema owned by migration 20261015100000.
+                "inv_items", "inv_moves",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',

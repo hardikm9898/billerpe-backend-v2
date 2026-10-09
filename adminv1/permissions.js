@@ -21,6 +21,8 @@ const CATALOG = [
     { group: "Billing", key: "billing.view", label: "See invoices and payments" },
     { group: "Billing", key: "billing.manage", label: "Create invoices, record payments" },
     { group: "Billing", key: "billing.approve", label: "Approve payments, credit notes and refunds" },
+    { group: "Inventory", key: "inventory.view", label: "See the office stock and what each outlet holds" },
+    { group: "Inventory", key: "inventory.manage", label: "Stock in, send items to outlets, take returns" },
     { group: "Support", key: "support.use", label: "Answer support tickets" },
     { group: "Support", key: "support.manage", label: "Assign tickets to others; told when a ticket is late" },
     { group: "Admin", key: "automation.manage", label: "Edit automation rules and cadences" },
@@ -46,15 +48,19 @@ const DEFAULT_ROLES = [
     {
         name: "Customer success",
         description: "Accounts, onboarding, renewals, payment links",
-        permissions: ["customers.view", "customers.manage", "outlets.open_as", "billing.view", "billing.manage", "support.use", "inbox.use", "inbox.all"],
+        permissions: ["customers.view", "customers.manage", "outlets.open_as", "billing.view", "billing.manage", "support.use", "inbox.use", "inbox.all", "inventory.view", "inventory.manage"],
     },
-    { name: "Support", description: "Ticket queue and outlet status", permissions: ["customers.view", "support.use", "outlets.open_as", "inbox.use", "inbox.all"] },
+    { name: "Support", description: "Ticket queue and outlet status", permissions: ["customers.view", "support.use", "outlets.open_as", "inbox.use", "inbox.all", "inventory.view"] },
 ];
 
 // Keys a later phase added to the built-in roles. Roles made before that
 // phase get them once (adm_settings roles_version); a role someone edited
 // keeps its other choices.
-const UPGRADES = [{ version: 3, add: { "Sales manager": ["campaigns.send"], "Customer success": ["inbox.all"], Support: ["inbox.all"] } }];
+const UPGRADES = [
+    { version: 3, add: { "Sales manager": ["campaigns.send"], "Customer success": ["inbox.all"], Support: ["inbox.all"] } },
+    // Inventory (owner 2026-10-09): customer success sends printers and rolls; support sees what an outlet holds.
+    { version: 4, add: { "Customer success": ["inventory.view", "inventory.manage"], Support: ["inventory.view"] } },
+];
 
 const parse = (txt) => {
     try {

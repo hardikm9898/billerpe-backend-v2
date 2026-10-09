@@ -933,6 +933,7 @@ const { CrmWaChat, CrmWaMessage, CrmWaTemplate, CrmWaOptout, CrmRule, CrmRuleRun
 const { CsAccount, CsAccountOutlet, CsOnboardingItem, CsOutletDay, CsTask, CsActivity, AdmSupportSession } = require("./customers");
 const { BilItem, BilCounter, BilInvoice, BilInvoiceLine, BilPayment, BilPayLink, CsRenewal } = require("./billing");
 const { SupTicket, SupTicketMessage } = require("./support");
+const { InvItem, InvMove } = require("./inventory");
 const StockMovement = require("./stockMovement");
 StockMovement.belongsTo(RawMaterial, { foreignKey: "raw_material_id" });
 StockMovement.belongsTo(HotelUser, { foreignKey: "user_id" });
@@ -1008,6 +1009,9 @@ module.exports = {
     // SuperAdmin support (phase 7)
     SupTicket,
     SupTicketMessage,
+    // SuperAdmin inventory (office stock)
+    InvItem,
+    InvMove,
 
     RestaurantSetting,
     UserSession,
