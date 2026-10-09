@@ -21,6 +21,7 @@ const CATALOG = [
     { group: "Billing", key: "billing.view", label: "See invoices and payments" },
     { group: "Billing", key: "billing.manage", label: "Create invoices, record payments" },
     { group: "Billing", key: "billing.approve", label: "Approve payments, credit notes and refunds" },
+    { group: "Billing", key: "billing.edit", label: "Edit or delete invoices and payments (others' drafts, cancel issued, reverse payments) - reason needed" },
     { group: "Inventory", key: "inventory.view", label: "See the office stock and what each outlet holds" },
     { group: "Inventory", key: "inventory.manage", label: "Stock in, send items to outlets, take returns" },
     { group: "Support", key: "support.use", label: "Answer support tickets" },

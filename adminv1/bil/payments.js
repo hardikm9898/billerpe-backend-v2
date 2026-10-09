@@ -59,6 +59,37 @@ async function saveProof(proof) {
     return store.put(buffer, mime);
 }
 
+/* ------------------------------ reversing ------------------------------ */
+
+/**
+ * Money recorded by mistake (owner 2026-10-09: only staff with the edit
+ * right, with a reason, in the invoice's history). An approved payment comes
+ * off the invoice; once the invoice was paid in full and took effect (plan,
+ * devices, credits) it cannot be reversed here - cancel it with a credit note.
+ */
+async function reverse(s, paymentId, reason) {
+    need(s, "billing.edit");
+    const why = txt(reason, 200);
+    if (why.length < 5) throw new RuleError("Write why the payment is reversed.");
+    return sequelize.transaction(async (t) => {
+        const pay = await BilPayment.findOne({ where: { id: Number(paymentId) || 0 }, transaction: t, lock: t.LOCK.UPDATE });
+        if (!pay || !["approved", "pending"].includes(pay.status)) throw new RuleError("Only a recorded or approved payment can be reversed.");
+        const inv = await invoices.getInvoice(pay.invoice_id, t, true);
+        if (pay.status === "approved") {
+            if (inv.applied_at) throw new RuleError("This invoice was paid in full and took effect. Cancel it with a credit note instead.");
+            const paid = Math.max(0, Math.round((Number(inv.paid) - Number(pay.amount)) * 100) / 100);
+            await inv.update({ paid, status: paid > 0.005 ? "part_paid" : "issued", paid_at: null }, { transaction: t });
+        }
+        await pay.update({ status: "reversed", reject_reason: why, decided_by: s.user.id, decided_at: new Date() }, { transaction: t });
+        // A new outlet's token that is taken back freezes it, as a rejected one does.
+        await require("../cs/freeze").onTokenRejected(pay.id, t);
+        await audit.write(s, { action: "payment.reverse", entity: "bil_payment", entityId: pay.id, summary: `Reversed ${money(pay.amount)} (${pay.method.toUpperCase()} ${pay.reference || ""}) on ${inv.number}`, reason: why }, { transaction: t });
+        if (inv.account_id) await require("../cs/common").addActivity(inv.account_id, inv.hotel_id, "invoice", s.user.id, `${s.user.name} reversed ${money(pay.amount)} on ${inv.number} (${why})`, { invoiceId: inv.id }, t);
+        if (pay.created_by && pay.created_by !== s.user.id) await notify(pay.created_by, { type: "billing.reversed", title: `Payment reversed: ${money(pay.amount)}`, body: `${inv.number}: ${why}`, link: `/billing/invoices/${inv.id}`, ref: `rev:${pay.id}` }, { transaction: t });
+        return { id: pay.id, status: "reversed" };
+    });
+}
+
 /* ------------------------------ approving ------------------------------ */
 
 async function approveIn(pay, inv, t, actorId) {
@@ -92,7 +123,7 @@ async function recordIn(s, inv, v, t, { createdBy = s.user.id } = {}) {
     if (inv.kind !== "invoice" || !invoices.OPEN.includes(inv.status)) throw new RuleError("This invoice is not waiting for payment.");
     const pending = Number((await BilPayment.sum("amount", { where: { invoice_id: inv.id, status: "pending" }, transaction: t })) || 0);
     if (v.amount > invoices.due(inv) - pending + 0.005) throw new RuleError(`More than is due: ${money(invoices.due(inv) - pending)}.`);
-    if (v.reference && (await BilPayment.findOne({ where: { reference: v.reference, method: v.method, status: { [Op.ne]: "rejected" } }, transaction: t }))) throw new RuleError("A payment with this reference is already recorded.");
+    if (v.reference && (await BilPayment.findOne({ where: { reference: v.reference, method: v.method, status: { [Op.notIn]: ["rejected", "reversed"] } }, transaction: t }))) throw new RuleError("A payment with this reference is already recorded.");
     const pay = await BilPayment.create({ invoice_id: inv.id, account_id: inv.account_id, method: v.method, amount: v.amount, reference: v.reference, proof: v.proof, status: "pending", received_on: v.receivedOn, note: v.note, created_by: createdBy }, { transaction: t });
     let done = [];
     if (s.can("billing.approve")) done = await approveIn(pay, inv, t, s.user.id);
@@ -278,4 +309,4 @@ async function quickLink(s, input = {}) {
     return { invoiceId: draft.id, number: issued.number, status: "issued", url: l.url, amount: Number(l.amount), simulated: l.url.startsWith("sim:") };
 }
 
-module.exports = { record, cleanPayment, recordIn, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, saveProof, METHODS, quickLink };
+module.exports = { record, cleanPayment, recordIn, reverse, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, saveProof, METHODS, quickLink };

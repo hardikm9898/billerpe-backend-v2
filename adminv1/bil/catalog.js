@@ -76,7 +76,8 @@ async function list(s) {
     need(s, "billing.view");
     await ensureCatalog();
     const items = await BilItem.findAll({ order: [["sort", "ASC"], ["id", "ASC"]], raw: true });
-    return { items: items.map(view), hardware: await hardware() };
+    const stock = await InvItem.findAll({ where: { active: true }, order: [["sort", "ASC"], ["name", "ASC"]], raw: true });
+    return { items: items.map(view), hardware: await hardware(), stock: stock.map((i) => ({ id: i.id, name: i.name, unit: i.unit, price: Number(i.price), gstRate: Number(i.gst_rate) })) };
 }
 
 const KINDS = ["plan", "addon", "ebill", "service"];

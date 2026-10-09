@@ -136,6 +136,9 @@ const lineView = (l) => ({
     gstRate: Number(l.gst_rate),
     periodFrom: l.period_from,
     periodTo: l.period_to,
+    // Goods from the office stock (owner 2026-10-09).
+    invItemId: ((parse(l.effect) || {}).goods || {}).itemId || null,
+    included: !!((parse(l.effect) || {}).goods || {}).included,
 });
 
 const due = (inv) => Math.max(0, Math.round((Number(inv.total) - Number(inv.paid)) * 100) / 100);
@@ -193,6 +196,14 @@ async function saveDraft(s, input = {}, id = null, opts = {}) {
     return run(async (t) => {
         let inv = id ? await getInvoice(id, t, true) : null;
         if (inv && inv.status !== "draft") throw new RuleError("Only a draft can be changed.");
+        // Owner 2026-10-09: changing a billing record is for staff with the edit right (and a reason);
+        // the person who made a draft may still work on it.
+        const editReason = txt(input.reason, 200);
+        if (inv && s && inv.created_by !== s.user.id) {
+            need(s, "billing.edit");
+            if (editReason.length < 5) throw new RuleError("Write why you change someone else's invoice.");
+        }
+        const before = inv ? { total: Number(inv.total), discount_pct: Number(inv.discount_pct), bill_name: inv.bill_name } : null;
         const hotelId = Number(input.hotelId) || (inv && inv.hotel_id) || null;
         const hotel = hotelId ? await Hotel.findOne({ where: { id: hotelId }, transaction: t }) : null;
         if (hotelId && !hotel) throw new RuleError("This outlet does not exist.");
@@ -225,6 +236,7 @@ async function saveDraft(s, input = {}, id = null, opts = {}) {
         else inv = await BilInvoice.create({ ...fields, status: "draft", created_by: s ? s.user.id : null }, { transaction: t });
         await BilInvoiceLine.destroy({ where: { invoice_id: inv.id }, transaction: t });
         await BilInvoiceLine.bulkCreate(lines.map((l, i) => ({ ...l, invoice_id: inv.id, amount: tot.amounts[i], effect: json(l.effect), sort: i })), { transaction: t });
+        if (s) await audit.write(s, { action: before ? "invoice.edit" : "invoice.draft", entity: "bil_invoice", entityId: inv.id, summary: before ? `Changed the draft (${money(before.total)} -> ${money(inv.total)})` : `Made a draft for ${inv.bill_name} (${money(inv.total)})`, before, after: { total: Number(inv.total), discount_pct: Number(inv.discount_pct), bill_name: inv.bill_name }, reason: editReason }, { transaction: t });
         return { id: inv.id };
     });
 }
@@ -305,11 +317,14 @@ async function cancel(s, id, reason) {
         const inv = await getInvoice(id, t, true);
         if (["draft", "approval"].includes(inv.status)) {
             need(s, "billing.manage");
+            if (inv.created_by !== s.user.id) need(s, "billing.edit");
             await inv.update({ status: "cancelled", cancelled_at: new Date(), cancel_reason: why }, { transaction: t });
             await BilPayLink.update({ state: "CANCELLED" }, { where: { invoice_id: inv.id, state: "PENDING" }, transaction: t });
+            await audit.write(s, { action: "invoice.delete_draft", entity: "bil_invoice", entityId: inv.id, summary: `Deleted the draft for ${inv.bill_name} (${money(inv.total)})`, reason: why }, { transaction: t });
             return { id: inv.id };
         }
-        need(s, "billing.approve");
+        // An issued invoice is never edited or deleted (GST): it is cancelled by a credit note.
+        need(s, "billing.edit");
         if (inv.kind !== "invoice" || !["issued", "part_paid", "paid"].includes(inv.status)) throw new RuleError("This invoice cannot be cancelled.");
         if (await BilPayment.count({ where: { invoice_id: inv.id, status: "pending" }, transaction: t })) throw new RuleError("A payment for it waits for approval. Decide that first.");
         const sel = await seller();
@@ -475,8 +490,38 @@ async function detail(s, id) {
         account: account ? { id: account.id, name: account.name, mobile: account.owner_mobile } : null,
         related: credit ? { id: credit.id, number: credit.number } : null,
         freeDiscountPct: cfg.discountFreePct,
-        can: { manage: s.can("billing.manage"), approve: s.can("billing.approve") },
+        can: { manage: s.can("billing.manage"), approve: s.can("billing.approve"), edit: s.can("billing.edit"), mine: inv.created_by === s.user.id },
+        history: await historyOf(inv, pays),
     };
+}
+
+const ACTION_LABEL = {
+    "invoice.draft": "Draft made",
+    "invoice.edit": "Draft changed",
+    "invoice.issue": "Issued",
+    "invoice.ask_approval": "Sent for approval",
+    "invoice.approve": "Approved and issued",
+    "invoice.to_draft": "Sent back to draft",
+    "invoice.cancel": "Cancelled (credit note)",
+    "invoice.delete_draft": "Draft deleted",
+    "invoice.send": "Sent to the customer",
+    "payment.record": "Payment recorded",
+    "payment.approve": "Payment approved",
+    "payment.reject": "Payment rejected",
+    "payment.reverse": "Payment reversed",
+};
+
+/** Everything that happened to an invoice and its payments: who, when, what, why (owner 2026-10-09). */
+async function historyOf(inv, pays) {
+    const { AdmAuditLog } = require("../../model");
+    const rows = await AdmAuditLog.findAll({
+        where: { [Op.or]: [{ entity: "bil_invoice", entity_id: String(inv.id) }, ...(pays.length ? [{ entity: "bil_payment", entity_id: pays.map((p) => String(p.id)) }] : [])] },
+        order: [["id", "ASC"]],
+        limit: 200,
+        raw: true,
+    });
+    const people = new Map((await AdmUser.findAll({ where: { id: [...new Set(rows.map((r) => r.actor_id).filter(Boolean))] }, attributes: ["id", "name"], raw: true })).map((u) => [u.id, u.name]));
+    return rows.map((r) => ({ id: r.id, at: r.createdAt, by: r.actor_id ? people.get(r.actor_id) || `#${r.actor_id}` : "BillerPe (automatic)", what: ACTION_LABEL[r.action] || r.action, summary: r.summary, reason: r.reason || "" }));
 }
 
 /** What is owed, by how late it is (from the due date). */

@@ -318,6 +318,7 @@ const HANDLERS = {
     payments: (s) => bilPayments.pendingList(s),
     paymentRecord: (s, invoiceId, input) => bilPayments.record(s, invoiceId, input || {}),
     paymentDecide: (s, id, ok, reason) => bilPayments.decide(s, id, !!ok, reason),
+    paymentReverse: (s, id, reason) => bilPayments.reverse(s, id, reason),
     paymentProof: (s, id) => bilPayments.proofLink(s, id),
     payLinkSimulate: (s, linkId, state) => bilPayments.simulate(s, linkId, state),
     renewals: (s, query) => bilRenewals.list(s, query || {}),
