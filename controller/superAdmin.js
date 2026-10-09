@@ -1080,55 +1080,22 @@ const addImage = async (req, res) => {
     }
 };
 const getProductImages = async (req, res) => {
+    // The menu photo library (adminv1/photos, owner 2026-10-09): the forgiving
+    // search; with nothing typed, the most used photos. Same answer shape the
+    // Web POS photo picker always read (data: [{ id, name, url }]).
     try {
-
-        // Extract page, limit, and search term from query params
         const page = parseInt(req.query.page, 10) || 1;
-        const limit = parseInt(req.query.limit, 10) || 20;
+        const limit = Math.min(parseInt(req.query.limit, 10) || 20, 60);
         const search = req.params.search ? req.params.search.trim() : "";
-        // Calculate offset
-        const offset = (page - 1) * limit;
-
-        // Build search condition
-        const whereCondition = {
-
-        };
-
-        if (search) {
-            whereCondition.name = { [Op.like]: `%${search}%` };
-        }
-        // Fetch total count and paginated data
-        const { count, rows: data } = await Images.findAndCountAll({
-            where: whereCondition,
-            limit,
-            offset,
-            order: [['createdAt', 'DESC']],
-        });
-        // console.log(data, "Data::")
-        const totalPages = Math.ceil(count / limit);
-
-        return res.status(STATUSCODE.SUCCESS).json(
-            success(
-                MESSAGE.SUCCESS,
-                {
-                    data,
-                    pagination: {
-                        totalItems: count,
-                        totalPages,
-                        currentPage: page,
-                        pageSize: limit,
-                    },
-                },
-                STATUSCODE.SUCCESS
-            )
-        );
+        const r = await require("../adminv1/photos/outlet").find(search, { limit: page * limit, veg: req.query.veg || "" });
+        const all = [...r.matches, ...r.related];
+        const data = all.slice((page - 1) * limit, page * limit).map((p) => ({ id: p.id, name: p.name, url: p.url, thumb: p.thumb, match: r.matches.some((m) => m.id === p.id) }));
+        return res.status(STATUSCODE.SUCCESS).json(success(MESSAGE.SUCCESS, { data, matches: r.matches.length, pagination: { totalItems: all.length, totalPages: Math.max(1, Math.ceil(all.length / limit)), currentPage: page, pageSize: limit } }, STATUSCODE.SUCCESS));
     } catch (err) {
         console.error("Error: While Getting Images Data", err);
-        return res
-            .status(STATUSCODE.INTERNAL_SERVER_ERROR)
-            .json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR));
+        return res.json(error(MESSAGE.INTERNAL_SERVER_ERROR, STATUSCODE.INTERNAL_SERVER_ERROR));
     }
-}
+};
 
 const gettingSuperAdminUserList = async (req, res) => {
     try {

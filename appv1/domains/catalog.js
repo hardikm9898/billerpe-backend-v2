@@ -76,8 +76,19 @@ async function nextShortCode(hotelId) {
     return String(rows.reduce((m, r) => Math.max(m, /^\d+$/.test(r.shortCode || "") ? Number(r.shortCode) : 0), 100) + 1);
 }
 
+/** The photo an item may show: one from BillerPe's library (or the one it already has), never an upload (owner 2026-10-09). */
+async function photoOf(c, i) {
+    const url = i.imageUrl || null;
+    if (await require("../../adminv1/photos/library").allowed(url)) return url;
+    const id = idOf(i.id);
+    const row = id ? await M.Menu.findOne({ where: { id, hotel_id: c.hotelId }, attributes: ["foodImage"], raw: true }) : null;
+    if (row && row.foodImage === url) return url;
+    fail("Photos come from the BillerPe photo library. Choose one there (update the app if it still offers the camera).");
+}
+
 async function saveItem(c, i) {
     need(c, "menu", i.id ? "edit" : "create");
+    const imageUrl = await photoOf(c, i);
     const name = String(i.name || "").trim();
     if (!name) fail("Name is required");
     if (!(Number(i.price) > 0) && !(i.variants || []).length) fail("Price must be more than 0");
@@ -86,7 +97,7 @@ async function saveItem(c, i) {
     const price = Number(i.price) > 0 ? Number(i.price) : Math.min(...i.variants.map((v) => Number(v.price)));
     const body = {
         item_name: name, menu_categ_id: idOf(i.categoryId), price, shortCode, description: i.description || "",
-        favorite: !!i.favorite, imageUrl: i.imageUrl || null, sub_categories: dietaryText(i.dietary), gst_type: i.gstType === "S" ? "S" : "G",
+        favorite: !!i.favorite, imageUrl, sub_categories: dietaryText(i.dietary), gst_type: i.gstType === "S" ? "S" : "G",
         barcode_value: i.barcode || null,
         variants: (i.variants || []).map((v) => ({ id: idOf(v.variantId), variant_price: Number(v.price) })),
         addons: (i.addonGroupIds || []).map(idOf),
@@ -377,7 +388,23 @@ async function newTableQr(c, id) {
     await audit(c, "Tables", `New QR for ${t.table_name} (old stickers stop working)`);
 }
 
+/** "Match photos": the outlet's items (without a photo, or all) with suggestions. */
+async function photoMenu(c, all) {
+    need(c, "menu", "edit");
+    return require("../../adminv1/photos/outlet").menuFor(c.hotelId, { missingOnly: !all });
+}
+
+/** Set the photos the owner ticked (or clear one: photoId null). */
+async function photoSet(c, picks) {
+    need(c, "menu", "edit");
+    const r = await require("../../adminv1/photos/outlet").setOn(c.hotelId, (Array.isArray(picks) ? picks : []).map((p) => ({ menuId: idOf(p.menuId), photoId: p.photoId ? Number(p.photoId) : null })));
+    await audit(c, "Menu", `Set ${r.set} menu photo${r.set === 1 ? "" : "s"}`);
+    return r;
+}
+
 module.exports = {
+    photoMenu: { fn: (c, all) => photoMenu(c, !!all) },
+    photoSet: { write: true, fn: (c, picks) => photoSet(c, picks) },
     saveMenu: { fn: saveMenu },
     saveCategory: { fn: saveCategory },
     deleteCategory: { fn: deleteCategory },

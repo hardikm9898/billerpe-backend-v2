@@ -37,7 +37,15 @@ const ENTITIES = [
     { name: "menuCategs", Model: models.Menu_categ, direction: "both", dependsOn: [{ field: "menu_catalog_id", parent: "menuCatalogs" }] },
     { name: "variants", Model: models.Variants, direction: "both", dependsOn: [{ field: "menu_catalog_id", parent: "menuCatalogs" }] },
     { name: "addonDepartments", Model: models.AddonDepartment, direction: "both", dependsOn: [{ field: "menu_catalog_id", parent: "menuCatalogs" }] },
-    { name: "menuItems", Model: models.Menu, direction: "both", dependsOn: [{ field: "menu_categ_id", parent: "menuCategs" }] },
+    {
+        name: "menuItems", Model: models.Menu, direction: "both", dependsOn: [{ field: "menu_categ_id", parent: "menuCategs" }],
+        // Menu photos come only from BillerPe's library (owner 2026-10-09): anything else is
+        // dropped from the push, so the cloud keeps the photo it has.
+        prepare: async (fields) => {
+            if ("foodImage" in fields && !(await require("../../adminv1/photos/library").allowed(fields.foodImage))) delete fields.foodImage;
+            return null;
+        },
+    },
     { name: "addons", Model: models.Addons, direction: "both", dependsOn: [{ field: "department_id", parent: "addonDepartments" }] },
     // naturalKey: an item's variant / addon-group link is ONE row per pair
     // (unique index). The exe deletes and re-creates an item's links on every

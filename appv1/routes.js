@@ -82,6 +82,10 @@ const HANDLERS = {
     planExtend: { fn: (c) => require("../adminv1/bil/renewals").extendOneDay(c.hotelId, `POS App: ${c.user?.name || "staff"}`) },
     planPayLink: { fn: (c) => require("../adminv1/bil/renewals").payLink(c.hotelId) },
 
+    /* menu photos (owner 2026-10-09): search, "Match photos", ask BillerPe for one */
+    photoFind: { fn: (c, q, opts) => require("../adminv1/photos/outlet").find(q, opts || {}) },
+    photoRequest: { fn: (c, menuId, itemName) => require("../adminv1/photos/library").request(c.hotelId, { menuId, itemName, askedBy: c.user?.name || "" }) },
+
     /* orders */
     sendKot: { write: true, fn: (c, cart) => orders.sendKot(c, cart), key: ([cart]) => cart?.clientKey },
     holdOrder: { write: true, fn: (c, cart) => orders.holdOrder(c, cart), key: ([cart]) => cart?.clientKey },

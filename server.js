@@ -246,6 +246,8 @@ server.listen(PORT, (err) => {
                 "cs_outlet_setups",
                 // India Post COD: schema owned by migration 20261018100000.
                 "bil_cod_parcels", "bil_cod_remits",
+                // Menu photo library: schema owned by migration 20261019100000.
+                "menu_photos", "menu_photo_requests",
                 // Owner's daily sales summary: schema owned by migration 20260926160000.
                 "hms_sales_summary_logs",
                 'hms_menu_msts',

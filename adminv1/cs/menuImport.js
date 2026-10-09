@@ -72,6 +72,11 @@ async function importFile(s, hotelId, input = {}) {
     const catalog = require("../../appv1/domains/catalog");
     const out = await catalog.importMenu.fn(c, String(menu.id), rows);
     if (out.created + out.updated > 0) {
+        // Items without a photo get one when the library has a clear match by name (owner 2026-10-09).
+        const photos = require("../photos/outlet");
+        const m = await photos.menuFor(hotel.id, { missingOnly: true });
+        const sure = m.items.filter((x) => x.sure && x.best).map((x) => ({ menuId: x.menuId, photoId: x.best.id }));
+        out.photosSet = sure.length ? (await photos.setOn(hotel.id, sure)).set : 0;
         await Hotel.update({ menu_uploaded: true }, { where: { id: hotel.id } }).catch(() => {});
         await onboarding.autoCheck({ only: [hotel.id] }).catch(() => {});
     }

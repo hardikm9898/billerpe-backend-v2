@@ -22,6 +22,8 @@ const CATALOG = [
     { group: "Billing", key: "billing.manage", label: "Create invoices, record payments" },
     { group: "Billing", key: "billing.approve", label: "Approve payments, credit notes and refunds" },
     { group: "Billing", key: "billing.edit", label: "Edit or delete invoices and payments (others' drafts, cancel issued, reverse payments) - reason needed" },
+    { group: "Menu photos", key: "photos.view", label: "See the menu photo library and outlets' photo requests" },
+    { group: "Menu photos", key: "photos.manage", label: "Upload, edit and remove menu photos; answer photo requests" },
     { group: "Inventory", key: "inventory.view", label: "See the office stock and what each outlet holds" },
     { group: "Inventory", key: "inventory.manage", label: "Stock in, send items to outlets, take returns" },
     { group: "Support", key: "support.use", label: "Answer support tickets" },
@@ -61,6 +63,8 @@ const UPGRADES = [
     { version: 3, add: { "Sales manager": ["campaigns.send"], "Customer success": ["inbox.all"], Support: ["inbox.all"] } },
     // Inventory (owner 2026-10-09): customer success sends printers and rolls; support sees what an outlet holds.
     { version: 4, add: { "Customer success": ["inventory.view", "inventory.manage"], Support: ["inventory.view"] } },
+    // Menu photos (owner 2026-10-09): managed by whoever gets photos.manage; customer success sets outlets' photos.
+    { version: 5, add: { "Customer success": ["photos.view"], Support: ["photos.view"] } },
 ];
 
 const parse = (txt) => {

@@ -68,6 +68,11 @@ router.get("/plan", deviceAuth, planReply((req) => renewals().planState(req.user
 router.post("/plan/extend", deviceAuth, planReply((req) => renewals().extendOneDay(req.user, `Outlet PC${req.body && req.body.staff ? `: ${String(req.body.staff).slice(0, 30)}` : ""}${req.body && req.body.usedAt ? " (offline)" : ""}`, new Date(), req.body && req.body.usedAt)));
 router.post("/plan/pay", deviceAuth, planReply((req) => renewals().payLink(req.user)));
 router.get("/support/tickets", deviceAuth, listTickets);
+// Menu photos (owner 2026-10-09): the PC's Web POS asks for photo suggestions
+// for its own menu (by item names: its ids are its own) and asks BillerPe for
+// a missing photo. Search itself is GET /getProductImages/:search.
+router.post("/photos/suggest", deviceAuth, planReply((req) => require("../adminv1/photos/outlet").suggest(req.body && req.body.items)));
+router.post("/photos/request", deviceAuth, planReply((req) => require("../adminv1/photos/library").request(req.user, { itemName: req.body && req.body.itemName, askedBy: req.body && req.body.by })));
 router.post("/support/ticket/:id/reply", deviceAuth, replyTicket);
 
 module.exports = router;

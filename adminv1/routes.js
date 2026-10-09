@@ -334,6 +334,30 @@ const HANDLERS = {
     renewalChurn: (s, id, reason) => bilRenewals.churn(s, id, reason),
     renewalExtend: (s, id, reason) => bilRenewals.staffExtend(s, id, reason),
     ebillFree: (s, hotelId, count, reason) => require("./bil/ebill").grantFree(s, hotelId, count, reason),
+    // Menu photo library (owner 2026-10-09): SuperAdmin uploads, outlets search and pick.
+    photos: (s, query) => require("./photos/library").list(s, query || {}),
+    photoUpload: (s, input) => require("./photos/library").upload(s, input || {}),
+    photoUpdate: (s, id, input) => require("./photos/library").update(s, id, input || {}),
+    photoReplace: (s, id, file) => require("./photos/library").replace(s, id, file),
+    photoDelete: (s, id) => require("./photos/library").remove(s, id),
+    photoRequests: (s, query) => require("./photos/library").requests(s, query || {}),
+    photoAnswer: (s, ids, photoId) => require("./photos/library").answer(s, ids, photoId),
+    photoClose: (s, ids, note) => require("./photos/library").close(s, ids, note),
+    photoFind: (s, q, opts) => {
+        if (!["photos.view", "customers.manage"].some((p) => s.can(p))) require("./auth").need(s, "photos.view");
+        return require("./photos/outlet").find(q, opts || {});
+    },
+    // An outlet's menu photos, set by BillerPe staff (customer success).
+    outletPhotos: (s, hotelId, query) => {
+        require("./auth").need(s, "customers.manage");
+        return require("./photos/outlet").menuFor(Number(hotelId) || 0, { missingOnly: !(query && query.all) });
+    },
+    outletPhotosSet: async (s, hotelId, picks) => {
+        require("./auth").need(s, "customers.manage");
+        const r = await require("./photos/outlet").setOn(Number(hotelId) || 0, picks);
+        await require("./audit").write(s, { action: "photo.set_outlet", entity: "hotel", entityId: Number(hotelId) || 0, summary: `Set ${r.set} menu photo${r.set === 1 ? "" : "s"} for the outlet` });
+        return r;
+    },
     // Inventory: the office stock (owner 2026-10-09)
     invItems: (s) => require("./inv/stock").items(s),
     invItemSave: (s, input) => require("./inv/stock").saveItem(s, input || {}),
