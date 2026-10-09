@@ -935,6 +935,7 @@ const { BilItem, BilCounter, BilInvoice, BilInvoiceLine, BilPayment, BilPayLink,
 const { SupTicket, SupTicketMessage } = require("./support");
 const { InvItem, InvMove } = require("./inventory");
 const { CsOutletSetup } = require("./csSetup");
+const { BilCodParcel, BilCodRemit } = require("./cod");
 const StockMovement = require("./stockMovement");
 StockMovement.belongsTo(RawMaterial, { foreignKey: "raw_material_id" });
 StockMovement.belongsTo(HotelUser, { foreignKey: "user_id" });
@@ -1014,6 +1015,8 @@ module.exports = {
     InvItem,
     InvMove,
     CsOutletSetup,
+    BilCodParcel,
+    BilCodRemit,
 
     RestaurantSetting,
     UserSession,

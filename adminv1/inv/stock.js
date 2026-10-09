@@ -235,7 +235,12 @@ async function dispatch(s, input = {}) {
         const approved = basis !== "free" || s.can("billing.approve");
         const move = await InvMove.create({ item_id: item.id, kind: "dispatch", qty, hotel_id: hotel.id, invoice_id: invoiceId, setup_id: null, basis, carrier, ref, serials: serials.join(", "), proof, note, status: approved ? "done" : "pending", created_by: s.user.id, ...(approved && basis === "free" ? { decided_by: s.user.id, decided_at: new Date() } : {}) }, { transaction: t });
         if (approved) await apply(item, move, t);
-        else if (item.stock_office < qty) throw new RuleError(`Only ${item.stock_office} ${item.unit} of ${item.name} in the office.`);
+        // Sent by India Post cash on delivery: the parcel collects what is left on its invoice (owner 2026-10-09).
+        if (input.cod) {
+            if (basis !== "invoice" || carrier !== "post") throw new RuleError("Cash on delivery is for items sold on an invoice and sent by India Post.");
+            await require("../bil/cod").bookIn(s, { invoiceId, consignment: ref, amount: input.codAmount, moveId: move.id }, t);
+        }
+        if (!approved && item.stock_office < qty) throw new RuleError(`Only ${item.stock_office} ${item.unit} of ${item.name} in the office.`);
         const what = `${qty} ${item.unit} of ${item.name}${serials.length ? ` (${serials.join(", ")})` : ""}`;
         const accountId = await accountOf(hotel.id, t);
         if (approved) {

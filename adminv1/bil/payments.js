@@ -309,4 +309,4 @@ async function quickLink(s, input = {}) {
     return { invoiceId: draft.id, number: issued.number, status: "issued", url: l.url, amount: Number(l.amount), simulated: l.url.startsWith("sim:") };
 }
 
-module.exports = { record, cleanPayment, recordIn, reverse, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, saveProof, METHODS, quickLink };
+module.exports = { approveIn, record, cleanPayment, recordIn, reverse, decide, pendingList, proofLink, linkFor, createLink, check, simulate, pollLinks, live, store, saveProof, METHODS, quickLink };
