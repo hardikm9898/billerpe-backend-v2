@@ -270,6 +270,14 @@ async function deleteAddonGroup(c, id) {
 
 /* ------------------------------ sections & tables ------------------------------ */
 
+/** Table timer default in minutes: null = not set (a table: follow its section), else 0..1440. */
+function timeLimitOf(v) {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0 || n > 1440) fail("Time limit must be 0 to 1440 minutes");
+    return n;
+}
+
 async function saveSection(c, s) {
     need(c, "tables", s.id ? "edit" : "create");
     const name = String(s.name || "").trim();
@@ -287,8 +295,10 @@ async function saveSection(c, s) {
         .filter((x) => !row || x.id !== row.id)
         .sort((a, b) => (Number(a.rank) || 0) - (Number(b.rank) || 0) || a.id - b.id);
     const keep = row ? others.filter((x) => (Number(x.rank) || 0) < (Number(row.rank) || 0)).length + 1 : others.length + 1;
-    if (row) await row.update({ table_catag_nm: name });
-    else row = await M.TableCatagories.create({ type: "T", table_catag_nm: name, hotel_id: c.hotelId, rank: others.length + 1 });
+    // Table timer default for the section (owner list 2026-10-10); absent = unchanged.
+    const timer = s.timeLimit === undefined ? {} : { time_limit: timeLimitOf(s.timeLimit) || null };
+    if (row) await row.update({ table_catag_nm: name, ...timer });
+    else row = await M.TableCatagories.create({ type: "T", table_catag_nm: name, hotel_id: c.hotelId, rank: others.length + 1, ...timer });
     // Rank = position (Web POS sort order): the section moves there, the
     // others shift; ranks stay 1..N with no ties. No rank = keep its place.
     const at = Math.min(Math.max(rank ?? keep, 1), others.length + 1);
@@ -347,8 +357,12 @@ async function editTable(c, id, patch) {
     need(c, "tables", "edit");
     const t = await M.Table.findOne({ where: { id: idOf(id), hotel_id: c.hotelId, active: true } });
     if (!t) fail("Table not found");
-    if (await openOrderOn(c, t.id)) fail("Table Can't Update It's Running");
+    // The time limit alone may change on a running table (it is the default
+    // for the next order); name, seats and section may not.
+    const onlyTimer = Object.keys(patch || {}).every((k) => k === "timeLimit");
+    if (!onlyTimer && (await openOrderOn(c, t.id))) fail("Table Can't Update It's Running");
     const fields = {};
+    if (patch.timeLimit !== undefined) fields.time_limit = timeLimitOf(patch.timeLimit);
     if (patch.name !== undefined) {
         const n = String(patch.name).trim().toUpperCase();
         if (!n) fail("Table name is required");

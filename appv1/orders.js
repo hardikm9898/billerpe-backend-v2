@@ -2,7 +2,7 @@ const { ownerAlert, discountAlert } = require("./ownerAlerts");
 const { Op } = require("sequelize");
 const {
     Order, OrderDetails, Table, Menu, User, TimeLine, Hotel, PaymentMode, CashSession, CashMovement, KitchenSetting, AppAlert,
-    QrSession, QrOrder, MenuVariants, Variants, Addons, AddonDepartment,
+    QrSession, QrOrder, MenuVariants, Variants, Addons, AddonDepartment, TableCatagories,
 } = require("../model");
 const { fail, need, needSpecial, r2, isOff, parseJson, outletClock, businessDate, audit } = require("./core");
 const { recomputeOrderTotals, nextBillNo, nextToken, tokenApplies } = require("./engine/totals");
@@ -153,6 +153,50 @@ const dietaryText = (d) => DIETARY_TEXT[d] || "Regular Veg";
 
 /* ------------------------------ create / KOT / hold ------------------------------ */
 
+/* ------------------------------ table timer ------------------------------ */
+
+// Owner list 2026-10-10 (buffets "45 minutes", gaming slots "1 hour"): the
+// limit is the table's own (null = its section's, 0 = none); the order keeps
+// when its time is over and when someone tapped "Seen". Every device works
+// out the rest - red, blinking, the bell every minute until Seen / extended /
+// billed - so all phones and the Web POS agree (exe controller/tableTimer.js).
+const MAX_TIMER_MINUTES = 24 * 60;
+
+async function tableTimeLimit(c, table) {
+    if (table.time_limit != null) return Math.max(0, Number(table.time_limit) || 0);
+    const section = await TableCatagories.findOne({ where: { id: table.table_catag_id, hotel_id: c.hotelId }, attributes: ["time_limit"], transaction: c.t });
+    return Math.max(0, Number(section?.time_limit) || 0);
+}
+
+/** Set / extend by minutes, stop, or "Seen" on a running table's timer. */
+async function tableTimer(c, orderId, action, minutes) {
+    need(c, "biller", "create");
+    const o = await findOrder(c, orderId);
+    if (!isOpen(o)) fail("This order is closed. Refresh the tables.");
+    if (!o.TableId) fail("Only a table's order has a timer");
+    if (isBilled(o) && action !== "stop" && action !== "seen") fail("The bill is printed - the table's timer has stopped");
+    const now = Date.now();
+    const fields = {};
+    if (action === "set" || action === "extend") {
+        const m = Number(minutes);
+        if (!Number.isInteger(m) || m < 1 || m > MAX_TIMER_MINUTES) fail(`Enter minutes from 1 to ${MAX_TIMER_MINUTES}`);
+        // A running timer is extended from its end; one already over from now.
+        const end = o.timer_ends_at ? new Date(o.timer_ends_at).getTime() : 0;
+        const base = action === "extend" && end > now ? end : now;
+        fields.timer_ends_at = new Date(base + m * 60000);
+        fields.timer_seen_at = null;
+    } else if (action === "stop") {
+        fields.timer_ends_at = null;
+        fields.timer_seen_at = null;
+    } else if (action === "seen") {
+        if (!o.timer_ends_at) fail("This table has no timer");
+        fields.timer_seen_at = new Date(now);
+    } else fail("Unknown timer action");
+    await o.update(fields, { transaction: c.t });
+    if (action !== "seen") await event(c, o.id, action === "stop" ? "Table timer stopped" : `Table timer ${action === "extend" ? "extended by" : "set to"} ${minutes} min`, "update_order");
+    return { timerEndsAt: o.timer_ends_at ? new Date(o.timer_ends_at).toISOString() : undefined, timerSeenAt: o.timer_seen_at ? new Date(o.timer_seen_at).toISOString() : undefined };
+}
+
 async function createOrder(c, cart, status) {
     const clock = await clockOf(c);
     let table = null;
@@ -165,7 +209,10 @@ async function createOrder(c, cart, status) {
     const user = await User.create({ hotel_id: c.hotelId, name: "", number: "", address: "", gstin: "", isPlaceholder: true }, { transaction: c.t });
     const bill_no = await nextBillNo(c.hotelId, clock, c.t);
     const token = await nextToken(c.hotelId, cart.type, clock, c.t);
+    // Table timer: a table (or its section) with a time limit starts it now.
+    const limit = table && status !== "success" ? await tableTimeLimit(c, table) : 0;
     const order = await Order.create({
+        timer_ends_at: limit > 0 ? new Date(Date.now() + limit * 60000) : null,
         hotel_id: c.hotelId, hotelUserId: c.userId, UserId: user.id, TableId: table ? table.id : null,
         bill_no, token, business_date: clock.today, status, order_type: cart.type, payment: "pending",
         isOffline: false, created_from: cart.fromQr ? "qr" : "app",
@@ -371,7 +418,8 @@ async function printBill(c, orderId, { byRequest = false } = {}) {
     const lines = await OrderDetails.findAll({ where: { orderId: o.id, hotel_id: c.hotelId }, transaction: c.t });
     if (!lines.length) fail("Nothing to bill yet");
     const { held, kotNo, printKot } = await billUnsent(c, o, lines);
-    await o.update({ status: "success", ...(o.billed_at ? {} : { billed_at: new Date() }) }, { transaction: c.t });
+    // The bill is printed: the table's timer stops (owner, 2026-10-10).
+    await o.update({ status: "success", timer_ends_at: null, timer_seen_at: null, ...(o.billed_at ? {} : { billed_at: new Date() }) }, { transaction: c.t });
     await setTableStatus(c, o.TableId, "P");
     await recomputeOrderTotals(o.id, c.hotelId, { transaction: c.t });
     await event(c, o.id, byRequest ? "Bill requested at the counter" : "Bill printed", "update_order");
@@ -1029,7 +1077,7 @@ async function decideQr(c, qrId, decisions) {
 module.exports = {
     sendKot, holdOrder, setGuests, setCustomer, removeLine, markServed, printBill, requestBill, cancelOrder,
     transferTable, mergeTables, moveKot, setDiscount, applyPromo, setServiceCharge, settle, counterOrder,
-    editSettled, settleRefund, sendEbill, markPickupReady, logReprint, kdsAdvance, kdsRecall, decideQr, billCart,
+    editSettled, settleRefund, sendEbill, markPickupReady, logReprint, kdsAdvance, kdsRecall, decideQr, billCart, tableTimer,
     // shared with domains
     createOrder, recordCash, event, alert, attachCustomer, findOrder, openOrderOnTable, clockOf, lineState, dietaryText, addonsJson,
 };

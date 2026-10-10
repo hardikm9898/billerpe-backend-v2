@@ -41,6 +41,9 @@ const Table = sequelize.define("hms_table_mst", {
         allowNull: false,
         defaultValue: 1,
     },
+    // Table timer (migration 20261020100000): minutes an order here may run
+    // before it is "time over". null = the section's limit, 0 = none.
+    time_limit: { type: DataTypes.INTEGER, allowNull: true },
     // Sync engine v2 (controller/sync/*) - the exe's own row id for this
     // row, the idempotency key for a repeat push. See migration
     // 20260916100000 for why this table needs it.

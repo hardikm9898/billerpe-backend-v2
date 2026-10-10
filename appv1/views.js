@@ -201,6 +201,10 @@ function orderView(o, x) {
         cancelReason: status === "cancelled" && cancelEvent ? cancelEvent.label.slice("Cancelled — ".length) : undefined,
         fromQr: o.created_from === "qr" || undefined,
         readyAt: iso(o.token_ready_at),
+        // Table timer (appv1/orders.js tableTimer): when the table's time is
+        // over, and when staff last tapped "Seen" on the alarm.
+        timerEndsAt: iso(o.timer_ends_at),
+        timerSeenAt: iso(o.timer_seen_at),
         timeline,
     };
 }

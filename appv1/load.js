@@ -338,6 +338,8 @@ function tablesView(hotelId, tables, openOrders, reservations, pendingQrTables) 
             reservation: res ? { id: res.id, name: res.name, at: res.at } : undefined,
             qrUrl: tableQrUrl(hotelId, t),
             qrVersion: Number(t.qr_version) || 1,
+            // Table timer default: null = the section's, 0 = none.
+            timeLimit: t.time_limit ?? null,
         };
     });
 }
@@ -707,7 +709,7 @@ async function load(c) {
         settings,
         staff: staffRows,
         roleDefaults: roleDefaultsView(savedRoles),
-        sections: sections.map((s) => ({ id: String(s.id), name: s.table_catag_nm, rank: Number(s.rank) || 0 })),
+        sections: sections.map((s) => ({ id: String(s.id), name: s.table_catag_nm, rank: Number(s.rank) || 0, timeLimit: s.time_limit ?? null })),
         tables: tablesView(hotelId, tables, openOrders, reservations, pendingQrTables),
         ...menu,
         orders,

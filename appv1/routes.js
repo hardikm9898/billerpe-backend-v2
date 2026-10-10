@@ -114,6 +114,7 @@ const HANDLERS = {
     kdsAdvance: { write: true, fn: (c, id, kotNo, kitchenId, lineId) => orders.kdsAdvance(c, id, kotNo, kitchenId, lineId) },
     kdsRecall: { write: true, fn: (c, id, kotNo, kitchenId) => orders.kdsRecall(c, id, kotNo, kitchenId) },
     decideQr: { write: true, fn: (c, qrId, decisions) => orders.decideQr(c, qrId, decisions) },
+    tableTimer: { write: true, fn: (c, id, action, minutes) => orders.tableTimer(c, id, action, minutes) },
 };
 
 /** Domains (front of house, money, menu, tables, staff, settings, stock, reports) add theirs. */
@@ -135,7 +136,7 @@ router.get("/version", (req, res) => {
     const h = req.ctx.hotelId;
     const max = (Model, where = {}) => Model.max("updatedAt", { where: { hotel_id: h, ...where } }).then((d) => (d ? new Date(d).getTime() : 0));
     send(res, Promise.all([
-        max(M.Order), max(M.OrderDetails), max(M.Table), max(M.QrOrder), max(M.AppAlert), max(M.TableBooking), max(M.AppQueueEntry),
+        max(M.Order), max(M.OrderDetails), max(M.Table), max(M.TableCatagories), max(M.QrOrder), max(M.AppAlert), max(M.TableBooking), max(M.AppQueueEntry),
         max(M.Menu), max(M.CashSession), max(M.HotelUser), max(M.AppDevice),
         M.Hotel.findOne({ where: { id: h }, attributes: ["updatedAt"], raw: true }).then((x) => (x?.updatedAt ? new Date(x.updatedAt).getTime() : 0)),
         M.OrderDetails.count({ where: { hotel_id: h } }),

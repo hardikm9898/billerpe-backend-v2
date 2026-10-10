@@ -163,6 +163,11 @@ const Order = sequelize.define("hms_order_mst", {
     timeOver: {
         type: DataTypes.BOOLEAN, defaultValue: false
     },
+    // Table timer (appv1/tableTimer.js, migration 20261020100000): when the
+    // table's time is over (null = no timer) and when staff last tapped
+    // "Seen". Outlet PCs keep their own copy; the order push leaves it out.
+    timer_ends_at: { type: DataTypes.DATE, allowNull: true },
+    timer_seen_at: { type: DataTypes.DATE, allowNull: true },
     service_charge: {
         type: DataTypes.DOUBLE,
         defaultValue: 0

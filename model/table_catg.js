@@ -47,6 +47,8 @@ const TableCatagories = sequelize.define("hms_table_categ", {
         type: DataTypes.INTEGER,
         defaultValue: 0,
     },
+    // Table timer default for the section's tables, minutes (null/0 = none).
+    time_limit: { type: DataTypes.INTEGER, allowNull: true },
 })
 
 
