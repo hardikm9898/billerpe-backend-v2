@@ -11,6 +11,8 @@ const checkHeader = (req) => {
     const allowedDomains = [
         "https://www.billerpe.com",
         "https://billerpe.com",
+        "https://billerpe.in",
+        "https://www.billerpe.in",
         "https://app.billerpe.com",
         "http://localhost:3000",
         "http://127.0.0.1:5505"

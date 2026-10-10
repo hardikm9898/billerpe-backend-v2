@@ -137,6 +137,9 @@ app.use(
             "http://127.0.0.1:5504",
             "https://www.billerpe.com",
             "https://billerpe.com",
+            // The website's new domain (2026-10-10).
+            "https://billerpe.in",
+            "https://www.billerpe.in",
             "https://pos.billerpe.com",
             "http://127.0.0.1:5505",
             "http://192.168.1.12:8080",
